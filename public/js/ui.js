@@ -113,9 +113,16 @@ export const ROLE = { admin: 'Administrador', qualidade: 'Qualidade', supervisor
 export const fmtScore = (v, d = 1) => (v == null ? '—' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d }));
 export const fmtPct = (v) => (v == null ? '—' : `${fmtScore(v)}%`);
 export const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('pt-BR'));
+// Aceita 'AAAA-MM-DD' (data pura), ISO com fuso (Supabase) ou 'AAAA-MM-DD HH:MM:SS' em UTC
+export function parseDate(s) {
+  const str = String(s);
+  if (str.length <= 10) return new Date(str + 'T12:00:00');
+  const iso = str.replace(' ', 'T');
+  return new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + 'Z');
+}
 export function fmtDate(s, withTime = false) {
   if (!s) return '—';
-  const d = new Date(String(s).length <= 10 ? s + 'T12:00:00' : String(s).replace(' ', 'T') + (String(s).includes('Z') ? '' : 'Z'));
+  const d = parseDate(s);
   if (Number.isNaN(d.getTime())) return s;
   return withTime
     ? d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -123,7 +130,7 @@ export function fmtDate(s, withTime = false) {
 }
 export function fmtRel(s) {
   if (!s) return '';
-  const d = new Date(String(s).replace(' ', 'T') + (String(s).includes('Z') || String(s).length <= 10 ? '' : 'Z'));
+  const d = parseDate(s);
   const diff = (Date.now() - d.getTime()) / 1000;
   if (diff < 60) return 'agora';
   if (diff < 3600) return `há ${Math.floor(diff / 60)} min`;

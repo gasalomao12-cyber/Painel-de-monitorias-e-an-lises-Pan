@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import {
   html, raw, icon, $, $$, esc, fmtScore, fmtDate, fmtDur, fmtRel, avatar, productChip, scoreRing, deltaTag, resChip, toast, modal, busy,
-  confirmDialog, readFileAsBase64, RESULT, ROLE, userName, emptyState,
+  confirmDialog, readFileAsBase64, RESULT, ROLE, userName, emptyState, parseDate,
 } from '../ui.js';
 
 const PARTIAL = 0.5;
@@ -412,7 +412,7 @@ function drawFeedback(body, el, ctx) {
           ${e.status === 'pendente' ? html`<div class="banner warn">${icon('alert')}<div>A análise ainda não foi validada pela Qualidade. Recomendamos revisar os critérios antes de aplicar o feedback, para não basear a conversa em uma leitura incorreta do speech.</div></div>` : ''}
           <form id="fb-form">
             <div class="grid g-3">
-              <div class="field"><label for="fb-at">Data e hora do feedback</label><input class="input" id="fb-at" name="applied_at" type="datetime-local" required value="${f ? String(f.applied_at).replace(' ', 'T').slice(0, 16) : localDateTime()}"></div>
+              <div class="field"><label for="fb-at">Data e hora do feedback</label><input class="input" id="fb-at" name="applied_at" type="datetime-local" required value="${f ? localDateTime(parseDate(f.applied_at)) : localDateTime()}"></div>
               <div class="field"><label for="fb-mod">Modalidade</label><select class="select" id="fb-mod" name="modality">${['Presencial', 'Remoto (Teams)', 'Por telefone', 'Chat corporativo'].map((x) => html`<option ${f?.modality === x ? 'selected' : ''}>${x}</option>`)}</select></div>
               <div class="field"><label for="fb-fu">Reavaliar em</label><input class="input" id="fb-fu" name="followup_date" type="date" value="${f?.followup_date || ''}"></div>
             </div>
@@ -457,7 +457,7 @@ function drawFeedback(body, el, ctx) {
     $('#fb-form', body).addEventListener('submit', async (x) => {
       x.preventDefault();
       const fm = x.target;
-      const data = { applied_at: fm.applied_at.value.replace('T', ' ') + ':00', modality: fm.modality.value, followup_date: fm.followup_date.value, content: fm.content.value, strengths: fm.strengths.value, improvements: fm.improvements.value, action_plan: fm.action_plan.value, operator_ack: fm.operator_ack.checked };
+      const data = { applied_at: new Date(fm.applied_at.value).toISOString(), modality: fm.modality.value, followup_date: fm.followup_date.value, content: fm.content.value, strengths: fm.strengths.value, improvements: fm.improvements.value, action_plan: fm.action_plan.value, operator_ack: fm.operator_ack.checked };
       busy($('#fb-save', body), true, 'Salvando');
       try {
         ev = f ? await api.put(`/evaluations/${e.id}/feedback/${f.id}`, data) : await api.post(`/evaluations/${e.id}/feedback`, data);
