@@ -1,7 +1,8 @@
 'use strict';
-const { all, get, run, tx, getSetting, setSetting } = require('./db');
-const { hashPassword } = require('./auth');
+const { admin, must, fetchAll } = require('./supa');
+const { getSetting, setSetting } = require('./db');
 const { computeScore } = require('./scoring');
+const { findAuthUserByEmail, validatePassword } = require('./auth');
 
 const DEFAULT_CRITERIA = [
   // Comuns aos dois produtos
@@ -28,25 +29,48 @@ const DEFAULT_CRITERIA = [
   ['ENTREGA', 'EFO', 'Formalização da entrega', 'Confirmou o aceite e explicou a assinatura do termo de entrega.', 1.5, 0],
 ];
 
-function seedBase() {
-  if (!get('SELECT id FROM criteria LIMIT 1')) {
-    DEFAULT_CRITERIA.forEach((c, i) => run(
-      'INSERT INTO criteria (product, code, name, description, weight, critical, sort) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      c[0], c[1], c[2], c[3], c[4], c[5], i + 1));
+
+async function seedBase() {
+  const sb = admin();
+  const hasCriteria = await must(sb.from('px_criteria').select('id').limit(1));
+  if (!hasCriteria.length) {
+    await must(sb.from('px_criteria').insert(DEFAULT_CRITERIA.map((c, i) => ({
+      product: c[0], code: c[1], name: c[2], description: c[3], weight: c[4], critical: !!c[5], sort: i + 1,
+    }))));
   }
-  if (!get('SELECT id FROM users LIMIT 1')) {
-    const pw = process.env.ADMIN_PASSWORD || 'Px@2026admin';
-    run(`INSERT INTO users (username, name, role, password_hash, must_change_password) VALUES (?, ?, 'admin', ?, 1)`,
-      process.env.ADMIN_USER || 'admin', 'Administrador', hashPassword(pw));
-    console.log(`\n  ▸ Usuário administrador criado: ${process.env.ADMIN_USER || 'admin'} / ${process.env.ADMIN_PASSWORD ? '(senha de ADMIN_PASSWORD)' : pw}`);
-    console.log('    A troca de senha é obrigatória no primeiro acesso.\n');
-  }
-  if (getSetting('company_name') == null) setSetting('company_name', 'Paschoalotto');
-  if (getSetting('ai_model') == null) setSetting('ai_model', 'claude-opus-5-5');
-  if (getSetting('ai_effort') == null) setSetting('ai_effort', 'high');
+  await ensureAdmin();
+  if (getSetting('company_name') == null) await setSetting('company_name', 'Paschoalotto');
+  if (getSetting('ai_model') == null) await setSetting('ai_model', 'claude-opus-5-5');
+  if (getSetting('ai_effort') == null) await setSetting('ai_effort', 'high');
 }
 
-// ---------- Dados de demonstração ----------
+// Garante o primeiro administrador a partir de ADMIN_EMAIL / ADMIN_PASSWORD
+async function ensureAdmin() {
+  const sb = admin();
+  const admins = await must(sb.from('px_profiles').select('id').eq('role', 'admin').limit(1));
+  if (admins.length) return;
+  const email = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  if (!email) {
+    console.warn('\n  ⚠ Nenhum administrador cadastrado. Defina ADMIN_EMAIL (e ADMIN_PASSWORD) e reinicie o servidor.\n');
+    return;
+  }
+  let user = await findAuthUserByEmail(email);
+  let mustChange = false;
+  if (!user) {
+    const password = process.env.ADMIN_PASSWORD;
+    const err = validatePassword(password);
+    if (err) { console.warn(`\n  ⚠ ADMIN_PASSWORD inválida para criar o administrador: ${err}\n`); return; }
+    const { data, error } = await sb.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name: 'Administrador' } });
+    if (error) throw error;
+    user = data.user;
+    mustChange = true;
+    console.log(`\n  ▸ Administrador criado no Supabase Auth: ${email} (troca de senha obrigatória no 1º acesso).\n`);
+  } else {
+    console.log(`\n  ▸ Administrador vinculado a um usuário já existente no Supabase Auth: ${email} (use a senha atual dele).\n`);
+  }
+  await must(sb.from('px_profiles').upsert({ id: user.id, email, name: user.user_metadata?.name || 'Administrador', role: 'admin', must_change_password: mustChange }));
+}
+
 function prng(seed) {
   let s = seed >>> 0;
   return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
@@ -107,137 +131,157 @@ const SAMPLE_TRANSCRIPT_ENTREGA = `[00:00] Operador: Boa tarde, aqui é {OP}, da
 [01:08] Cliente: Pode ser.
 [01:10] Operador: Lembre de retirar seus pertences do carro. Ficou agendado quinta às 10h. Obrigado e boa tarde.`;
 
-function seedDemo() {
+
+const DEMO_DOMAIN = 'px-demo.local';
+
+async function demoUser(username, name, role) {
+  const sb = admin();
+  const email = `${username}@${DEMO_DOMAIN}`;
+  let user = await findAuthUserByEmail(email);
+  if (!user) {
+    const { data, error } = await sb.auth.admin.createUser({ email, password: 'Px@2026demo', email_confirm: true, user_metadata: { name } });
+    if (error) throw error;
+    user = data.user;
+  }
+  await must(sb.from('px_profiles').upsert({ id: user.id, email, name, role, must_change_password: true }));
+  return user.id;
+}
+
+async function seedDemo() {
   if (getSetting('demo_seeded') === '1') return;
-  if (get('SELECT id FROM evaluations LIMIT 1')) { setSetting('demo_seeded', '1'); return; }
+  const sb = admin();
+  if ((await must(sb.from('px_evaluations').select('id').limit(1))).length) { await setSetting('demo_seeded', '1'); return; }
 
   const rnd = prng(20261024);
   const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+  const ids = {
+    qualidade: await demoUser('qualidade', 'Analista de Qualidade', 'qualidade'),
+    'supervisor.alfa': await demoUser('supervisor.alfa', 'Supervisor Equipe Alfa', 'supervisor'),
+    'supervisor.beta': await demoUser('supervisor.beta', 'Supervisora Equipe Beta', 'supervisor'),
+  };
+  const qualityId = ids.qualidade;
 
-  tx(() => {
-    // usuários de demonstração
-    const demoUsers = [
-      ['qualidade', 'Analista de Qualidade', 'qualidade'],
-      ['supervisor.alfa', 'Supervisor Equipe Alfa', 'supervisor'],
-      ['supervisor.beta', 'Supervisora Equipe Beta', 'supervisor'],
-    ];
-    const ids = {};
-    for (const [u, n, r] of demoUsers) {
-      if (!get('SELECT id FROM users WHERE username = ?', u)) {
-        const info = run(`INSERT INTO users (username, name, role, password_hash, must_change_password) VALUES (?, ?, ?, ?, 1)`, u, n, r, hashPassword('Px@2026demo'));
-        ids[u] = Number(info.lastInsertRowid);
-      } else ids[u] = get('SELECT id FROM users WHERE username = ?', u).id;
-    }
-    const qualityId = ids.qualidade;
+  const ops = await must(sb.from('px_operators').insert(DEMO_OPERATORS.map(([name, team], i) => ({
+    name, team, registration: `PX${String(1040 + i * 7).padStart(5, '0')}`, is_demo: true,
+    supervisor_user_id: team === 'Equipe Alfa' ? ids['supervisor.alfa'] : ids['supervisor.beta'],
+    supervisor_name: team === 'Equipe Alfa' ? 'Supervisor Equipe Alfa' : 'Supervisora Equipe Beta',
+  }))).select('id, registration'));
+  const opIds = DEMO_OPERATORS.map((_, i) => ops.find((o) => o.registration === `PX${String(1040 + i * 7).padStart(5, '0')}`).id);
+  const skill = opIds.map(() => 0.58 + rnd() * 0.38);
+  const growth = opIds.map(() => (rnd() - 0.3) * 0.035);
 
-    const opIds = DEMO_OPERATORS.map(([name, team], i) => {
-      const sup = team === 'Equipe Alfa' ? ids['supervisor.alfa'] : ids['supervisor.beta'];
-      const supName = team === 'Equipe Alfa' ? 'Supervisor Equipe Alfa' : 'Supervisora Equipe Beta';
-      const info = run('INSERT INTO operators (name, registration, team, supervisor_user_id, supervisor_name) VALUES (?, ?, ?, ?, ?)',
-        name, `PX${String(1040 + i * 7).padStart(5, '0')}`, team, sup, supName);
-      return Number(info.lastInsertRowid);
-    });
-    // perfil de habilidade por operador (0.55 a 0.97)
-    const skill = opIds.map(() => 0.58 + rnd() * 0.38);
-    const growth = opIds.map(() => (rnd() - 0.3) * 0.035);
+  const criteria = await must(sb.from('px_criteria').select('*').eq('active', true).order('sort'));
+  const crit = (p) => criteria.filter((c) => c.product === 'AMBOS' || c.product === p);
 
-    const criteria = all('SELECT * FROM criteria WHERE active = 1 ORDER BY sort');
-    const crit = (p) => criteria.filter((c) => c.product === 'AMBOS' || c.product === p);
+  const cycles = await must(sb.from('px_cycles').insert(DEMO_CYCLES.map(([name, s, e, st]) => ({
+    name, start_date: s, end_date: e, status: st, is_demo: true,
+    audio_folder_url: 'https://onedrive.live.com/?id=EXEMPLO-' + s.replace(/-/g, ''),
+    published_at: st !== 'aberto' ? `${e}T18:00:00-03:00` : null,
+  }))).select('id, start_date'));
+  const cycleIds = DEMO_CYCLES.map(([, s]) => cycles.find((c) => c.start_date === s).id);
 
-    const cycleIds = DEMO_CYCLES.map(([name, s, e, st]) => Number(run(
-      'INSERT INTO cycles (name, start_date, end_date, status, audio_folder_url, published_at) VALUES (?, ?, ?, ?, ?, ?)',
-      name, s, e, st, 'https://onedrive.live.com/?id=EXEMPLO-' + s.replace(/-/g, ''), st !== 'aberto' ? e + ' 18:00:00' : null).lastInsertRowid));
+  const firstNames = ['Carlos', 'Patrícia', 'Roberto', 'Juliana', 'Marcos', 'Fernanda', 'Paulo', 'Luciana', 'André', 'Tatiane', 'Sérgio', 'Vanessa'];
+  const lastNames = ['Silva', 'Gomes', 'Oliveira', 'Santos', 'Pereira', 'Costa', 'Almeida', 'Ribeiro', 'Carvalho', 'Barbosa'];
+  const speechMisreads = [
+    'Speech não reconheceu a confirmação de CPF (áudio com ruído).',
+    'Termo "custo efetivo" transcrito como "custo e feito".',
+    'Speech interpretou pausa como ausência de encerramento.',
+    'Fala do cliente atribuída ao operador na transcrição.',
+  ];
 
-    const firstNames = ['Carlos', 'Patrícia', 'Roberto', 'Juliana', 'Marcos', 'Fernanda', 'Paulo', 'Luciana', 'André', 'Tatiane', 'Sérgio', 'Vanessa'];
-    const lastNames = ['Silva', 'Gomes', 'Oliveira', 'Santos', 'Pereira', 'Costa', 'Almeida', 'Ribeiro', 'Carvalho', 'Barbosa'];
-    const speechMisreads = [
-      'Speech não reconheceu a confirmação de CPF (áudio com ruído).',
-      'Termo "custo efetivo" transcrito como "custo e feito".',
-      'Speech interpretou pausa como ausência de encerramento.',
-      'Fala do cliente atribuída ao operador na transcrição.',
-    ];
-
-    DEMO_CYCLES.forEach(([, start], ci) => {
-      const cycleId = cycleIds[ci];
-      const closed = DEMO_CYCLES[ci][3] !== 'aberto';
-      opIds.forEach((opId, oi) => {
-        const n = 2 + Math.floor(rnd() * 2);
-        for (let k = 0; k < n; k++) {
-          const product = rnd() < 0.62 ? 'REFIN' : 'ENTREGA';
-          const day = 1 + Math.floor(rnd() * 14);
-          const callDate = start.slice(0, 8) + String(Number(start.slice(8)) + day - 1).padStart(2, '0');
-          const p = Math.min(0.99, skill[oi] + growth[oi] * ci + (product === 'ENTREGA' ? -0.05 : 0));
-          const items = crit(product).map((c) => {
-            const x = rnd();
-            let r = x < p ? 'C' : x < p + (1 - p) * 0.45 ? 'P' : 'NC';
-            if (c.critical && r === 'NC' && rnd() < 0.7) r = 'P';
-            if (c.code === 'RDA' && rnd() < 0.15) r = 'NA';
-            return { c, speech: r };
-          });
-          // simula leituras equivocadas do speech em ~30% das monitorias
-          const misread = rnd() < 0.3;
-          const misreadIdx = misread ? Math.floor(rnd() * items.length) : -1;
-          if (misread && items[misreadIdx].speech === 'C') items[misreadIdx].speech = 'NC';
-
-          const speechScore = computeScore(items.map((i) => ({ ...i.c, speech_result: i.speech })), 'speech_result').score;
-          const reviewed = closed ? rnd() < 0.9 : rnd() < 0.35;
-          const finalItems = items.map((it, idx) => {
-            let fin = it.speech, adjusted = 0, reason = null;
-            if (reviewed && idx === misreadIdx) { fin = 'C'; adjusted = 1; reason = pick(speechMisreads); }
-            return { ...it, fin, adjusted, reason };
-          });
-          const finalScore = reviewed
-            ? computeScore(finalItems.map((i) => ({ ...i.c, final_result: i.fin })), 'final_result').score
-            : speechScore;
-          const fbApplied = reviewed && (closed ? rnd() < 0.85 : rnd() < 0.3);
-          const customer = `${pick(firstNames)} ${pick(lastNames)}`;
-          const hasTranscript = ci >= 5 && rnd() < 0.4;
-          const opName = DEMO_OPERATORS[oi][0].split(' ')[0];
-          const evalInfo = run(`INSERT INTO evaluations (cycle_id, operator_id, product, call_date, protocol, contract, customer, duration_sec,
-            speech_score, final_score, speech_summary, status, transcript, transcript_name, reviewed_by, reviewed_at, is_demo, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-          cycleId, opId, product, callDate,
-          `${callDate.replace(/-/g, '')}${String(Math.floor(rnd() * 1e6)).padStart(6, '0')}`,
-          `***${String(Math.floor(rnd() * 1e5)).padStart(5, '0')}`, customer, 90 + Math.floor(rnd() * 600),
-          speechScore, finalScore,
-          product === 'REFIN' ? 'Contato de refinanciamento com proposta apresentada.' : 'Contato de entrega amigável do veículo.',
-          fbApplied ? 'feedback_aplicado' : reviewed ? 'revisada' : 'pendente',
-          hasTranscript ? (product === 'REFIN' ? SAMPLE_TRANSCRIPT_REFIN : SAMPLE_TRANSCRIPT_ENTREGA).replace(/\{OP\}/g, opName) : null,
-          hasTranscript ? 'transcricao.txt' : null,
-          reviewed ? qualityId : null, reviewed ? callDate + ' 17:30:00' : null, qualityId);
-          const evalId = Number(evalInfo.lastInsertRowid);
-          for (const it of finalItems) {
-            run(`INSERT INTO evaluation_items (evaluation_id, criterion_id, speech_result, speech_note, final_result, adjusted, adjust_reason, adjust_source, adjusted_by, adjusted_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            evalId, it.c.id, it.speech, it.speech === 'C' ? null : 'Ponto identificado pelo speech analytics.',
-            it.fin, it.adjusted, it.reason, it.adjusted ? 'manual' : null, it.adjusted ? qualityId : null, it.adjusted ? callDate + ' 17:30:00' : null);
-          }
-          if (fbApplied) {
+  const plans = [];
+  DEMO_CYCLES.forEach(([, start], ci) => {
+    const closed = DEMO_CYCLES[ci][3] !== 'aberto';
+    opIds.forEach((opId, oi) => {
+      const n = 2 + Math.floor(rnd() * 2);
+      for (let k = 0; k < n; k++) {
+        const product = rnd() < 0.62 ? 'REFIN' : 'ENTREGA';
+        const day = 1 + Math.floor(rnd() * 14);
+        const callDate = start.slice(0, 8) + String(Number(start.slice(8)) + day - 1).padStart(2, '0');
+        const p = Math.min(0.99, skill[oi] + growth[oi] * ci + (product === 'ENTREGA' ? -0.05 : 0));
+        const items = crit(product).map((c) => {
+          const x = rnd();
+          let r = x < p ? 'C' : x < p + (1 - p) * 0.45 ? 'P' : 'NC';
+          if (c.critical && r === 'NC' && rnd() < 0.7) r = 'P';
+          if (c.code === 'RDA' && rnd() < 0.15) r = 'NA';
+          return { c, speech: r };
+        });
+        const misread = rnd() < 0.3;
+        const misreadIdx = misread ? Math.floor(rnd() * items.length) : -1;
+        if (misread && items[misreadIdx].speech === 'C') items[misreadIdx].speech = 'NC';
+        const speechScore = computeScore(items.map((i) => ({ ...i.c, speech_result: i.speech })), 'speech_result').score;
+        const reviewed = closed ? rnd() < 0.9 : rnd() < 0.35;
+        const finalItems = items.map((it, idx) => {
+          let fin = it.speech, adjusted = false, reason = null;
+          if (reviewed && idx === misreadIdx) { fin = 'C'; adjusted = true; reason = pick(speechMisreads); }
+          return { ...it, fin, adjusted, reason };
+        });
+        const finalScore = reviewed ? computeScore(finalItems.map((i) => ({ ...i.c, final_result: i.fin })), 'final_result').score : speechScore;
+        const fbApplied = reviewed && (closed ? rnd() < 0.85 : rnd() < 0.3);
+        const hasTranscript = ci >= 5 && rnd() < 0.4;
+        const opName = DEMO_OPERATORS[oi][0].split(' ')[0];
+        const protocol = `${callDate.replace(/-/g, '')}${String(Math.floor(rnd() * 1e6)).padStart(6, '0')}${plans.length}`;
+        const at = `${callDate}T17:30:00-03:00`;
+        plans.push({
+          row: {
+            cycle_id: cycleIds[ci], operator_id: opId, product, call_date: callDate, protocol,
+            contract: `***${String(Math.floor(rnd() * 1e5)).padStart(5, '0')}`, customer: `${pick(firstNames)} ${pick(lastNames)}`,
+            duration_sec: 90 + Math.floor(rnd() * 600), speech_score: speechScore, final_score: finalScore,
+            speech_summary: product === 'REFIN' ? 'Contato de refinanciamento com proposta apresentada.' : 'Contato de entrega amigável do veículo.',
+            status: fbApplied ? 'feedback_aplicado' : reviewed ? 'revisada' : 'pendente',
+            transcript: hasTranscript ? (product === 'REFIN' ? SAMPLE_TRANSCRIPT_REFIN : SAMPLE_TRANSCRIPT_ENTREGA).replace(/\{OP\}/g, opName) : null,
+            transcript_name: hasTranscript ? 'transcricao.txt' : null,
+            reviewed_by: reviewed ? qualityId : null, reviewed_at: reviewed ? at : null, is_demo: true, created_by: qualityId,
+          },
+          items: finalItems.map((it) => ({
+            criterion_id: it.c.id, speech_result: it.speech, speech_note: it.speech === 'C' ? null : 'Ponto identificado pelo speech analytics.',
+            final_result: it.fin, adjusted: it.adjusted, adjust_reason: it.reason, adjust_source: it.adjusted ? 'manual' : null,
+            adjusted_by: it.adjusted ? qualityId : null, adjusted_at: it.adjusted ? at : null,
+          })),
+          feedback: fbApplied ? (() => {
             const weak = finalItems.filter((i) => i.fin !== 'C' && i.fin !== 'NA').map((i) => i.c.name);
             const strong = finalItems.filter((i) => i.fin === 'C').slice(0, 3).map((i) => i.c.name);
             const sup = DEMO_OPERATORS[oi][1] === 'Equipe Alfa' ? ids['supervisor.alfa'] : ids['supervisor.beta'];
-            run(`INSERT INTO feedbacks (evaluation_id, operator_id, applied_by, applied_at, modality, content, strengths, improvements, action_plan, operator_ack)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-            evalId, opId, rnd() < 0.5 ? qualityId : sup, callDate + ' 18:10:00', rnd() < 0.7 ? 'Presencial' : 'Remoto (Teams)',
-            weak.length ? `Alinhado com o operador os pontos de melhoria: ${weak.join(', ')}. Reforçado o roteiro e ouvido trecho da ligação junto com ele.` : 'Feedback positivo: atendimento aderente ao roteiro. Operador reconhecido pela qualidade.',
-            strong.join(', '), weak.join(', ') || null,
-            weak.length ? 'Nova monitoria na próxima quinzena com foco nos pontos alinhados.' : null);
-          }
-        }
-      });
+            return {
+              operator_id: opId, applied_by: rnd() < 0.5 ? qualityId : sup, applied_at: `${callDate}T18:10:00-03:00`,
+              modality: rnd() < 0.7 ? 'Presencial' : 'Remoto (Teams)',
+              content: weak.length ? `Alinhado com o operador os pontos de melhoria: ${weak.join(', ')}. Reforçado o roteiro e ouvido trecho da ligação junto com ele.` : 'Feedback positivo: atendimento aderente ao roteiro. Operador reconhecido pela qualidade.',
+              strengths: strong.join(', '), improvements: weak.join(', ') || null,
+              action_plan: weak.length ? 'Nova monitoria na próxima quinzena com foco nos pontos alinhados.' : null, operator_ack: true,
+            };
+          })() : null,
+        });
+      }
     });
-    setSetting('demo_seeded', '1');
   });
-  console.log('  ▸ Dados de demonstração carregados (usuários demo com senha Px@2026demo).');
+
+  for (let i = 0; i < plans.length; i += 100) {
+    const batch = plans.slice(i, i + 100);
+    const rows = await must(sb.from('px_evaluations').insert(batch.map((b) => b.row)).select('id, protocol'));
+    const idBy = new Map(rows.map((r) => [r.protocol, r.id]));
+    await must(sb.from('px_evaluation_items').insert(batch.flatMap((b) => b.items.map((it) => ({ ...it, evaluation_id: idBy.get(b.row.protocol) })))));
+    const fbs = batch.filter((b) => b.feedback).map((b) => ({ ...b.feedback, evaluation_id: idBy.get(b.row.protocol) }));
+    if (fbs.length) await must(sb.from('px_feedbacks').insert(fbs));
+  }
+  await setSetting('demo_seeded', '1');
+  console.log(`  ▸ Dados de demonstração carregados (${plans.length} monitorias; usuários *@${DEMO_DOMAIN}, senha Px@2026demo).`);
 }
 
-function clearDemo() {
-  tx(() => {
-    run('DELETE FROM evaluations WHERE is_demo = 1');
-    run('DELETE FROM operators WHERE id NOT IN (SELECT DISTINCT operator_id FROM evaluations)');
-    run("DELETE FROM cycles WHERE id NOT IN (SELECT DISTINCT cycle_id FROM evaluations WHERE cycle_id IS NOT NULL) AND audio_folder_url LIKE 'https://onedrive.live.com/?id=EXEMPLO-%'");
-    run("DELETE FROM users WHERE username IN ('qualidade','supervisor.alfa','supervisor.beta') AND last_login IS NULL");
-  });
+async function clearDemo() {
+  const sb = admin();
+  await must(sb.from('px_evaluations').delete().eq('is_demo', true));
+  const used = new Set((await fetchAll(() => sb.from('px_evaluations').select('operator_id, cycle_id').order('id'))).flatMap((e) => [`o${e.operator_id}`, `c${e.cycle_id}`]));
+  const demoOps = await must(sb.from('px_operators').select('id').eq('is_demo', true));
+  const delOps = demoOps.filter((o) => !used.has(`o${o.id}`)).map((o) => o.id);
+  if (delOps.length) await must(sb.from('px_operators').delete().in('id', delOps));
+  const demoCycles = await must(sb.from('px_cycles').select('id').eq('is_demo', true));
+  const delCycles = demoCycles.filter((c) => !used.has(`c${c.id}`)).map((c) => c.id);
+  if (delCycles.length) await must(sb.from('px_cycles').delete().in('id', delCycles));
+  const demoUsers = await must(sb.from('px_profiles').select('id, last_login').like('email', `%@${DEMO_DOMAIN}`));
+  for (const u of demoUsers.filter((x) => !x.last_login)) {
+    await must(sb.from('px_profiles').delete().eq('id', u.id));
+    await sb.auth.admin.deleteUser(u.id);
+  }
 }
 
-module.exports = { seedBase, seedDemo, clearDemo, SAMPLE_TRANSCRIPT_REFIN, SAMPLE_TRANSCRIPT_ENTREGA };
+module.exports = { seedBase, seedDemo, clearDemo, SAMPLE_TRANSCRIPT_REFIN, SAMPLE_TRANSCRIPT_ENTREGA, DEFAULT_CRITERIA };

@@ -1,23 +1,15 @@
 'use strict';
+// Sessão com Supabase Auth.
+// O login acontece no servidor (signInWithPassword); os tokens do Supabase ficam em cookies httpOnly
+// e cada requisição tem o JWT verificado pelo @supabase/server (JWKS do projeto). Quando o access token
+// expira, o refresh token renova a sessão de forma transparente.
 const crypto = require('crypto');
-const { get, run } = require('./db');
+const { verifyCredentials } = require('@supabase/server/core');
+const { admin, authClient, must } = require('./supa');
 
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 7);
-const COOKIE = 'px_session';
-
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return `scrypt$${salt}$${hash}`;
-}
-
-function verifyPassword(password, stored) {
-  const [alg, salt, hash] = String(stored || '').split('$');
-  if (alg !== 'scrypt' || !salt || !hash) return false;
-  const test = crypto.scryptSync(password, salt, 64);
-  const ref = Buffer.from(hash, 'hex');
-  return ref.length === test.length && crypto.timingSafeEqual(ref, test);
-}
+const AT = 'px_at';
+const RT = 'px_rt';
 
 function validatePassword(pw) {
   if (typeof pw !== 'string' || pw.length < 8) return 'A senha precisa ter pelo menos 8 caracteres.';
@@ -25,12 +17,11 @@ function validatePassword(pw) {
   return null;
 }
 
-function createSession(userId) {
-  const token = crypto.randomBytes(32).toString('hex');
-  const expires = new Date(Date.now() + SESSION_DAYS * 864e5).toISOString();
-  run('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)', token, userId, expires);
-  run("DELETE FROM sessions WHERE expires_at < ?", new Date().toISOString());
-  return { token, expires };
+function tempPassword() {
+  const c = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz';
+  const d = '23456789';
+  const r = (s) => s[crypto.randomInt(s.length)];
+  return `Px${r(c)}${r(c)}${r(c)}${r(c)}${r(d)}${r(d)}${r(d)}${r(c)}`;
 }
 
 function parseCookies(header) {
@@ -42,34 +33,63 @@ function parseCookies(header) {
   return out;
 }
 
-function setSessionCookie(req, res, token, expires) {
+function cookieFlags(req) {
   const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
-  res.setHeader('Set-Cookie', `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Expires=${new Date(expires).toUTCString()}${secure ? '; Secure' : ''}`);
+  return `Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
 }
 
-function clearSessionCookie(res) {
-  res.setHeader('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+function setSessionCookies(req, res, session) {
+  const maxAge = SESSION_DAYS * 86400;
+  res.append('Set-Cookie', `${AT}=${encodeURIComponent(session.access_token)}; ${cookieFlags(req)}; Max-Age=${maxAge}`);
+  res.append('Set-Cookie', `${RT}=${encodeURIComponent(session.refresh_token)}; ${cookieFlags(req)}; Max-Age=${maxAge}`);
+}
+
+function clearSessionCookies(req, res) {
+  res.append('Set-Cookie', `${AT}=; ${cookieFlags(req)}; Max-Age=0`);
+  res.append('Set-Cookie', `${RT}=; ${cookieFlags(req)}; Max-Age=0`);
+}
+
+async function verifyToken(token) {
+  if (!token) return null;
+  const { data, error } = await verifyCredentials({ token, apikey: null }, { auth: 'user' });
+  if (error || !data?.userClaims?.id) return null;
+  return data.userClaims.id;
+}
+
+async function loadProfile(id) {
+  return must(admin().from('px_profiles').select('*').eq('id', id).maybeSingle());
 }
 
 function publicUser(u) {
   if (!u) return null;
   return {
-    id: u.id, username: u.username, name: u.name, display_name: u.display_name, email: u.email,
-    role: u.role, must_change_password: !!u.must_change_password, onboarded: !!u.onboarded,
-    active: !!u.active, theme: u.theme, created_at: u.created_at, last_login: u.last_login,
+    id: u.id, email: u.email, name: u.name, display_name: u.display_name, role: u.role,
+    must_change_password: !!u.must_change_password, onboarded: !!u.onboarded, active: !!u.active,
+    theme: u.theme, created_at: u.created_at, last_login: u.last_login,
   };
 }
 
-function authenticate(req, _res, next) {
-  const token = parseCookies(req.headers.cookie)[COOKIE];
-  if (token) {
-    const row = get(`SELECT u.*, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`, token);
-    if (row && row.active && row.expires_at > new Date().toISOString()) {
-      req.user = row;
-      req.sessionToken = token;
+async function authenticate(req, res, next) {
+  try {
+    const cookies = parseCookies(req.headers.cookie);
+    let uid = await verifyToken(cookies[AT]);
+    let token = cookies[AT];
+    if (!uid && cookies[RT]) {
+      const { data, error } = await authClient().auth.refreshSession({ refresh_token: cookies[RT] });
+      if (!error && data?.session) {
+        setSessionCookies(req, res, data.session);
+        uid = data.session.user.id;
+        token = data.session.access_token;
+      } else {
+        clearSessionCookies(req, res);
+      }
     }
-  }
-  next();
+    if (uid) {
+      const profile = await loadProfile(uid);
+      if (profile && profile.active) { req.user = profile; req.accessToken = token; }
+    }
+    next();
+  } catch (e) { next(e); }
 }
 
 function requireAuth(req, res, next) {
@@ -85,13 +105,11 @@ function requireRole(...roles) {
   };
 }
 
-// Tentativas de login por IP+usuário (proteção simples contra força bruta)
+// Proteção simples contra força bruta (o Supabase também limita por IP)
 const attempts = new Map();
 function loginThrottle(key) {
-  const now = Date.now();
-  const a = attempts.get(key) || { n: 0, until: 0, first: now };
-  if (a.until > now) return Math.ceil((a.until - now) / 1000);
-  return 0;
+  const a = attempts.get(key);
+  return a && a.until > Date.now() ? Math.ceil((a.until - Date.now()) / 1000) : 0;
 }
 function loginFailed(key) {
   const now = Date.now();
@@ -103,7 +121,20 @@ function loginFailed(key) {
 }
 function loginOk(key) { attempts.delete(key); }
 
+// Localiza um usuário do Supabase Auth pelo e-mail (o projeto pode ter usuários de outros apps)
+async function findAuthUserByEmail(email) {
+  const target = String(email).toLowerCase();
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await admin().auth.admin.listUsers({ page, perPage: 200 });
+    if (error) throw error;
+    const hit = data.users.find((u) => String(u.email).toLowerCase() === target);
+    if (hit) return hit;
+    if (data.users.length < 200) return null;
+  }
+  return null;
+}
+
 module.exports = {
-  hashPassword, verifyPassword, validatePassword, createSession, setSessionCookie, clearSessionCookie,
-  authenticate, requireAuth, requireRole, publicUser, loginThrottle, loginFailed, loginOk, COOKIE,
+  validatePassword, tempPassword, setSessionCookies, clearSessionCookies, verifyToken, loadProfile, publicUser,
+  authenticate, requireAuth, requireRole, loginThrottle, loginFailed, loginOk, findAuthUserByEmail,
 };

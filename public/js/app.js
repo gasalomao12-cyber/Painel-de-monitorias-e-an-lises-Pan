@@ -1,7 +1,7 @@
 import { api } from './api.js';
 import { html, raw, icon, pxLogo, $, $$, toast, modal, avatar, userName, ROLE, esc, busy, readFileAsBase64, fmtRel } from './ui.js';
 import { destroyAll } from './charts.js';
-import { renderLogin, renderChangePassword, renderWelcome } from './views/auth.js';
+import { renderLogin, renderChangePassword, renderWelcome, renderRecover } from './views/auth.js';
 
 const app = document.getElementById('app');
 export const store = { user: null, meta: null, company: 'Paschoalotto', cycle: localStorage.getItem('px_cycle') || '' };
@@ -285,6 +285,7 @@ document.addEventListener('keydown', (e) => {
 // ---------------- Inicialização ----------------
 export async function start() {
   const boot = document.getElementById('boot');
+  if (location.pathname === '/redefinir-senha') { boot?.classList.add('hide'); renderRecover(app, { onDone: start }); return; }
   try {
     const me = await api.get('/auth/me');
     store.company = me.company || store.company;
