@@ -1,0 +1,79 @@
+/* Report de qualidade — páginas A4 paisagem */
+@page { size: A4 landscape; margin: 0; }
+html, body { background: #05070e; }
+:root[data-theme="light"] body { background: #dfe3ec; }
+body { padding: 76px 0 40px; }
+.r-toolbar { position: fixed; top: 0; left: 0; right: 0; z-index: 10; display: flex; align-items: center; gap: 10px; padding: 12px 20px; background: rgba(10,14,26,.85); backdrop-filter: blur(14px); border-bottom: 1px solid rgba(255,255,255,.08); color: #fff; }
+.r-toolbar .grow { flex: 1; }
+.r-toolbar .btn { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.14); color: #fff; }
+.r-toolbar .btn.primary { background: linear-gradient(135deg,#7c6cff,#22c3ee); border-color: transparent; }
+.pages { display: flex; flex-direction: column; align-items: center; gap: 28px; transform-origin: top center; }
+.page { width: 297mm; height: 210mm; position: relative; overflow: hidden; background: var(--bg); color: var(--text); box-shadow: 0 30px 80px -30px rgba(0,0,0,.8); border-radius: 6px; display: flex; flex-direction: column; padding: 13mm 14mm 11mm; }
+.page-h { display: flex; align-items: center; gap: 12px; margin-bottom: 7mm; }
+.page-h .px-logo { width: 30px; height: 30px; }
+.page-h .t { flex: 1; }
+.page-h h2 { margin: 0; font-size: 22px; letter-spacing: -.03em; line-height: 1.1; }
+.page-h .k { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--brand); font-weight: 800; }
+.page-h .meta { text-align: right; font-size: 11px; color: var(--muted); }
+.page-f { margin-top: auto; padding-top: 5mm; display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); border-top: 1px solid var(--border); }
+.page .body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 5mm; }
+.page .grid { gap: 4mm; }
+.page .card { border-radius: 14px; box-shadow: none; }
+.page .card-head { padding: 12px 14px 0; }
+.page .card-head h3 { font-size: 13px; }
+.page .card-body { padding: 10px 14px 12px; }
+.page .chart-box { height: auto; flex: 1; min-height: 0; }
+.page .kpi { padding: 12px 14px; }
+.page .kpi .k-val { font-size: 27px; margin-top: 6px; }
+.page .tbl { font-size: 11px; }
+.page .tbl th { font-size: 9.5px; padding: 6px 8px; background: transparent; position: static; }
+.page .tbl td { padding: 6px 8px; }
+.fill { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.fill > .card-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.row-fill { flex: 1; min-height: 0; display: grid; gap: 4mm; }
+
+/* capa */
+.cover { padding: 0; color: #fff; background: #070a16; justify-content: space-between; }
+.cover .mesh { position: absolute; inset: -25%; filter: blur(70px) saturate(140%); opacity: .95;
+  background: radial-gradient(38% 42% at 18% 28%, #7c6cff 0%, transparent 60%), radial-gradient(34% 36% at 82% 22%, #22c3ee 0%, transparent 60%), radial-gradient(44% 44% at 64% 88%, #3d5bff 0%, transparent 60%), radial-gradient(28% 30% at 8% 92%, #b05cff 0%, transparent 60%); }
+.cover .grid-lines { position: absolute; inset: 0; background-image: linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px); background-size: 52px 52px; mask-image: radial-gradient(ellipse at 30% 40%, #000 20%, transparent 70%); }
+.cover .in { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; padding: 16mm 18mm 14mm; }
+.cover .brand { display: flex; align-items: center; gap: 14px; font-weight: 700; }
+.cover .brand .px-logo { width: 54px; height: 54px; box-shadow: 0 10px 40px -8px rgba(124,108,255,.9); }
+.cover .brand small { display: block; opacity: .7; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; font-size: 11px; }
+.cover .kicker { margin-top: auto; font-size: 13px; letter-spacing: .22em; text-transform: uppercase; font-weight: 800; opacity: .85; }
+.cover h1 { font-size: 58px; line-height: 1.02; letter-spacing: -.045em; margin: 10px 0 14px; font-weight: 800; max-width: 17ch; }
+.cover .sub { font-size: 18px; opacity: .85; max-width: 60ch; }
+.cover .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 22px; }
+.cover .chips span { padding: 7px 14px; border-radius: 99px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); backdrop-filter: blur(10px); font-size: 12.5px; font-weight: 650; }
+.cover .foot { margin-top: 18mm; display: flex; justify-content: space-between; align-items: flex-end; font-size: 12px; opacity: .8; }
+.cover .big { display: flex; gap: 26px; }
+.cover .big div b { display: block; font-size: 34px; letter-spacing: -.04em; font-weight: 800; }
+.cover .big div span { font-size: 11px; opacity: .75; text-transform: uppercase; letter-spacing: .1em; }
+:root[data-theme="light"] .cover { background: #0b0f20; }
+
+.ins-list { display: grid; gap: 3mm; }
+.ins { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); font-size: 12px; }
+.ins .ic { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+.ins .ic svg { width: 14px; height: 14px; }
+.podium { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4mm; }
+.podium .p { padding: 12px; border-radius: 14px; background: var(--surface-2); text-align: center; }
+.podium .p b.s { font-size: 24px; display: block; letter-spacing: -.03em; }
+.heat td.h { text-align: center; font-weight: 700; border-radius: 6px; }
+
+@media screen and (max-width: 1180px) { .pages { transform: scale(var(--fit, 1)); } }
+@media print {
+  html, body { background: none !important; padding: 0; }
+  .r-toolbar { display: none !important; }
+  .pages { gap: 0; transform: none !important; }
+  .page { box-shadow: none; border-radius: 0; page-break-after: always; break-after: page; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .page:last-child { page-break-after: auto; }
+}
+/* A grade das páginas é fixa: não segue os breakpoints da interface */
+.page .g-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+.page .g-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+.page .g-4 { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+.page .g-6 { grid-template-columns: repeat(6, minmax(0, 1fr)) !important; }
+.page .tbl td { padding: 5px 8px; }
+.page .avatar.sm { width: 22px; height: 22px; border-radius: 7px; font-size: 9.5px; }
+.page .rank { width: 22px; height: 22px; font-size: 11px; }

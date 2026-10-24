@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: px-monitorias
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --omit=dev
+    startCommand: node server/index.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATA_DIR
+        value: /var/data
+      - key: SEED_DEMO
+        value: "true"
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+    disk:
+      name: px-data
+      mountPath: /var/data
+      sizeGB: 1
