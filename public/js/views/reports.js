@@ -8,7 +8,7 @@ const TYPES = [
 ];
 const SECTIONS = [
   ['capa', 'Capa'], ['resumo', 'Resumo executivo'], ['segmentos', 'Produtos e segmentos'], ['evolucao', 'Evolução e comparativo'], ['dispersao', 'Gráficos de dispersão'],
-  ['criterios', 'Critérios'], ['ranking', 'Ranking de operadores'], ['destaques', 'Destaques e feedbacks'], ['speech', 'Qualidade do speech (ajustes)'],
+  ['criterios', 'Critérios'], ['ranking', 'Ranking de operadores'], ['destaques', 'Destaques e feedbacks'],
 ];
 
 export async function render(el, _p, ctx) {
@@ -64,7 +64,7 @@ export async function render(el, _p, ctx) {
     $('#r-op-f').style.display = cfg.type === 'individual' ? '' : 'none';
     $('#r-cyc-hint').textContent = { geral: 'Selecione uma ou mais quinzenas (os números serão consolidados).', comparativo: 'Selecione ao menos duas quinzenas para comparar.', produto: 'Selecione as quinzenas do recorte.', individual: 'Selecione as quinzenas para o histórico do operador.' }[cfg.type];
     const sec = $('#r-secs');
-    sec.querySelectorAll('input').forEach((i) => { i.closest('label').style.display = cfg.type === 'individual' && ['ranking', 'speech'].includes(i.value) ? 'none' : ''; });
+    sec.querySelectorAll('input').forEach((i) => { i.closest('label').style.display = cfg.type === 'individual' && ['ranking'].includes(i.value) ? 'none' : ''; });
   };
   $$('#r-types [data-type]').forEach((x) => {
     const pick = () => { cfg.type = x.dataset.type; sync(); };

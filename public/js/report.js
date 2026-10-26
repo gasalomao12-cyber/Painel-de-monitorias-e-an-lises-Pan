@@ -7,7 +7,7 @@ const P = new URLSearchParams(location.search);
 const cfg = {
   type: P.get('type') || 'geral', cycles: (P.get('cycles') || '').split(',').filter(Boolean), product: P.get('product') || '', segment: P.get('segment') || '', team: P.get('team') || '',
   operator_id: P.get('operator_id') || '', theme: P.get('theme') || 'dark', title: P.get('title') || '', subtitle: P.get('subtitle') || '',
-  sections: (P.get('sections') || 'capa,resumo,evolucao,dispersao,criterios,ranking,destaques,speech').split(','),
+  sections: (P.get('sections') || 'capa,resumo,evolucao,dispersao,criterios,ranking,destaques').split(','),
 };
 document.documentElement.dataset.theme = cfg.theme;
 const has = (s) => cfg.sections.includes(s);
@@ -89,7 +89,6 @@ function insights(d, evo) {
   const minBase = Math.min(5, Math.max(1, ...d.criteria.map((c) => c.base || 0)));
   const crit = d.criteria.filter((c) => c.base >= minBase);
   if (crit[0]) out.push(['target', 'warn', `Critério mais ofensor: <b>${esc(crit[0].name)}</b> (${fmtScore(crit[0].fail_rate)}% de falha)${crit[1] ? `, seguido de ${esc(crit[1].name)} (${fmtScore(crit[1].fail_rate)}%)` : ''}.`]);
-  if (k.evals_adjusted) out.push(['edit', 'info', `<b>${k.evals_adjusted}</b> monitoria(s) (${fmtPct((k.evals_adjusted / k.total) * 100)}) tiveram a análise do speech corrigida antes do feedback — ${k.items_adjusted} critério(s) ajustado(s).`]);
   out.push(['msgCheck', k.feedback_rate >= 90 ? 'ok' : 'warn', `Feedbacks aplicados em <b>${fmtPct(k.feedback_rate)}</b> das monitorias (${k.feedback_applied} de ${k.total}).`]);
   return out;
 }
@@ -104,7 +103,7 @@ function secResumo(d, evo) {
   const st = [k.feedback_applied, k.reviewed - k.feedback_applied, k.total - k.reviewed];
   page('Resumo executivo', 'Principais números do período', html`
     <div class="grid g-6">
-      ${kpi('Nota média final', fmtScore(k.avg_final), '', html`Speech original: <b>${fmtScore(k.avg_speech)}</b>`, 'gauge')}
+      ${kpi('Nota média final', fmtScore(k.avg_final), '', html`${fmtInt(k.total)} monitorias`, 'gauge')}
       ${kpi('Aderência ao roteiro', fmtScore(k.adherence ?? k.conformity), '%', 'itens feitos ÷ itens que cabiam', 'target')}
       ${kpi('Monitorias', fmtInt(k.total), '', countsLabel(k, d), 'headset')}
       ${kpi('Feedbacks aplicados', fmtScore(k.feedback_rate), '%', `${k.feedback_applied} de ${k.total}`, 'msgCheck', 'ok')}
@@ -147,10 +146,9 @@ function secEvolucao(evo, d) {
   const ser = pSeries(d).slice(0, 3);
   page('Evolução', 'Nota por quinzena e comparativo', html`
     <div class="row-fill" style="grid-template-columns: 1.35fr 1fr">
-      <div class="card fill"><div class="card-head"><h3>Evolução da nota média</h3><div class="grow"></div>${raw(legendHtml([{ label: 'Geral', color: c.geral, line: true }, ...(ser.length > 1 ? ser.map((x) => ({ label: x.short, color: x.color, line: true })) : []), { label: 'Speech', color: c.speech, line: true, dash: true }]))}</div>
+      <div class="card fill"><div class="card-head"><h3>Evolução da nota média</h3><div class="grow"></div>${raw(legendHtml([{ label: 'Geral', color: c.geral, line: true }, ...(ser.length > 1 ? ser.map((x) => ({ label: x.short, color: x.color, line: true })) : [])]))}</div>
         <div class="card-body">${chart('c-evo', () => lineChart($('#c-evo'), rows.map((e) => shortCycle(e.cycle)), [
-          { label: 'Geral', data: rows.map((e) => e.geral), color: c.geral, fill: true }, ...(ser.length > 1 ? ser.map((x) => ({ label: x.label, data: rows.map((e) => e[x.key]), color: x.color })) : []),
-          { label: 'Speech', data: rows.map((e) => e.speech), color: c.speech, dash: [5, 4] }], { min: 30 }))}</div></div>
+          { label: 'Geral', data: rows.map((e) => e.geral), color: c.geral, fill: true }, ...(ser.length > 1 ? ser.map((x) => ({ label: x.label, data: rows.map((e) => e[x.key]), color: x.color })) : [])], { min: 30 }))}</div></div>
       <div class="card fill"><div class="card-head"><h3>Comparativo por quinzena</h3></div><div class="card-body">
         <table class="tbl"><thead><tr><th>Quinzena</th><th class="right">Monit.</th><th class="right">Geral</th>${ser.map((x) => html`<th class="right">${x.short}</th>`)}<th class="right">Conf.</th><th class="right">Feedback</th></tr></thead>
         <tbody>${rows.map((e, i) => html`<tr style="${d.selected_cycles.some((s) => s.id === e.cycle_id) ? 'background:var(--brand-soft)' : ''}"><td><b>${shortCycle(e.cycle)}</b></td><td class="right num">${e.total}</td>
@@ -165,12 +163,7 @@ function secDispersao(d) {
   const maxSd = Math.max(10, ...d.operators.map((o) => o.sd || 0));
   const minAvg = Math.max(0, Math.floor(Math.min(...d.operators.map((o) => o.avg ?? 100)) / 10) * 10 - 5);
   page('Dispersão', 'Distribuição e consistência das notas', html`
-    <div class="row-fill" style="grid-template-columns: 1fr 1fr">
-      <div class="card fill"><div class="card-head"><h3>Nota original × nota final</h3><div class="grow"></div>${raw(legendHtml(pSeries(d).map((x) => ({ label: x.label, color: x.color }))))}</div>
-        <div class="card-body"><div class="tiny muted" style="margin-bottom:4px">Acima da diagonal: nota corrigida para cima na revisão; abaixo: para baixo.</div>
-        ${chart('c-sc', () => scatterChart($('#c-sc'), pSeries(d).map((x, i) => (
-          { label: x.label, color: x.color, data: d.scatter.filter((p) => p.product === x.p).map((p) => ({ ...p, label: p.operator })), style: ['circle', 'rectRounded', 'triangle', 'rectRot', 'star'][i % 5] })),
-          { xLabel: 'Nota do speech / 1ª leitura', yLabel: 'Nota final', diagonal: true }))}</div></div>
+    <div class="row-fill" style="grid-template-columns: 1fr">
       <div class="card fill"><div class="card-head"><h3>Mapa de desempenho por operador</h3></div>
         <div class="card-body"><div class="tiny muted" style="margin-bottom:4px">Média × desvio-padrão. Quanto mais à direita e embaixo, melhor e mais consistente.</div>
         ${chart('c-map', () => scatterChart($('#c-map'), [{ label: 'Operadores', color: c.brand, radius: 7, data: d.operators.filter((o) => o.avg != null).map((o) => ({ x: o.avg, y: o.sd, label: o.name })) }],
@@ -222,7 +215,7 @@ function secRanking(d, cyclesCols = null) {
 }
 
 function secDestaques(d) {
-  const tbl = (rows) => html`<table class="tbl"><thead><tr><th>Operador</th><th>Produto</th><th>Data</th><th class="right">Speech</th><th class="right">Final</th><th>Feedback</th></tr></thead><tbody>${rows.map((e) => html`<tr><td><b>${e.operator_name}</b></td><td>${productChip(e.product, e.segment)}</td><td>${fmtDate(e.call_date)}</td><td class="right num">${fmtScore(e.speech_score)}</td><td class="right"><b class="num score-txt band-${band(e.final_score)}">${fmtScore(e.final_score)}</b></td><td>${e.status === 'feedback_aplicado' ? html`<span class="chip ok">aplicado</span>` : html`<span class="chip warn">pendente</span>`}</td></tr>`)}</tbody></table>`;
+  const tbl = (rows) => html`<table class="tbl"><thead><tr><th>Operador</th><th>Produto</th><th>Data</th><th class="right">Nota</th><th>Feedback</th></tr></thead><tbody>${rows.map((e) => html`<tr><td><b>${e.operator_name}</b></td><td>${productChip(e.product, e.segment)}</td><td>${fmtDate(e.call_date)}</td><td class="right"><b class="num score-txt band-${band(e.final_score)}">${fmtScore(e.final_score)}</b></td><td>${e.status === 'feedback_aplicado' ? html`<span class="chip ok">aplicado</span>` : html`<span class="chip warn">pendente</span>`}</td></tr>`)}</tbody></table>`;
   page('Destaques', 'Melhores atendimentos, pontos de atenção e feedbacks', html`
     <div class="grid g-2">
       <div class="card"><div class="card-head"><h3>${icon('award')} Melhores atendimentos</h3></div><div class="card-body">${tbl(d.highlights)}</div></div>
@@ -231,27 +224,6 @@ function secDestaques(d) {
     <div class="card fill"><div class="card-head"><h3>Feedbacks recentes</h3></div><div class="card-body" style="display:grid;grid-template-columns:1fr 1fr;gap:3mm;overflow:hidden">
       ${d.feedbacks.slice(0, 6).map((f) => html`<div class="ins"><span class="ic" style="background:var(--ok-soft);color:var(--ok-ink)">${icon('msgCheck')}</span><div><b>${f.operator_name}</b> <span class="tiny muted">· ${fmtDate(f.applied_at)} · nota ${fmtScore(f.final_score)}</span><div class="t2" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${f.content}</div></div></div>`)}
       ${d.feedbacks.length ? '' : html`<div class="muted small">Nenhum feedback registrado no período.</div>`}</div></div>`);
-}
-
-function secSpeech(d) {
-  const k = d.kpis, c = palette();
-  const adj = [...d.criteria].filter((x) => x.adjusted).sort((a, b) => b.adjusted - a.adjusted).slice(0, 8);
-  page('Qualidade do speech', 'O que a revisão corrigiu antes do feedback', html`
-    <div class="grid g-4">
-      ${kpi('Nota média do speech', fmtScore(k.avg_speech), '', 'antes da revisão', 'headset')}
-      ${kpi('Nota média final', fmtScore(k.avg_final), '', html`${deltaTag(k.avg_final != null && k.avg_speech != null ? k.avg_final - k.avg_speech : null)} após ajustes`, 'gauge')}
-      ${kpi('Monitorias corrigidas', fmtInt(k.evals_adjusted), '', `${fmtPct(k.total ? (k.evals_adjusted / k.total) * 100 : 0)} do total`, 'edit', 'warn')}
-      ${kpi('Assertividade do speech', fmtScore(k.speech_accuracy), '%', 'critérios mantidos sem ajuste', 'target', 'ok')}
-    </div>
-    <div class="row-fill" style="grid-template-columns: 1.2fr 1fr">
-      <div class="card fill"><div class="card-head"><h3>Critérios mais corrigidos na revisão</h3></div><div class="card-body">
-        ${adj.length ? chart('c-adj', () => barChart($('#c-adj'), adj.map((x) => `${x.code} · ${x.name}`), [{ label: 'Ajustes', data: adj.map((x) => x.adjusted) }], { horizontal: true, colors: adj.map(() => c.brand) })) : html`<p class="muted">Nenhum ajuste no período.</p>`}</div></div>
-      <div class="card fill"><div class="card-head"><h3>Por que isso importa</h3></div><div class="card-body">${insightList([
-        ['shield', 'info', 'Cada ajuste tem motivo registrado e autor, garantindo rastreabilidade do que mudou em relação ao speech.'],
-        ['msgCheck', 'ok', 'Feedbacks são aplicados com base na análise revisada, evitando cobrar o operador por leituras equivocadas da ferramenta.'],
-        ['sparkles', 'warn', 'As correções recorrentes indicam onde o speech precisa de calibração (vocabulário, separação de falas, ruído).'],
-      ])}</div></div>
-    </div>`);
 }
 
 // --------------------------------------------------------------- Tipos
@@ -266,7 +238,6 @@ function buildGeral() {
   if (has('criterios')) secCriterios(D);
   if (has('ranking')) secRanking(D);
   if (has('destaques')) secDestaques(D);
-  if (has('speech')) secSpeech(D);
 }
 
 function buildComparativo() {
@@ -299,7 +270,6 @@ function buildComparativo() {
   if (has('dispersao')) secDispersao(D);
   if (has('ranking')) secRanking(D, pcs.map((p) => p.cycle));
   if (has('destaques')) secDestaques(D);
-  if (has('speech')) secSpeech(D);
 }
 
 // Grupos do comparativo: os produtos do recorte ou, com um produto escolhido, os segmentos dele
@@ -333,7 +303,7 @@ function buildProduto() {
     const row = (l, key, f = fmtScore) => html`<tr><td><b>${l}</b></td>${G.map((g) => html`<td class="right num">${f(g.data.kpis[key])}</td>`)}</tr>`;
     page('Produtos', `Indicadores · ${names}`, html`<div class="row-fill" style="grid-template-columns: 1fr 1fr">
       <div class="card fill"><div class="card-body"><table class="tbl"><thead><tr><th>Indicador</th>${G.map((g) => html`<th class="right">${g.label}</th>`)}</tr></thead><tbody>
-        ${row('Nota média final', 'avg_final')}${row('Aderência ao roteiro (%)', 'adherence')}${row('Nota média original', 'avg_speech')}${row('Conformidade (%)', 'conformity')}
+        ${row('Nota média final', 'avg_final')}${row('Aderência ao roteiro (%)', 'adherence')}${row('Conformidade (%)', 'conformity')}
         ${row('Monitorias', 'total', fmtInt)}${row('Operadores', 'operators', fmtInt)}${row('Feedbacks (%)', 'feedback_rate')}${row('Análises corrigidas', 'evals_adjusted', fmtInt)}
       </tbody></table><div class="mt">${insightList(insights(D, FULL.evolution).slice(0, 3))}</div></div></div>
       <div class="card fill"><div class="card-head"><h3>Nota média e aderência</h3><div class="grow"></div>${raw(legendHtml(G.map((g) => ({ label: g.label, color: g.color }))))}</div>
@@ -352,7 +322,6 @@ function buildProduto() {
       ${G.map((g) => html`<div class="card fill"><div class="card-head"><h3>${g.label}</h3></div><div class="card-body">${mini(g.data)}</div></div>`)}</div>`);
   }
   if (has('destaques')) secDestaques(D);
-  if (has('speech')) secSpeech(D);
   void c;
 }
 
@@ -384,7 +353,7 @@ function buildIndividual() {
   if (has('destaques')) {
     const evs = OP.evaluations.filter((e) => !cfg.cycles.length || cfg.cycles.includes(String(e.cycle_id))).slice(0, 12);
     page('Histórico', 'Monitorias e feedbacks do período', html`<div class="row-fill" style="grid-template-columns: 1.1fr 1fr">
-      <div class="card fill"><div class="card-head"><h3>Monitorias</h3></div><div class="card-body"><table class="tbl"><thead><tr><th>Data</th><th>Produto</th><th class="right">Speech</th><th class="right">Final</th><th>Feedback</th></tr></thead><tbody>${evs.map((e) => html`<tr><td>${fmtDate(e.call_date)}</td><td>${productChip(e.product, e.segment)}</td><td class="right num">${fmtScore(e.speech_score)}</td><td class="right"><b class="num score-txt band-${band(e.final_score)}">${fmtScore(e.final_score)}</b></td><td>${e.status === 'feedback_aplicado' ? html`<span class="chip ok">aplicado</span>` : html`<span class="chip warn">pendente</span>`}</td></tr>`)}</tbody></table></div></div>
+      <div class="card fill"><div class="card-head"><h3>Monitorias</h3></div><div class="card-body"><table class="tbl"><thead><tr><th>Data</th><th>Produto</th><th class="right">Nota</th><th>Feedback</th></tr></thead><tbody>${evs.map((e) => html`<tr><td>${fmtDate(e.call_date)}</td><td>${productChip(e.product, e.segment)}</td><td class="right"><b class="num score-txt band-${band(e.final_score)}">${fmtScore(e.final_score)}</b></td><td>${e.status === 'feedback_aplicado' ? html`<span class="chip ok">aplicado</span>` : html`<span class="chip warn">pendente</span>`}</td></tr>`)}</tbody></table></div></div>
       <div class="card fill"><div class="card-head"><h3>Feedbacks aplicados</h3></div><div class="card-body" style="overflow:hidden"><div class="ins-list">${OP.feedbacks.slice(0, 5).map((f) => html`<div class="ins"><span class="ic" style="background:var(--ok-soft);color:var(--ok-ink)">${icon('msgCheck')}</span><div><b>${fmtDate(f.applied_at)}</b> <span class="tiny muted">· ${f.applied_by_display || f.applied_by_name}</span><div class="t2" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${f.content}</div></div></div>`)}${OP.feedbacks.length ? '' : html`<p class="muted small">Nenhum feedback registrado.</p>`}</div></div></div></div>`);
   }
 }

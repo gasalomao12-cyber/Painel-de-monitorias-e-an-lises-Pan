@@ -15,7 +15,6 @@ const DIMS = [
 ];
 const TIME_DIMS = ['cycle', 'week', 'day'];
 const OUTCOME_ORDER = ['Acordo com boleto', 'Promessa sem boleto', 'Retorno combinado', 'Sem acordo', 'Sem negociação com o titular', 'Final cortado'];
-const isDeal = (o) => /^acordo/i.test(String(o || ''));
 const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : null);
 const ddmm = (d) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : '');
 function monday(d) {
@@ -68,7 +67,7 @@ function summarize(evs) {
   return {
     total: evs.length, analyzed: analyzed.length, pending: evs.length - analyzed.length,
     adherence: base ? Math.round((done / base) * 1000) / 10 : null, per, outcomes, withOutcome,
-    deal: pct(analyzed.filter((e) => isDeal(e.outcome)).length, withOutcome),
+    noDeal: pct(analyzed.filter((e) => e.outcome === 'Sem acordo').length, withOutcome),
     avg: scores.length ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10 : null,
     fixed, items, operators: new Set(analyzed.map((e) => e.operator_id)).size,
     alerts: Object.entries(analyzed.reduce((a, e) => { for (const x of e.alerts || []) a[x] = (a[x] || 0) + 1; return a; }, {})).sort((a, b) => b[1] - a[1]),
@@ -194,9 +193,9 @@ function draw(el, ctx) {
     <div class="grid g-6">
       ${kpi('headset', 'Ligações AGV', fmtInt(s.total), '', html`${fmtInt(s.analyzed)} analisadas${s.pending ? html` · <b>${fmtInt(s.pending)}</b> aguardando` : ''}`)}
       ${kpi('target', 'Aderência ao roteiro AGV', fmtScore(s.adherence), '%', 'itens feitos ÷ itens que cabiam', s.adherence)}
-      ${kpi('award', 'Acordo com boleto', fmtScore(s.deal), '%', html`${fmtInt(Object.entries(s.outcomes).filter(([k]) => isDeal(k)).reduce((a, [, v]) => a + v, 0))} de ${fmtInt(s.withOutcome)} com desfecho`, s.deal)}
+      ${kpi('alert', 'Terminaram sem acordo', fmtScore(s.noDeal), '%', html`${fmtInt(s.outcomes['Sem acordo'] || 0)} de ${fmtInt(s.withOutcome)} com desfecho`, null, 'bad')}
       ${kpi('users', 'Operadores', fmtInt(s.operators), '', html`nota média <b class="score-txt band-${band(s.avg)}">${fmtScore(s.avg)}</b>`)}
-      ${kpi('edit', 'Correções de coerência', fmtInt(fixedRules), '', html`${fmtPct(pct(fixedRules, s.items))} das respostas do speech`, null, 'warn')}
+      ${kpi('alert', 'Sem proposta com valor', fmtScore(pct(s.per.PRP.NC, s.per.PRP.base)), '%', html`${fmtInt(s.per.PRP.NC)} de ${fmtInt(s.per.PRP.base)} ligações com negociação`, null, 'bad')}
       ${kpi('alert', 'Alertas', fmtInt(s.alerts.reduce((a, [, v]) => a + v, 0)), '', s.alerts.slice(0, 2).map(([a, v]) => `${v} ${(ALERT[a]?.[0] || a).toLowerCase()}`).join(' · ') || 'nenhum alerta', null, 'bad')}
     </div>
 
@@ -213,8 +212,7 @@ function draw(el, ctx) {
 
     <div class="grid g-2 mt">
       <div class="card">
-        <div class="card-head"><div><h3>Perguntas do roteiro AGV</h3><div class="sub">Conformidade final × resposta original do speech (antes das regras de coerência).</div></div><div class="grow"></div>
-          ${raw(legendHtml([{ label: 'Final', color: c.brand }, { label: 'Speech original', color: c.speech }]))}</div>
+        <div class="card-head"><div><h3>Perguntas do roteiro AGV</h3><div class="sub">Conformidade de cada pergunta no recorte, já com as correções feitas na revisão.</div></div>
         <div class="card-body"><div class="chart-box tall"><canvas id="ch-agv-q" role="img" aria-label="Conformidade por pergunta"></canvas></div></div>
       </div>
       <div class="card"><div class="card-head"><div><h3>Evolução diária</h3><div class="sub">Aderência ao roteiro AGV por dia da ligação.</div></div><div class="grow"></div><span id="agv-evo-legend"></span></div>
@@ -223,14 +221,13 @@ function draw(el, ctx) {
 
     ${data.other_roteiro ? html`<p class="tiny muted mt">${fmtInt(data.other_roteiro)} ligação(ões) AGV foram avaliadas em outro roteiro (dashboards de Veículos) e aparecem só no confronto AGV × Convencional.</p>` : ''}
     ${data.channels.length ? html`<div class="card mt"><div class="card-head"><div><h3>AGV × Convencional</h3><div class="sub">Mesma carteira e mesmos filtros. Cada canal é medido no próprio roteiro: o AGV avalia o operador só depois da transferência.</div></div></div>
-      <div class="card-body" style="padding-top:6px"><div class="table-wrap"><table class="tbl"><thead><tr><th>Carteira</th><th>Canal</th><th class="right">Monitorias</th><th class="right">Operadores</th><th class="right">Nota média</th><th class="right">Aderência</th><th class="right">% acordo</th></tr></thead>
+      <div class="card-body" style="padding-top:6px"><div class="table-wrap"><table class="tbl"><thead><tr><th>Carteira</th><th>Canal</th><th class="right">Monitorias</th><th class="right">Operadores</th><th class="right">Nota média</th><th class="right">Aderência</th></tr></thead>
       <tbody>${data.channels.map((r) => html`
         <tr><td rowspan="2"><b>${PRODUCT[r.product]}</b></td><td><span class="chip brand">AGV</span></td>${chanCells(r.agv)}</tr>
         <tr><td><span class="chip outline">Convencional</span></td>${chanCells(r.conv)}</tr>
         <tr class="delta-row"><td></td><td class="tiny muted">diferença</td><td></td><td></td>
           <td class="right">${r.agv.avg != null && r.conv.avg != null ? deltaTag(r.agv.avg - r.conv.avg) : '—'}</td>
-          <td class="right">${r.agv.adherence != null && r.conv.adherence != null ? deltaTag(r.agv.adherence - r.conv.adherence, ' p.p.') : '—'}</td>
-          <td class="right">${r.agv.with_outcome && r.conv.with_outcome ? deltaTag(r.agv.deal_rate - r.conv.deal_rate, ' p.p.') : '—'}</td></tr>`)}</tbody></table></div></div></div>` : ''}
+          <td class="right">${r.agv.adherence != null && r.conv.adherence != null ? deltaTag(r.agv.adherence - r.conv.adherence, ' p.p.') : '—'}</td></tr>`)}</tbody></table></div></div></div>` : ''}
   `);
 
   $$('#agv-dim button', body).forEach((b) => b.addEventListener('click', () => {
@@ -241,9 +238,8 @@ function draw(el, ctx) {
 
   const qs2 = codes.filter((k) => s.per[k].base);
   barChart($('#ch-agv-q', body), qs2.map((k) => `${k} · ${data.name[k]}`), [
-    { label: 'Final', data: qs2.map((k) => s.per[k].conf), color: c.brand },
-    { label: 'Speech original', data: qs2.map((k) => s.per[k].speech), color: c.speech },
-  ], { horizontal: true, max: 100, suffix: '%' });
+    { label: 'Conformidade', data: qs2.map((k) => s.per[k].conf), color: c.brand },
+  ], { horizontal: true, max: 100, suffix: '%', colors: qs2.map((k) => (s.per[k].conf >= 85 ? c.ok : s.per[k].conf >= 65 ? c.warn : c.bad)) });
 
   const days = groups(evs, 'day').filter((g) => g.key !== '—');
   const prods = [...new Set(evs.map((e) => e.product))];
@@ -255,8 +251,7 @@ function draw(el, ctx) {
 
 function chanCells(g) {
   return html`<td class="right num">${fmtInt(g.total)}</td><td class="right num">${fmtInt(g.operators)}</td>
-    <td class="right"><b class="score-txt band-${band(g.avg)} num">${fmtScore(g.avg)}</b></td><td class="right num">${fmtPct(g.adherence)}</td>
-    <td class="right num">${g.with_outcome ? fmtPct(g.deal_rate) : '—'}</td>`;
+    <td class="right"><b class="score-txt band-${band(g.avg)} num">${fmtScore(g.avg)}</b></td><td class="right num">${fmtPct(g.adherence)}</td>`;
 }
 
 function drawCompare(body, ctx) {
@@ -273,15 +268,14 @@ function drawCompare(body, ctx) {
   box.innerHTML = String(html`
     <div class="table-wrap" style="max-height:460px;overflow:auto"><table class="tbl heat"><thead><tr>
       <th>${DIMS.find(([k]) => k === state.dim)[1]}</th><th class="right">Ligações</th><th class="right">Aderência</th>
-      ${codes.map((k) => html`<th class="right" title="${data.name[k]}">${k}</th>`)}<th class="right">% acordo</th></tr></thead>
+      ${codes.map((k) => html`<th class="right" title="${data.name[k]}">${k}</th>`)}</tr></thead>
     <tbody>${rows.map((g) => html`<tr class="${state.dim === 'operator' ? 'click' : ''}" data-op="${state.dim === 'operator' ? g.key : ''}">
       <td><b>${g.label}</b>${g.s.pending ? html` <span class="tiny muted">(${g.s.pending} aguardando)</span>` : ''}</td>
       <td class="right num">${fmtInt(g.s.analyzed)}</td>
       <td class="right"><b class="score-txt band-${band(g.s.adherence)} num">${fmtPct(g.s.adherence)}</b></td>
-      ${codes.map((k) => html`<td class="right num ${heat(g.s.per[k].conf)}" title="${data.name[k]}: ${g.s.per[k].C} de ${g.s.per[k].base}">${g.s.per[k].base ? fmtScore(g.s.per[k].conf, 0) : '—'}</td>`)}
-      <td class="right num">${fmtPct(g.s.deal)}</td></tr>`)}
+      ${codes.map((k) => html`<td class="right num ${heat(g.s.per[k].conf)}" title="${data.name[k]}: ${g.s.per[k].C} de ${g.s.per[k].base}">${g.s.per[k].base ? fmtScore(g.s.per[k].conf, 0) : '—'}</td>`)}</tr>`)}
       <tr class="total-row"><td><b>Total</b></td><td class="right num">${fmtInt(total.analyzed)}</td><td class="right"><b class="num">${fmtPct(total.adherence)}</b></td>
-      ${codes.map((k) => html`<td class="right num">${total.per[k].base ? fmtScore(total.per[k].conf, 0) : '—'}</td>`)}<td class="right num">${fmtPct(total.deal)}</td></tr>
+      ${codes.map((k) => html`<td class="right num">${total.per[k].base ? fmtScore(total.per[k].conf, 0) : '—'}</td>`)}</tr>
     </tbody></table></div>
     <p class="tiny muted" style="margin:8px 0 0">${codes.map((k) => `${k} = ${data.name[k]}`).join(' · ')}</p>
     <div class="grid g-2 mt">
@@ -322,7 +316,6 @@ function drawAB(body) {
     <div class="grid g-2"><div class="table-wrap"><table class="tbl"><thead><tr><th></th><th class="right">A</th><th class="right">B</th><th class="right">Δ</th></tr></thead><tbody>
       <tr><td>Ligações analisadas</td><td class="right num">${fmtInt(A.analyzed)}</td><td class="right num">${fmtInt(B.analyzed)}</td><td class="right">${d(A.analyzed, B.analyzed, '')}</td></tr>
       <tr><td><b>Aderência</b></td><td class="right num">${fmtPct(A.adherence)}</td><td class="right num"><b>${fmtPct(B.adherence)}</b></td><td class="right">${d(A.adherence, B.adherence)}</td></tr>
-      <tr><td>% acordo com boleto</td><td class="right num">${fmtPct(A.deal)}</td><td class="right num">${fmtPct(B.deal)}</td><td class="right">${d(A.deal, B.deal)}</td></tr>
       ${data.codes.map((k) => html`<tr><td title="${data.name[k]}"><span class="tiny muted">${k}</span> ${data.name[k]}</td>
         <td class="right num">${A.per[k].base ? fmtPct(A.per[k].conf) : '—'}</td><td class="right num">${B.per[k].base ? fmtPct(B.per[k].conf) : '—'}</td>
         <td class="right">${d(A.per[k].base ? A.per[k].conf : null, B.per[k].base ? B.per[k].conf : null)}</td></tr>`)}
