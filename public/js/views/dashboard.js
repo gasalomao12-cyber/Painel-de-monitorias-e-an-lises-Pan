@@ -89,14 +89,14 @@ async function load(el, ctx) {
 
   box.innerHTML = String(html`
     <div class="grid g-6">
-      ${kpi('gauge', 'Nota média final', fmtScore(k.avg_final), '', html`${dScore != null ? html`${deltaTag(dScore)} vs. quinzena anterior` : html`Speech: <b>${fmtScore(k.avg_speech)}</b>`}`, k.avg_final)}
+      ${kpi('gauge', 'Nota média final', fmtScore(k.avg_final), '', html`${dScore != null ? html`${deltaTag(dScore)} vs. quinzena anterior` : 'média das monitorias'}`, k.avg_final)}
       ${kpi('target', 'Aderência ao roteiro', fmtScore(k.adherence ?? k.conformity), '%', html`${dConf != null ? html`${deltaTag(dConf, ' p.p.')} conformidade vs. anterior` : 'itens feitos ÷ itens que cabiam'}`, k.adherence ?? k.conformity)}
       ${kpi('headset', 'Monitorias', fmtInt(k.total), '', html`${series.map((x) => html`<span class="chip p-${x.key}">${k['total_' + x.key]} ${PRODUCT_SHORT[x.p]}</span>`)}`)}
       ${kpi('msgCheck', 'Feedbacks aplicados', fmtScore(k.feedback_rate), '%', html`${k.feedback_applied} de ${k.total} · <a href="#/feedbacks/pendentes">${k.total - k.feedback_applied} pendentes</a>`, k.feedback_rate)}
       ${alertTotal || !k.critical_fails
         ? kpi('alert', 'Alertas de qualidade', fmtInt(alertTotal), '', html`${alerts.slice(0, 2).map(([a, v]) => `${v} ${ALERT[a][0].toLowerCase()}`).join(' · ') || 'nenhum alerta'}${k.critical_fails ? ` · ${k.critical_fails} falha(s) crítica(s)` : ''}`, null, 'bad')
         : kpi('alert', 'Falhas críticas', fmtInt(k.critical_fails), '', html`${fmtPct(k.total ? (k.critical_fails / k.total) * 100 : 0)} das monitorias zeradas`, null, 'bad')}
-      ${kpi('edit', 'Ajustes no speech', fmtInt(k.evals_adjusted), '', html`${fmtPct(k.total ? (k.evals_adjusted / k.total) * 100 : 0)} das análises corrigidas`, null, 'warn')}
+      ${kpi('users', 'Operadores avaliados', fmtInt(k.operators), '', 'com ao menos uma monitoria no recorte')}
     </div>
 
     ${segTable(d, series)}
@@ -108,8 +108,8 @@ async function load(el, ctx) {
 
     <div class="grid g-3 mt">
       <div class="card span-2">
-        <div class="card-head"><div><h3>Evolução da nota por quinzena</h3><div class="sub">Nota final média (após ajustes) × nota original do speech</div></div><div class="grow"></div>
-          ${raw(legendHtml([{ label: 'Geral', color: c.geral, line: true }, ...(series.length > 1 ? series.map((x) => ({ label: x.label, color: x.color, line: true })) : []), { label: 'Speech (original)', color: c.speech, line: true, dash: true }]))}</div>
+        <div class="card-head"><div><h3>Evolução da nota por quinzena</h3><div class="sub">Nota média das monitorias em cada quinzena</div></div><div class="grow"></div>
+          ${raw(legendHtml([{ label: 'Geral', color: c.geral, line: true }, ...(series.length > 1 ? series.map((x) => ({ label: x.label, color: x.color, line: true })) : [])]))}</div>
         <div class="card-body"><div class="chart-box"><canvas id="ch-evo" role="img" aria-label="Evolução da nota por quinzena"></canvas></div></div>
       </div>
       <div class="card">
@@ -118,12 +118,7 @@ async function load(el, ctx) {
       </div>
     </div>
 
-    <div class="grid g-2 mt">
-      <div class="card">
-        <div class="card-head"><div><h3>Dispersão: speech × nota final</h3><div class="sub">Pontos acima da linha tiveram a nota corrigida para cima após revisão. Clique para abrir.</div></div><div class="grow"></div>
-          ${raw(legendHtml(series.map((x) => ({ label: x.label, color: x.color }))))}</div>
-        <div class="card-body"><div class="chart-box tall"><canvas id="ch-scatter" role="img" aria-label="Dispersão entre nota do speech e nota final"></canvas></div></div>
-      </div>
+    <div class="grid mt">
       <div class="card">
         <div class="card-head"><div><h3>Mapa de desempenho dos operadores</h3><div class="sub">Média × consistência (desvio-padrão). Ideal: à direita e embaixo.</div></div></div>
         <div class="card-body"><div class="chart-box tall"><canvas id="ch-opmap" role="img" aria-label="Mapa de desempenho dos operadores"></canvas></div></div>
@@ -173,17 +168,10 @@ async function load(el, ctx) {
   lineChart($('#ch-evo'), labels, [
     { label: 'Geral', data: evo.map((e) => e.geral), color: c.geral, fill: true },
     ...(series.length > 1 ? series.map((x) => ({ label: x.label, data: evo.map((e) => e[x.key]), color: x.color })) : []),
-    { label: 'Speech (original)', data: evo.map((e) => e.speech), color: c.speech, dash: [5, 4] },
-  ], { min: Math.max(0, Math.min(40, ...evo.flatMap((e) => [e.geral, e.speech]).filter((v) => v != null).map((v) => Math.floor(v / 10) * 10 - 10))) });
+  ], { min: Math.max(0, Math.min(40, ...evo.map((e) => e.geral).filter((v) => v != null).map((v) => Math.floor(v / 10) * 10 - 10))) });
 
   barChart($('#ch-dist'), d.distribution.map((x) => x.label), [{ label: 'Monitorias', data: d.distribution.map((x) => x.count) }],
     { colors: [c.bad, c.warn, c.warn, c.refin, c.ok] });
-
-  const go = (p) => p.id && ctx.navigate(`atendimentos/${p.id}`);
-  const styles = ['circle', 'rectRounded', 'triangle', 'rectRot', 'star'];
-  scatterChart($('#ch-scatter'), series.map((x, i) => (
-    { label: x.label, color: x.color, data: d.scatter.filter((p) => p.product === x.p).map((p) => ({ ...p, label: p.operator })), style: styles[i % styles.length] }
-  )), { xLabel: 'Nota do speech', yLabel: 'Nota final (após revisão)', diagonal: true, onClick: go });
 
   const maxSd = Math.max(10, ...d.operators.map((o) => o.sd || 0));
   scatterChart($('#ch-opmap'), [{ label: 'Operadores', color: c.brand, radius: 8, data: d.operators.filter((o) => o.avg != null).map((o) => ({ x: o.avg, y: o.sd, label: o.name, opId: o.operator_id })) }],
@@ -201,12 +189,12 @@ function segTable(d, series) {
   const rows = d.segments || [];
   if (!rows.length || (rows.length === 1 && rows[0].level === 'product' && !SEGMENTS_OF[rows[0].product])) return '';
   return html`<div class="card mt"><div class="card-head"><div><h3>Por produto e segmento</h3><div class="sub">Clique em uma linha para filtrar o painel. Aderência = itens feitos ÷ itens que cabiam na ligação, como nos dashboards PAN.</div></div></div>
-    <div class="card-body" style="padding-top:6px"><div class="table-wrap"><table class="tbl seg-table"><thead><tr><th>Produto / segmento</th><th class="right">Monitorias</th><th class="right">Operadores</th><th class="right">Nota média</th><th class="right">Aderência</th><th class="right">Speech</th><th class="right">Feedback</th><th class="right">Com alerta</th></tr></thead>
+    <div class="card-body" style="padding-top:6px"><div class="table-wrap"><table class="tbl seg-table"><thead><tr><th>Produto / segmento</th><th class="right">Monitorias</th><th class="right">Operadores</th><th class="right">Nota média</th><th class="right">Aderência</th><th class="right">Feedback</th><th class="right">Com alerta</th></tr></thead>
     <tbody>${rows.map((r) => html`<tr class="click lvl-${r.level}" data-seg-p="${r.product}" data-seg-s="${r.segment || ''}" style="--pc:${series.find((x) => x.p === r.product)?.color || 'var(--brand)'}">
       <td class="lvl-${r.level}">${r.level === 'product' ? html`<span class="dot"></span>${PRODUCT[r.product]}` : SEGMENT[r.segment]}</td>
       <td class="right num">${fmtInt(r.total)}</td><td class="right num">${r.total ? fmtInt(r.operators) : '—'}</td>
       <td class="right"><b class="score-txt band-${band(r.avg)} num">${fmtScore(r.avg)}</b></td>
-      <td class="right num">${fmtPct(r.adherence)}</td><td class="right num muted">${fmtScore(r.avg_speech)}</td>
+      <td class="right num">${fmtPct(r.adherence)}</td>
       <td class="right num">${r.total ? fmtPct(r.feedback_rate) : '—'}</td><td class="right num">${r.total ? fmtInt(r.alerts) : '—'}</td></tr>`)}</tbody></table></div></div></div>`;
 }
 

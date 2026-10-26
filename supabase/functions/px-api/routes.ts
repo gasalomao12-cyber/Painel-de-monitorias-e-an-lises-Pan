@@ -985,6 +985,8 @@ router.get('/agv/data', h(async (req, res) => {
     team: e.team, supervisor: e.supervisor_name, operator_id: e.operator_id, operator: e.operator_name, login: e.login, date: e.call_date, time: e.call_time,
     outcome: e.outcome, tabulation: e.tabulation, score: e.final_score == null ? null : Number(e.final_score), speech: e.speech_score == null ? null : Number(e.speech_score),
     status: e.status, alerts: e.alerts || [], duration: e.duration_sec, contest: e.contest_status || null,
+    // Usados pelo painel de esforço negocial (gerência, ID da ligação e arquivo para localizar o áudio)
+    manager: e.manager_name || null, call_id: e.protocol || e.external_id || String(e.id), audio_file: e.audio_file || null, customer: e.customer || null,
   });
   const byEval = new Map();
   for (const i of items) { if (!byEval.has(i.evaluation_id)) byEval.set(i.evaluation_id, []); byEval.get(i.evaluation_id).push(i); }

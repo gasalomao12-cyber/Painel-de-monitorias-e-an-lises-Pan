@@ -188,6 +188,31 @@ fica no campo desfecho da ligação.
 - **Migração**: rode `supabase/migrations/20261029120000_px_agv.sql` no SQL Editor. Ela cria o roteiro AGV e passa
   para ele as ligações AGV do discador que ainda não foram avaliadas.
 
+## Esforço negocial AGV
+
+Menu **Esforço negocial**. É o mesmo painel dos dashboards "Esforço negocial AGV", agora alimentado pelos dados da plataforma.
+
+**Telas**:
+- Capa.
+- Visão geral.
+- Lideranças.
+- Operadores.
+- Ligações, com o modal de cada ligação.
+- Evolução.
+
+**Filtros**: gerência, análise (quinzena), liderança e motivo.
+
+**O que é medido**:
+- Esforço negocial = itens cumpridos ÷ itens que cabiam, nos 6 itens da negociação: motivo, capacidade de pagamento, proposta com valor, alternativa após o não, benefício e consequências.
+- Entram só as ligações AGV com negociação: acordo, promessa, retorno ou sem acordo.
+- Ficam de fora as ligações com trecho cortado em algum dos 6 itens.
+- Vale o resultado final, já com as correções. Não há comparação com a leitura bruta do speech.
+
+**A mais que o modelo**:
+- Dispersão dos operadores: esforço × ligações sem acordo.
+- Dispersão das ligações: duração × esforço.
+- Evolução entre as análises importadas, por item, liderança e operador.
+
 ## Importação dos dashboards de monitoria PAN (.html)
 *Importar monitorias › Dashboard de monitoria já trabalhado*: arraste o arquivo .html do dashboard da quinzena. São reconhecidos:
 - **Speech E.A. e Refin (Veículos)**: 13 itens do roteiro (postura fora da nota), ajustes de coerência com o motivo, aptidão a E.A./refin, oferta Nelson, gerência, líder, campanha, canal (AGV/convencional), tabulação, desfecho e nome do áudio.
