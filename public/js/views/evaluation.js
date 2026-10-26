@@ -549,6 +549,21 @@ function suggestion(e) {
   };
 }
 
+// Tema da linha na planilha de ações: etapa do roteiro onde estão as falhas (mesma regra do servidor)
+const SHEET_THEMES = ['Conversão', 'Eficiência', 'Tabulação', 'Formação inicial', 'Abordagem', 'Checklist', 'Produto', 'Oferta', 'Processo', 'PIX'];
+const STAGE_THEME = { abertura: 'Abordagem', iniciacao: 'Abordagem', postura: 'Abordagem', sondagem: 'Conversão', negociacao: 'Conversão', argumentacao: 'Conversão', fechamento: 'Conversão', 'e.a. e refin': 'Oferta' };
+function suggestTheme(e) {
+  if ((e.alerts || []).includes('oferta_perdida')) return 'Oferta';
+  const count = {};
+  for (const i of e.items) {
+    if (!(Number(i.weight ?? 1) > 0) || !['NC', 'P'].includes(i.final_result)) continue;
+    const st = String(i.stage || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const t = STAGE_THEME[st] || 'Conversão';
+    count[t] = (count[t] || 0) + (i.final_result === 'NC' ? 1 : 0.5);
+  }
+  return Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0] || 'Conversão';
+}
+
 function localDateTime(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
@@ -580,6 +595,8 @@ function drawFeedback(body, el, ctx) {
               <div class="field"><label for="fb-mod">Modalidade</label><select class="select" id="fb-mod" name="modality">${['Presencial', 'Remoto (Teams)', 'Por telefone', 'Chat corporativo'].map((x) => html`<option ${f?.modality === x ? 'selected' : ''}>${x}</option>`)}</select></div>
               <div class="field"><label for="fb-fu">Reavaliar em</label><input class="input" id="fb-fu" name="followup_date" type="date" value="${f?.followup_date || ''}"></div>
             </div>
+            <div class="field"><label for="fb-theme">Tema na planilha de ações</label><select class="select" id="fb-theme" name="sheet_theme">${SHEET_THEMES.map((t) => html`<option ${t === suggestTheme(e) ? 'selected' : ''}>${t}</option>`)}</select>
+              <span class="hint">Sugerido pela etapa do roteiro em que estão as falhas. O feedback entra sozinho na planilha “CONTROLE DE AÇÕES”.</span></div>
             <div class="field"><div class="row between"><label for="fb-content">O que foi passado ao operador *</label><button type="button" class="btn sm ghost" id="fb-sug">${icon('sparkles')}Preencher com sugestão</button></div>
               <textarea class="textarea" id="fb-content" name="content" required minlength="10" style="min-height:120px" placeholder="Ex.: Ouvimos juntos o trecho da proposta; reforcei a obrigatoriedade de informar CET e valor total…">${f?.content || pre?.content || ''}</textarea></div>
             <div class="grid g-2">
@@ -621,7 +638,7 @@ function drawFeedback(body, el, ctx) {
     $('#fb-form', body).addEventListener('submit', async (x) => {
       x.preventDefault();
       const fm = x.target;
-      const data = { applied_at: new Date(fm.applied_at.value).toISOString(), modality: fm.modality.value, followup_date: fm.followup_date.value, content: fm.content.value, strengths: fm.strengths.value, improvements: fm.improvements.value, action_plan: fm.action_plan.value, operator_ack: fm.operator_ack.checked };
+      const data = { applied_at: new Date(fm.applied_at.value).toISOString(), modality: fm.modality.value, followup_date: fm.followup_date.value, content: fm.content.value, strengths: fm.strengths.value, improvements: fm.improvements.value, action_plan: fm.action_plan.value, operator_ack: fm.operator_ack.checked, sheet_theme: fm.sheet_theme.value };
       busy($('#fb-save', body), true, 'Salvando');
       try {
         ev = f ? await api.put(`/evaluations/${e.id}/feedback/${f.id}`, data) : await api.post(`/evaluations/${e.id}/feedback`, data);

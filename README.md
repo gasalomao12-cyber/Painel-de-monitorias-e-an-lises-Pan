@@ -95,6 +95,40 @@ Para apontar as telas para o Supabase local, no console do navegador:
 `localStorage.setItem('px_dev_config', JSON.stringify({ supabaseUrl: 'http://127.0.0.1:54321', publishableKey: '<chave publicável local>' }))`.
 Dados fictícios para conhecer a plataforma: *Configurações › Dados › Carregar demonstração* (cria usuários fictícios **sem acesso**).
 
+## Planilha de ações (CONTROLE DE AÇÕES no Excel online)
+Cada ação feita na plataforma vira uma linha na planilha online, sem preenchimento manual. As colunas são LOGIN, SEGMENTO, TEMA, AÇÃO, DATA, OBS e RESPONSÁVEL. Entram sozinhas:
+
+| Na plataforma | AÇÃO na planilha |
+|---|---|
+| Feedback aplicado | `Feedback` (presencial/telefone) ou `Feedback online` (Teams/chat) |
+| Análise validada ou ajustada | `Análise` (uma linha por monitoria, pessoa e dia) |
+| Análise com IA (admin) | `Análise` |
+| Contestação respondida | `Calibragem` |
+| Ações fora da plataforma | **Controle de ações › Registrar ação**: in loco, treinamento, simulador, reunião…, para um ou vários operadores |
+
+Como cada coluna é preenchida:
+- **LOGIN:** o login do operador.
+- **SEGMENTO:** vem da carteira e do segmento da monitoria. O mapeamento pode ser editado em Configurações.
+- **TEMA:** sugerido pela etapa do roteiro onde estão as falhas, e pode ser trocado no feedback.
+- **RESPONSÁVEL:** o nome de quem fez a ação, em maiúsculas.
+
+A tela **Controle de ações** mostra o histórico e o status de cada linha (na planilha, na fila ou com erro). O que falhar, por exemplo com a planilha bloqueada, é reenviado sem duplicar.
+
+**Configuração (uma vez, com a TI):**
+1. Em **Entra ID › Registros de aplicativo › Novo registro**, crie "PX Monitorias - Planilha" (contas só deste diretório).
+2. Em **Permissões de API › Microsoft Graph › Permissões de aplicativo**, adicione `Files.ReadWrite.All` e clique em **Conceder consentimento do administrador**.
+   - Alternativa mais restrita: `Sites.Selected`, com acesso concedido só a este arquivo/site.
+3. Em **Certificados e segredos**, crie um segredo do cliente e copie o **valor**.
+4. Na plataforma, em **Configurações › Planilha de ações**, preencha os campos abaixo, salve e clique em **Testar conexão**:
+   - O link da planilha.
+   - A tabela (`Tabela2`).
+   - O **ID do diretório (tenant)** e o **ID do aplicativo (cliente)**, ambos da página do aplicativo.
+   - O segredo.
+   - Ligue a opção "Enviar as ações para a planilha".
+   - Alternativa: `supabase secrets set MS_TENANT_ID=... MS_CLIENT_ID=... MS_CLIENT_SECRET=...`.
+
+Linhas já enviadas não são apagadas da planilha quando o feedback é excluído; o histórico fica na planilha.
+
 ## Transcrição de áudio (Azure Speech)
 O admin envia o áudio da ligação (.wav, .mp3…) no card do atendimento (**Transcrever áudio**) ou em lote na tela **Análise com IA**. O Azure Speech transcreve em português, separando operador e cliente, e a IA analisa em seguida. Áudios cujo nome traz o ID da ligação (padrão do discador) são vinculados sozinhos à monitoria já importada.
 
