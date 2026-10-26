@@ -12,7 +12,8 @@ Plataforma web (servidor na nuvem) para publicar os reports quinzenais de qualid
 | **Card detalhado** | **Ajuste de análise** por critério (Conforme / Parcial / Não conforme / N/A) com motivo obrigatório e recálculo da nota ao vivo; parecer da IA com evidências; transcrição com busca; **aplicação de feedback** (o que foi passado, pontos fortes, melhorias, plano de ação, ciência do operador, reavaliação); histórico completo. |
 | **Análise com IA** | Anexe transcrições (.txt, .docx, .vtt, .srt, .json), em lote. A IA (Claude) avalia cada critério com o trecho da fala, **corrige sozinha o que o speech interpretou errado** (confiança alta) e sugere o feedback. Ajustes manuais nunca são sobrescritos. Sem chave, roda uma heurística local apenas como sugestão. |
 | **Feedbacks** | Abas de **pendentes** (por operador ou prioridade) e **aplicados** (histórico com filtros e exportação). |
-| **Dashboards & reports** | Visão geral, comparativo entre quinzenas, Refin × Entrega e individual do operador — **com capa**, páginas A4 paisagem, impressão em PDF e download em HTML. |
+| **Carteiras PAN** | **Veículos**, **Cartões** (apartado em *Clean Curto* e *Clean Longo*) e **Consignado** (apartado em *Público* e *Privado*), cada um com seu roteiro. Painel com tabela por produto e segmento, aderência ao roteiro (mesma conta dos dashboards PAN) e alertas de qualidade (sigilo, conduta, oferta de E.A./refin perdida, postura, sem proposta). |
+| **Dashboards & reports** | Visão geral, comparativo entre quinzenas, comparativo por produto (ou pelos segmentos de um produto) e individual do operador — **com capa**, páginas A4 paisagem, impressão em PDF e download em HTML. |
 | **Admin** | Quinzenas e **links das pastas de áudio do OneDrive** (por quinzena, por atendimento ou em lote, editáveis a qualquer momento), critérios e pesos, usuários e perfis, bugs reportados, auditoria, configurações da IA, backup em JSON. |
 | **Reportar bug** | Botão flutuante em todas as telas (com print opcional). O admin trata e o usuário é notificado. |
 | **Atalho PX** | Em *Meu perfil › Atalho na área de trabalho*: gera o instalador do atalho **PX Monitorias** com o ícone PX (Windows) ou instala como aplicativo (PWA). |
@@ -90,6 +91,13 @@ npx serve public -l 4173               # telas em http://127.0.0.1:4173
 Para apontar as telas para o Supabase local, no console do navegador:
 `localStorage.setItem('px_dev_config', JSON.stringify({ supabaseUrl: 'http://127.0.0.1:54321', publishableKey: '<chave publicável local>' }))`.
 Dados fictícios para conhecer a plataforma: *Configurações › Dados › Carregar demonstração* (cria usuários fictícios **sem acesso**).
+
+## Importação dos dashboards de monitoria PAN (.html)
+*Importar monitorias › Dashboard de monitoria já trabalhado*: arraste o arquivo .html do dashboard da quinzena. São reconhecidos:
+- **Speech E.A. e Refin (Veículos)**: 13 itens do roteiro (postura fora da nota), ajustes de coerência com o motivo, aptidão a E.A./refin, oferta Nelson, gerência, líder, campanha, canal (AGV/convencional), tabulação, desfecho e nome do áudio.
+- **Roteiro Sem Garantia (Cartões e Consignado)**: 11 itens (proposta fora da nota), ajustes da 2ª leitura, transcrição completa, resumo, ponto forte, feedback sugerido, quem atendeu, motivo, ofertas, esforço negocial, sigilo, conduta e acolhimento. O segmento vem do Capacity: *Clean Curto/Clean Longo* nos cartões, *Público* (Empréstimo Consignado) ou *Privado* (Empréstimo Privado) no consignado. Quando o Capacity não traz o segmento, a ligação entra como *Segmento a definir* e pode ser ajustada no card.
+
+Só o bloco de dados do arquivo é lido, no navegador, e enviado à API em lotes. Operadores são cadastrados pelo login, a quinzena é encontrada (ou criada) pelas datas e ligações já importadas são ignoradas, então reenviar o arquivo não duplica nada. **Os arquivos têm dados de clientes: não suba os .html para o repositório.**
 
 ## Importação da planilha do speech
 *Importar monitorias › Modelo .xlsx*: uma linha por atendimento (operador, matrícula, equipe, supervisor, produto, data, protocolo, contrato, cliente, duração, nota speech, link áudio, resumo) e uma coluna por critério pelo **código** (ex.: `IDT`, `RCE`, `ESD`) com C/P/NC/NA — também aceita Sim/Não/Parcial. Colunas `OBS <código>` viram a observação do speech. Operadores novos são cadastrados automaticamente.

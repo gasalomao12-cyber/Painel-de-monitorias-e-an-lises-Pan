@@ -1,9 +1,10 @@
 import { api, qs } from '../api.js';
-import { html, icon, $, $$, fmtScore, avatar, sparkline, deltaTag, band, emptyState, modal, toast, busy, debounce } from '../ui.js';
+import { html, icon, $, $$, fmtScore, avatar, sparkline, deltaTag, band, emptyState, modal, toast, busy, debounce, PRODUCT_SHORT } from '../ui.js';
 import { filterBar, bindFilterBar } from './dashboard.js';
 import { palette } from '../charts.js';
 
-const state = { product: '', team: '', q: '', sort: 'media' };
+const state = { product: '', segment: '', team: '', q: '', sort: 'media' };
+const opInfo = (o) => [o.supervisor_name && `Líder ${o.supervisor_name}`, o.team].filter(Boolean).join(' · ') || 'Sem equipe';
 
 export async function render(el, _p, ctx) {
   const { store, can } = ctx;
@@ -24,7 +25,7 @@ export async function render(el, _p, ctx) {
 
 let data = null;
 async function load(el, ctx) {
-  data = await api.get(`/stats/overview${qs({ cycle_id: ctx.store.cycle, product: state.product, team: state.team })}`);
+  data = await api.get(`/stats/overview${qs({ cycle_id: ctx.store.cycle, product: state.product, segment: state.segment, team: state.team })}`);
   if (!ctx.isCurrent()) return;
   draw(el, ctx);
 }
@@ -40,13 +41,12 @@ function draw(el, ctx) {
   if (!ops.length && !without.length) { box.innerHTML = String(emptyState('users', 'Nenhum operador encontrado', 'Cadastre operadores ou importe monitorias.')); return; }
   box.innerHTML = String(html`<div class="op-grid">${ops.map((o) => html`
     <div class="card op-card" data-op="${o.operator_id}" tabindex="0">
-      <div class="row" style="flex-wrap:nowrap">${avatar(o.name)}<div style="min-width:0;flex:1"><b class="ellipsis" style="display:block">${o.name}</b><span class="tiny muted">${o.team || 'Sem equipe'}</span></div>
+      <div class="row" style="flex-wrap:nowrap">${avatar(o.name)}<div style="min-width:0;flex:1"><b class="ellipsis" style="display:block">${o.name}</b><span class="tiny muted">${opInfo(o)}</span></div>
         <div class="right"><b class="score-txt band-${band(o.avg)} num" style="font-size:22px;letter-spacing:-.03em">${fmtScore(o.avg)}</b><div>${deltaTag(o.delta)}</div></div></div>
       ${sparkline(o.series, { color: c.brand })}
       <div class="op-stats">
         <div><b class="num">${o.total}</b><span>monitorias</span></div>
-        <div><b class="num">${fmtScore(o.refin)}</b><span>Refin</span></div>
-        <div><b class="num">${fmtScore(o.entrega)}</b><span>Entrega</span></div>
+        ${(o.products || []).slice(0, 2).map((p) => html`<div><b class="num">${fmtScore(o[p.toLowerCase()])}</b><span>${PRODUCT_SHORT[p]}</span></div>`)}
       </div>
       <div class="row mt" style="gap:6px">${o.pending_feedback ? html`<span class="chip warn">${icon('msgClock')}${o.pending_feedback} sem feedback</span>` : html`<span class="chip ok">${icon('checkCircle')}feedbacks em dia</span>`}
         ${o.sd > 15 ? html`<span class="chip outline" title="Desvio-padrão alto">oscilante</span>` : ''}</div>

@@ -70,7 +70,7 @@ function getApiKey() {
 function aiConfigured() { return !!getApiKey(); }
 
 function buildUserPrompt(evaluation, items) {
-  const productName = evaluation.product === 'REFIN' ? 'Refinanciamento' : 'Entrega Amigável';
+  const productName = { REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável', VEICULOS: 'PAN Veículos (cobrança, com oferta de E.A. e refin)', CARTOES: 'PAN Cartões (cobrança sem garantia)', CONSIGNADO: 'PAN Consignado (cobrança sem garantia)' }[evaluation.product] || evaluation.product;
   const lines = items.map((i) =>
     `- ${i.code} | ${i.name}${i.critical ? ' [CRÍTICO]' : ''} | peso ${i.weight}\n  Definição: ${i.description || '-'}\n  Speech apontou: ${i.speech_result || 'sem apontamento'}${i.speech_note ? ` (${i.speech_note})` : ''}`).join('\n');
   return `Produto: ${productName}

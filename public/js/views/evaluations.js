@@ -1,10 +1,10 @@
 import { api, qs } from '../api.js';
 import { downloadEvaluations } from '../files.js';
-import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, scoreRing, deltaTag, emptyState, toast, modal, busy, debounce, STATUS, userName } from '../ui.js';
+import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, scoreRing, deltaTag, emptyState, toast, modal, busy, debounce, STATUS, userName, ALERT, origLabel } from '../ui.js';
 import { filterBar, bindFilterBar } from './dashboard.js';
 import { palette } from '../charts.js';
 
-const state = { product: '', team: '', status: '', feedback: '', operator_id: '', adjusted: false, critical: false, q: '', sort: 'recentes', view: localStorage.getItem('px_eval_view') || 'grid', selecting: false, selected: new Set(), shown: 60 };
+const state = { product: '', segment: '', alert: '', team: '', status: '', feedback: '', operator_id: '', adjusted: false, critical: false, q: '', sort: 'recentes', view: localStorage.getItem('px_eval_view') || 'grid', selecting: false, selected: new Set(), shown: 60 };
 
 export function evalCard(e, { selectable = false, selected = false } = {}) {
   const c = palette();
@@ -14,22 +14,23 @@ export function evalCard(e, { selectable = false, selected = false } = {}) {
     ${selectable ? html`<label class="sel"><input type="checkbox" data-sel="${e.id}" ${selected ? 'checked' : ''} aria-label="Selecionar"></label>` : ''}
     ${fb ? html`<div class="fb-ribbon">${icon('checkCircle')}Feedback aplicado ${e.feedback_at ? `em ${fmtDate(e.feedback_at)}` : ''}${e.feedback_by ? ` · ${e.feedback_by_display || e.feedback_by}` : ''}</div>` : ''}
     <div class="ev-top">
-      <div class="who">${avatar(e.operator_name)}<div style="min-width:0"><b>${e.operator_name}</b><span>${e.team || 'Sem equipe'} · ${fmtDate(e.call_date)}</span></div></div>
+      <div class="who">${avatar(e.operator_name)}<div style="min-width:0"><b>${e.operator_name}</b><span>${e.supervisor_name || e.team || 'Sem equipe'} · ${fmtDate(e.call_date)}${e.call_time ? ` ${e.call_time}` : ''}</span></div></div>
       ${scoreRing(e.final_score)}
     </div>
     <div class="ev-meta">
-      ${productChip(e.product)}
+      ${productChip(e.product, e.segment)}
+      ${(e.alerts || []).map((a) => html`<span class="chip alert ${a === 'audio_ruim' || a === 'sem_speech' ? 'warn' : ''}" title="${ALERT[a]?.[1] || ''}">${icon('alert')}${ALERT[a]?.[0] || a}</span>`)}
       ${e.status === 'pendente' ? html`<span class="chip warn">${icon('msgClock')}Pendente de revisão</span>` : e.status === 'revisada' ? html`<span class="chip info">${icon('check')}Revisada · aguarda feedback</span>` : ''}
       ${e.critical_fail ? html`<span class="chip bad">${icon('alert')}Falha crítica</span>` : ''}
       ${e.adjustments ? html`<span class="chip brand">${icon('edit')}${e.adjustments} ajuste${e.adjustments > 1 ? 's' : ''}</span>` : ''}
       ${e.ai_status === 'concluida' ? html`<span class="chip outline">${icon('sparkles')}IA</span>` : e.has_transcript ? html`<span class="chip outline">${icon('file')}Transcrição</span>` : ''}
     </div>
-    <div class="ev-scores">Speech <b class="num">${fmtScore(e.speech_score)}</b> ${icon('arrowRight')} Final <b class="num">${fmtScore(e.final_score)}</b> ${delta && Math.abs(delta) >= 0.1 ? deltaTag(delta) : ''}</div>
+    <div class="ev-scores">${origLabel(e)} <b class="num">${fmtScore(e.speech_score)}</b> ${icon('arrowRight')} Final <b class="num">${fmtScore(e.final_score)}</b> ${delta && Math.abs(delta) >= 0.1 ? deltaTag(delta) : ''}</div>
     <div class="mini-bars" title="${e.nc_count} não conformes · ${e.p_count} parciais">
       <i style="flex:${e.c_count};background:${c.ok}"></i><i style="flex:${e.p_count};background:${c.warn}"></i><i style="flex:${e.nc_count};background:${c.bad}"></i>
     </div>
     <div class="ev-foot">
-      <span class="nowrap">${icon('headset')} ${e.protocol || 'sem protocolo'}</span><span class="grow"></span>
+      <span class="nowrap" title="${e.audio_file || ''}">${icon('headset')} ${e.protocol || 'sem protocolo'}</span><span class="grow"></span>
       ${e.audio_link ? html`<a class="btn sm ghost" href="${e.audio_link}" target="_blank" rel="noopener" data-stop title="Abrir pasta/arquivo de áudio">${icon('play')}Áudio</a>` : html`<span class="tiny">sem áudio</span>`}
     </div>
   </article>`;
@@ -46,6 +47,11 @@ export async function render(el, _p, ctx) {
   const { store, can } = ctx;
   const preset = sessionStorage.getItem('px_eval_q');
   if (preset) { state.q = preset; sessionStorage.removeItem('px_eval_q'); }
+  // Vindo do painel (ex.: clique em um alerta), já abre filtrado
+  try {
+    const f = JSON.parse(sessionStorage.getItem('px_eval_preset') || 'null');
+    if (f) { Object.assign(state, { product: f.product || '', segment: f.segment || '', alert: f.alert || '' }); sessionStorage.removeItem('px_eval_preset'); }
+  } catch { /* ignora */ }
   state.selecting = false; state.selected.clear(); state.shown = 60;
   const m = store.meta;
   el.innerHTML = String(html`
@@ -62,10 +68,11 @@ export async function render(el, _p, ctx) {
         <option value="">Todos os status</option>
         ${Object.entries(STATUS).map(([k, v]) => html`<option value="${k}" ${state.status === k ? 'selected' : ''}>${v}</option>`)}
       </select>
+      <select class="select sm" id="f-alert" aria-label="Alerta"><option value="">Todos os alertas</option>${Object.entries(ALERT).map(([k, [t]]) => html`<option value="${k}" ${state.alert === k ? 'selected' : ''}>${t}</option>`)}</select>
       <label class="check small"><input type="checkbox" id="f-adj" ${state.adjusted ? 'checked' : ''}>Com ajustes</label>
       <label class="check small"><input type="checkbox" id="f-crit" ${state.critical ? 'checked' : ''}>Falha crítica</label>
       <div class="grow"></div>
-      <input class="input sm" id="f-q" placeholder="Buscar protocolo, cliente…" value="${state.q}" style="min-width:200px">
+      <input class="input sm" id="f-q" placeholder="Buscar protocolo, cliente, login, áudio…" value="${state.q}" style="min-width:200px">
       <select class="select sm" id="f-sort" aria-label="Ordenar">
         <option value="recentes" ${state.sort === 'recentes' ? 'selected' : ''}>Mais recentes</option>
         <option value="nota_asc" ${state.sort === 'nota_asc' ? 'selected' : ''}>Menor nota</option>
@@ -81,6 +88,7 @@ export async function render(el, _p, ctx) {
   bindFilterBar(el, store, state, reload);
   $('#f-op').onchange = (e) => { state.operator_id = e.target.value; reload(); };
   $('#f-status').onchange = (e) => { state.status = e.target.value; reload(); };
+  $('#f-alert').onchange = (e) => { state.alert = e.target.value; reload(); };
   $('#f-adj').onchange = (e) => { state.adjusted = e.target.checked; reload(); };
   $('#f-crit').onchange = (e) => { state.critical = e.target.checked; reload(); };
   $('#f-sort').onchange = (e) => { state.sort = e.target.value; reload(); };
@@ -95,7 +103,7 @@ export async function render(el, _p, ctx) {
 }
 
 function params(store) {
-  return { cycle_id: store.cycle, product: state.product, team: state.team, status: state.status, operator_id: state.operator_id, adjusted: state.adjusted ? 1 : '', critical: state.critical ? 1 : '', q: state.q, sort: state.sort };
+  return { cycle_id: store.cycle, product: state.product, segment: state.segment, alert: state.alert, team: state.team, status: state.status, operator_id: state.operator_id, adjusted: state.adjusted ? 1 : '', critical: state.critical ? 1 : '', q: state.q, sort: state.sort };
 }
 
 let rows = [];
@@ -122,7 +130,7 @@ function draw(el, ctx) {
       <tbody>${shown.map((e) => html`<tr class="click" data-ev="${e.id}" style="${e.status === 'feedback_aplicado' ? 'box-shadow:inset 3px 0 0 var(--ok)' : ''}">
         ${state.selecting ? html`<td class="sel"><input type="checkbox" data-sel="${e.id}" ${state.selected.has(e.id) ? 'checked' : ''}></td>` : ''}
         <td><div class="who">${avatar(e.operator_name, 'sm')}<div><b>${e.operator_name}</b><span>${e.team || ''}</span></div></div></td>
-        <td>${productChip(e.product)}</td><td class="nowrap">${fmtDate(e.call_date)}</td><td class="small">${e.protocol || '—'}</td>
+        <td>${productChip(e.product, e.segment)}</td><td class="nowrap">${fmtDate(e.call_date)}</td><td class="small">${e.protocol || '—'}</td>
         <td class="right num">${fmtScore(e.speech_score)}</td><td class="right"><b class="num">${fmtScore(e.final_score)}</b></td>
         <td>${e.status === 'feedback_aplicado' ? html`<span class="chip ok">${icon('checkCircle')}Feedback aplicado</span>` : e.status === 'revisada' ? html`<span class="chip info">Revisada</span>` : html`<span class="chip warn">Pendente</span>`}</td>
         <td>${e.audio_link ? html`<a class="btn sm ghost" data-stop href="${e.audio_link}" target="_blank" rel="noopener">${icon('play')}</a>` : '—'}</td>

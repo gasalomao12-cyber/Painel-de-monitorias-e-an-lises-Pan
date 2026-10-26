@@ -1,5 +1,5 @@
 import { api, qs } from '../api.js';
-import { html, icon, $, fmtScore, fmtDate, avatar, deltaTag, band, emptyState, productChip } from '../ui.js';
+import { html, icon, $, fmtScore, fmtDate, avatar, deltaTag, band, emptyState, productChip, PRODUCTS, PRODUCT_SHORT } from '../ui.js';
 import { lineChart, radarChart, barChart, palette, legendHtml } from '../charts.js';
 import { evalCard, bindEvalCards } from './evaluations.js';
 import { editOperator } from './operators.js';
@@ -21,11 +21,11 @@ export async function render(el, [id], ctx) {
     <div class="card card-pad">
       <div class="row" style="gap:18px">${avatar(op.name, 'lg')}
         <div style="flex:1;min-width:200px"><h2 style="margin:0;font-size:24px;letter-spacing:-.03em">${op.name}</h2>
-          <div class="facts"><span>Equipe <b>${op.team || '—'}</b></span><span>Matrícula <b>${op.registration || '—'}</b></span><span>Supervisor <b>${op.supervisor_name || '—'}</b></span><span>Período <b>${cyc ? cyc.name : 'todas as quinzenas'}</b></span></div></div>
+          <div class="facts"><span>Equipe <b>${op.team || '—'}</b></span><span>${op.login ? html`Login <b>${op.login}</b>` : html`Matrícula <b>${op.registration || '—'}</b>`}</span><span>Líder <b>${op.supervisor_name || '—'}</b></span>${op.manager_name ? html`<span>Gerência <b>${op.manager_name}</b></span>` : ''}<span>Período <b>${cyc ? cyc.name : 'todas as quinzenas'}</b></span></div></div>
         <div class="grid g-4" style="flex:2;min-width:320px">
           ${stat('Nota média', fmtScore(k.avg_final), `equipe ${fmtScore(d.team_avg)}`, band(k.avg_final))}
-          ${stat('Conformidade', `${fmtScore(k.conformity)}%`, `${k.items_conform}/${k.items_total} itens`)}
-          ${stat('Monitorias', k.total, `${k.total_refin} Refin · ${k.total_entrega} Entrega`)}
+          ${stat('Aderência ao roteiro', `${fmtScore(k.adherence ?? k.conformity)}%`, `${k.items_conform}/${k.items_total} itens conformes`)}
+          ${stat('Monitorias', k.total, PRODUCTS.filter((p) => k['total_' + p.toLowerCase()]).map((p) => `${k['total_' + p.toLowerCase()]} ${PRODUCT_SHORT[p]}`).join(' · '))}
           ${stat('Feedbacks', `${fmtScore(k.feedback_rate, 0)}%`, `${k.feedback_applied} aplicados`)}
         </div></div>
     </div>
@@ -42,7 +42,7 @@ export async function render(el, [id], ctx) {
       <div class="card"><div class="card-head"><div><h3>Histórico de feedbacks</h3><div class="sub">${d.feedbacks.length} registro(s)</div></div></div>
         <div class="card-body" style="max-height:400px;overflow:auto">${d.feedbacks.length ? html`<div class="timeline">${d.feedbacks.map((f) => html`<div class="tl-item ok">
           <div class="what">${fmtDate(f.applied_at)} · ${f.applied_by_display || f.applied_by_name} ${f.modality ? html`<span class="tiny muted">· ${f.modality}</span>` : ''}</div>
-          <div class="when">${f.cycle_name || ''} · ${productChip(f.product)} nota ${fmtScore(f.final_score)}</div>
+          <div class="when">${f.cycle_name || ''} · ${productChip(f.product, f.segment)} nota ${fmtScore(f.final_score)}</div>
           <p class="small t2" style="margin:6px 0 0;white-space:pre-wrap">${f.content}</p></div>`)}</div>` : emptyState('msgCheck', 'Nenhum feedback ainda', 'Os feedbacks aplicados aparecem aqui.')}</div></div>
     </div>
     <h3 class="mt-lg" style="margin-bottom:12px">Monitorias</h3>

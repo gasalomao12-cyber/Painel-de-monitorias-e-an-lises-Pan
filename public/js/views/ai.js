@@ -1,5 +1,5 @@
 import { api, qs } from '../api.js';
-import { html, icon, $, $$, toast, busy, fmtDate, fmtScore, avatar, productChip, emptyState } from '../ui.js';
+import { html, icon, $, $$, toast, busy, fmtDate, fmtScore, avatar, productChip, emptyState, PRODUCTS, PRODUCT } from '../ui.js';
 import { readTranscriptFile } from '../files.js';
 
 let queue = [];
@@ -78,7 +78,7 @@ function guess(file, ctx) {
   return {
     file, match: match || null, link: !!match,
     operator_id: match ? match.operator_id : op?.id || '',
-    product: match ? match.product : /entrega|amigavel|devolu/.test(name) ? 'ENTREGA' : 'REFIN',
+    product: match ? match.product : /consign/.test(name) ? 'CONSIGNADO' : /cart/.test(name) ? 'CARTOES' : /veicul|agvia|panwo/.test(name) ? 'VEICULOS' : /entrega|amigavel|devolu/.test(name) ? 'ENTREGA' : /refin/.test(name) ? 'REFIN' : 'VEICULOS',
     cycle_id: ctx.store.cycle || openCycle?.id || '',
     call_date: (file.name.match(/(\d{4})[-_.]?(\d{2})[-_.]?(\d{2})/) || []).slice(1).join('-') || new Date().toISOString().slice(0, 10),
     protocol: digits[0] || '',
@@ -111,7 +111,7 @@ function drawQueue(ctx) {
       ${q.match ? html`<label class="check small mt" style="margin-top:10px"><input type="checkbox" data-f="link" ${q.link ? 'checked' : ''}> Vincular à monitoria existente: <b>${q.match.operator_name}</b> · ${fmtDate(q.match.call_date)} · protocolo ${q.match.protocol}</label>` : ''}
       ${!q.link ? html`<div class="grid g-4" style="margin-top:10px;gap:10px">
         <select class="select sm" data-f="operator_id" aria-label="Operador"><option value="">Operador…</option>${m.operators.map((o) => html`<option value="${o.id}" ${String(q.operator_id) === String(o.id) ? 'selected' : ''}>${o.name}</option>`)}</select>
-        <select class="select sm" data-f="product" aria-label="Produto"><option value="REFIN" ${q.product === 'REFIN' ? 'selected' : ''}>Refinanciamento</option><option value="ENTREGA" ${q.product === 'ENTREGA' ? 'selected' : ''}>Entrega Amigável</option></select>
+        <select class="select sm" data-f="product" aria-label="Produto">${PRODUCTS.map((p) => html`<option value="${p}" ${q.product === p ? 'selected' : ''}>${PRODUCT[p]}</option>`)}</select>
         <select class="select sm" data-f="cycle_id" aria-label="Quinzena"><option value="">Sem quinzena</option>${m.cycles.map((c) => html`<option value="${c.id}" ${String(q.cycle_id) === String(c.id) ? 'selected' : ''}>${c.name}</option>`)}</select>
         <input class="input sm" type="date" data-f="call_date" value="${q.call_date}" aria-label="Data da ligação">
         <input class="input sm" data-f="protocol" value="${q.protocol}" placeholder="Protocolo" aria-label="Protocolo">

@@ -1,6 +1,7 @@
 // @ts-nocheck — portado do servidor Node; tipagem frouxa de propósito
 // Regra de nota: Conforme = 100% do peso, Parcial = 50%, Não conforme = 0, N/A sai da base.
 // Critério marcado como crítico em "Não conforme" zera a nota (falha grave).
+// Critério com peso 0 aparece na monitoria, mas fica fora da nota (ex.: postura nos roteiros PAN).
 
 const PARTIAL_FACTOR = 0.5;
 
@@ -9,7 +10,11 @@ function computeScore(items, field = 'final_result') {
   for (const it of items) {
     const r = it[field] || it.speech_result;
     if (!r || r === 'NA') continue;
-    const w = Number(it.weight) || 1;
+    const w = it.weight == null || it.weight === '' ? 1 : Number(it.weight);
+    if (!(w > 0)) {
+      if (r === 'NC' && it.critical) criticalFail = true;
+      continue;
+    }
     total += w; counted++;
     if (r === 'C') points += w;
     else if (r === 'P') points += w * PARTIAL_FACTOR;

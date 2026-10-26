@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import {
   html, raw, icon, $, $$, esc, fmtScore, fmtDate, fmtDur, fmtRel, avatar, productChip, scoreRing, deltaTag, resChip, toast, modal, busy,
-  confirmDialog, RESULT, ROLE, userName, emptyState, parseDate,
+  confirmDialog, RESULT, ROLE, userName, emptyState, parseDate, PRODUCT, SEGMENT, SEGMENTS_OF, ALERT, origLabel,
 } from '../ui.js';
 import { readTranscriptFile } from '../files.js';
 
@@ -11,7 +11,9 @@ function previewScore(items, pick) {
   for (const it of items) {
     const r = pick(it);
     if (!r || r === 'NA') continue;
-    const w = Number(it.weight) || 1; total += w; n++;
+    const w = it.weight == null || it.weight === '' ? 1 : Number(it.weight);
+    if (!(w > 0)) { if (r === 'NC' && it.critical) crit = true; continue; }
+    total += w; n++;
     if (r === 'C') pts += w; else if (r === 'P') pts += w * PARTIAL; else if (r === 'NC' && it.critical) crit = true;
   }
   if (!n) return null;
@@ -23,6 +25,7 @@ const ACTIONS = {
   ajustes_revertidos: 'Ajustes revertidos para o speech', link_audio_alterado: 'Link do áudio alterado', transcricao_anexada: 'Transcrição anexada',
   ia_analise: 'Análise automática executada', ia_erro: 'Falha na análise automática', ia_sugestoes_aplicadas: 'Sugestões da IA aplicadas',
   feedback_aplicado: 'Feedback aplicado', feedback_editado: 'Feedback editado', feedback_removido: 'Feedback removido', dados_editados: 'Dados da monitoria editados',
+  importacao_dashboard: 'Importada do dashboard',
 };
 
 let ev = null, draft = new Map(), tab = 'analise';
@@ -58,16 +61,16 @@ function draw(el, ctx) {
       <div class="detail-head">
         ${avatar(e.operator_name, 'lg')}
         <div style="min-width:0">
-          <div class="row" style="gap:8px">${productChip(e.product)}${e.cycle_name ? html`<span class="chip outline">${icon('calendar')}${e.cycle_name}</span>` : ''}${e.critical_fail ? html`<span class="chip bad">${icon('alert')}Falha crítica</span>` : ''}</div>
+          <div class="row" style="gap:8px">${productChip(e.product, e.segment)}${editor && SEGMENTS_OF[e.product] ? html`<button class="btn sm ghost" id="edit-seg" title="Alterar o segmento">${icon('edit')}Segmento</button>` : ''}${(e.alerts || []).map((a) => html`<span class="chip alert ${a === 'audio_ruim' || a === 'sem_speech' ? 'warn' : ''}" title="${ALERT[a]?.[1] || ''}">${icon('alert')}${ALERT[a]?.[0] || a}</span>`)}${e.cycle_name ? html`<span class="chip outline">${icon('calendar')}${e.cycle_name}</span>` : ''}${e.critical_fail ? html`<span class="chip bad">${icon('alert')}Falha crítica</span>` : ''}</div>
           <h2 class="mt-0" style="margin-top:8px">${e.operator_name}</h2>
           <div class="facts">
-            <span>Equipe <b>${e.team || '—'}</b></span><span>Matrícula <b>${e.registration || '—'}</b></span><span>Supervisor <b>${e.supervisor_name || '—'}</b></span>
-            <span>Data <b>${fmtDate(e.call_date)}</b></span><span>Protocolo <b>${e.protocol || '—'}</b></span><span>Contrato <b>${e.contract || '—'}</b></span>
+            <span>Equipe <b>${e.team || '—'}</b></span><span>${e.login ? html`Login <b>${e.login}</b>` : html`Matrícula <b>${e.registration || '—'}</b>`}</span><span>Líder <b>${e.supervisor_name || '—'}</b></span>
+            <span>Data <b>${fmtDate(e.call_date)}${e.call_time ? ` às ${e.call_time}` : ''}</b></span><span>${e.source ? 'ID da ligação' : 'Protocolo'} <b>${e.protocol || '—'}</b></span>${e.contract ? html`<span>Contrato <b>${e.contract}</b></span>` : ''}
             <span>Cliente <b>${e.customer || '—'}</b></span><span>Duração <b>${fmtDur(e.duration_sec)}</b></span>
           </div>
         </div>
         <div class="score-compare">
-          <div class="center">${scoreRing(e.speech_score, '', '')}<div class="tiny muted mt-0" style="margin-top:6px">Speech</div></div>
+          <div class="center">${scoreRing(e.speech_score, '', '')}<div class="tiny muted mt-0" style="margin-top:6px">${origLabel(e)}</div></div>
           <span class="arrow">${icon('arrowRight')}</span>
           <div class="center">${scoreRing(e.final_score, 'lg', 'final')}<div class="tiny mt-0" style="margin-top:6px">${delta && Math.abs(delta) >= 0.1 ? deltaTag(delta) : html`<span class="muted">sem ajuste de nota</span>`}</div></div>
         </div>
@@ -75,6 +78,7 @@ function draw(el, ctx) {
       <div style="padding:0 22px 20px">
         <div class="steps">${steps.map(([l, d]) => html`<div class="step ${d ? 'done' : ''}"><i>${d ? icon('check') : ''}</i>${l}</div>`)}</div>
         ${audioBar(e, can('admin'))}
+        ${callDetails(e)}
         <div class="row mt">
           <button class="btn ${e.status === 'feedback_aplicado' ? '' : 'success'}" data-goto="feedback">${icon('msgCheck')}${e.status === 'feedback_aplicado' ? 'Ver / registrar feedback' : 'Aplicar feedback'}</button>
           ${editor ? html`<button class="btn" id="btn-transcript">${icon('file')}${e.transcript ? 'Substituir transcrição' : 'Anexar transcrição'}</button>
@@ -101,6 +105,10 @@ function draw(el, ctx) {
   $('#btn-transcript', el)?.addEventListener('click', () => attachTranscript(el, ctx));
   $('#btn-ai', el)?.addEventListener('click', (x) => runAI(el, ctx, x.currentTarget));
   $('#edit-audio', el)?.addEventListener('click', () => editAudio(el, ctx));
+  $('#edit-seg', el)?.addEventListener('click', () => editSegment(el, ctx));
+  $$('[data-copy]', el).forEach((b) => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); toast('Nome do arquivo copiado. Cole na busca da pasta de áudios.'); } catch { toast('Não foi possível copiar.', 'err'); }
+  }));
 
   const body = $('#tab-body', el);
   if (tab === 'analise') drawAnalysis(body, el, ctx);
@@ -116,10 +124,41 @@ function audioBar(e, isAdmin) {
   const own = !!e.audio_url;
   return html`<div class="audio-bar">
     <span class="ic">${icon('audio')}</span>
-    <div class="grow"><b>Áudio da ligação</b><div class="url">${e.audio_link ? html`${own ? 'Link próprio deste atendimento' : 'Pasta da quinzena'} · ${e.audio_link}` : 'Nenhum link cadastrado para este atendimento ou quinzena.'}</div></div>
+    <div class="grow"><b>Áudio da ligação</b><div class="url">${e.audio_link ? html`${own ? 'Link próprio deste atendimento' : 'Pasta da quinzena'} · ${e.audio_link}` : 'Nenhum link cadastrado para este atendimento ou quinzena.'}</div>
+      ${e.audio_file ? html`<div class="url">Arquivo: <span class="file-name">${e.audio_file}</span></div>` : ''}</div>
+    ${e.audio_file ? html`<button class="btn" data-copy="${e.audio_file}" title="Copiar o nome do arquivo para buscar na pasta">${icon('file')}Copiar nome</button>` : ''}
     ${e.audio_link ? html`<a class="btn primary" href="${e.audio_link}" target="_blank" rel="noopener">${icon('external')}Abrir no OneDrive</a>` : ''}
     ${isAdmin ? html`<button class="btn" id="edit-audio">${icon('edit')}${e.audio_link ? 'Editar link' : 'Adicionar link'}</button>` : ''}
   </div>`;
+}
+
+// Dados que vieram do dashboard (tabulação, desfecho, aptidão, conduta, sigilo...)
+const HL_ICON = { bad: 'alert', warn: 'alert', ok: 'checkCircle', info: 'info' };
+function callDetails(e) {
+  const d = e.details;
+  if (!d || (!d.facts?.length && !d.highlights?.length)) return '';
+  return html`<div class="mt">
+    ${d.facts?.length ? html`<dl class="facts-grid">${d.facts.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>` : ''}
+    ${d.highlights?.length ? html`<div class="mt">${d.highlights.map((h) => html`<div class="hl ${h.kind}">${icon(HL_ICON[h.kind] || 'info')}<div><b>${h.title}</b><div class="t2">${h.text}</div></div></div>`)}</div>` : ''}
+    ${d.origem ? html`<p class="tiny muted" style="margin:10px 0 0">Origem: ${d.origem}${d.periodo ? ` · ${d.periodo}` : ''}</p>` : ''}
+  </div>`;
+}
+
+function editSegment(el, ctx) {
+  const segs = SEGMENTS_OF[ev.product] || [];
+  modal({
+    title: `Segmento · ${PRODUCT[ev.product]}`,
+    body: html`<p class="t2" style="margin-top:0">Separa a monitoria nos painéis e relatórios (ex.: Clean Curto × Clean Longo, Público × Privado).</p>
+      <div class="field"><label for="sg-v">Segmento</label><select class="select" id="sg-v"><option value="">Segmento a definir</option>${segs.map((s) => html`<option value="${s}" ${ev.segment === s ? 'selected' : ''}>${SEGMENT[s]}</option>`)}</select></div>`,
+    foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="sg-ok">Salvar</button>`,
+    onMount: (m, close) => {
+      $('#sg-ok', m).onclick = async (x) => {
+        busy(x.currentTarget, true);
+        try { ev = await api.patch(`/evaluations/${ev.id}`, { segment: $('#sg-v', m).value }); close(); toast('Segmento atualizado.'); ctx.refreshMeta(); draw(el, ctx); }
+        catch (ex) { toast(ex.message, 'err'); busy(x.currentTarget, false); }
+      };
+    },
+  });
 }
 
 // ------------------------------------------------------------------ Análise
@@ -131,9 +170,11 @@ function drawAnalysis(body, el, ctx) {
   body.innerHTML = String(html`
     ${ai ? html`<div class="card card-pad mb" style="background:var(--grad-soft);border-color:rgba(124,108,255,.25)">
       <div class="row"><span class="ai-sug" style="padding:0;border:0;background:none;display:inline"><span class="ai-ic" style="display:inline-grid">${icon('sparkles')}</span></span>
-        <b>Parecer da análise automática</b><span class="chip ${ai.engine === 'claude' ? 'brand' : 'outline'}">${ai.engine === 'claude' ? `IA · ${e.ai_model || 'Claude'}` : 'Heurística local (sem IA configurada)'}</span>
-        <span class="tiny muted">${fmtRel(e.ai_ran_at)}</span></div>
+        <b>${ai.engine === 'dashboard' ? 'Parecer da monitoria (dashboard)' : 'Parecer da análise automática'}</b><span class="chip ${ai.engine === 'claude' ? 'brand' : 'outline'}">${ai.engine === 'claude' ? `IA · ${e.ai_model || 'Claude'}` : ai.engine === 'dashboard' ? 'Leitura da transcrição completa' : 'Heurística local (sem IA configurada)'}</span>
+        <span class="tiny muted">${e.ai_ran_at ? fmtRel(e.ai_ran_at) : ''}</span></div>
       <p style="margin:10px 0 6px">${ai.summary}</p>
+      ${ai.engine === 'dashboard' && ai.feedback?.strengths ? html`<p class="small t2" style="margin:0 0 6px"><b>Ponto forte:</b> ${ai.feedback.strengths}</p>` : ''}
+      ${ai.engine === 'dashboard' && ai.feedback?.improvements ? html`<p class="small t2" style="margin:0"><b>Feedback sugerido:</b> ${ai.feedback.improvements}</p>` : ''}
       ${ai.customer_profile ? html`<p class="small t2" style="margin:0 0 6px"><b>Cliente:</b> ${ai.customer_profile}</p>` : ''}
       ${ai.discrepancy_overview ? html`<p class="small t2" style="margin:0"><b>Divergências com o speech:</b> ${ai.discrepancy_overview}</p>` : ''}
       ${ai.applied?.length ? html`<div class="banner info mt" style="margin-bottom:0">${icon('info')}<div><b>${ai.applied.length} correção(ões) aplicadas automaticamente</b> (confiança alta): ${ai.applied.map((a) => `${a.codigo} ${a.de || '—'}→${a.para}`).join(' · ')}. Você pode revisar e alterar qualquer item abaixo.</div></div>` : ''}
@@ -151,7 +192,7 @@ function drawAnalysis(body, el, ctx) {
     bar.innerHTML = String(html`<div class="sticky-bar">
       <div><div class="tiny muted">Nota com os ajustes</div><div class="row" style="gap:8px"><b style="font-size:22px;letter-spacing:-.03em" class="num">${fmtScore(preview)}</b>${preview != null && e.final_score != null && Math.abs(preview - e.final_score) >= 0.1 ? deltaTag(preview - e.final_score) : ''}</div></div>
       <div class="grow small t2">${changes.length ? html`<b>${changes.length}</b> alteração(ões) não salvas` : e.status === 'pendente' ? 'Confira os critérios e valide a análise antes do feedback.' : 'Análise revisada. Altere qualquer critério se necessário.'}</div>
-      ${e.items.some((i) => i.adjusted) ? html`<button class="btn sm ghost" id="revert">${icon('undo')}Reverter para o speech</button>` : ''}
+      ${e.items.some((i) => i.adjusted) ? html`<button class="btn sm ghost" id="revert">${icon('undo')}Reverter para ${origLabel(e) === 'Speech' ? 'o speech' : 'a 1ª leitura'}</button>` : ''}
       ${changes.length ? html`<button class="btn ghost" id="discard">Descartar</button><button class="btn primary" id="save">${icon('check')}Salvar ajustes</button>`
         : e.status === 'pendente' ? html`<button class="btn primary" id="validate">${icon('check')}Validar análise</button>` : ''}
     </div>`);
@@ -206,11 +247,11 @@ function critRow(it, value, editor) {
   return html`<div class="crit ${changed ? 'changed' : ''} ${it.adjusted ? 'adjusted' : ''}" data-crit="${it.criterion_id}">
     <div class="crit-top">
       <div>
-        <div class="crit-name"><span class="code">${it.code}</span><b>${it.name}</b>${it.critical ? html`<span class="chip bad">${icon('alert')}crítico</span>` : ''}<span class="tiny muted">peso ${String(it.weight).replace('.', ',')}</span></div>
+        <div class="crit-name"><span class="code">${it.code}</span><b>${it.name}</b>${it.critical ? html`<span class="chip bad">${icon('alert')}crítico</span>` : ''}${it.stage ? html`<span class="chip outline">${it.stage}</span>` : ''}<span class="tiny muted">${Number(it.weight) > 0 ? `peso ${String(it.weight).replace('.', ',')}` : 'fora da nota'}</span></div>
         <div class="crit-desc">${it.description || ''}</div>
       </div>
       <div class="crit-cols">
-        <div class="col"><span class="lbl">Speech</span>${resChip(it.speech_result)}</div>
+        <div class="col"><span class="lbl">${origLabel(ev)}</span>${resChip(it.speech_result)}</div>
         ${it.ai_result ? html`<div class="col"><span class="lbl">IA</span>${resChip(it.ai_result)}</div>` : ''}
         <div class="col"><span class="lbl">Resultado final</span>
           <div class="picker" role="radiogroup" aria-label="Resultado de ${it.name}" aria-disabled="${!editor}">
@@ -219,13 +260,13 @@ function critRow(it, value, editor) {
       </div>
     </div>
     <div class="crit-extra">
-      ${it.speech_note ? html`<div class="adj-note">${icon('headset')}<span><b>Speech:</b> ${it.speech_note}</span></div>` : ''}
+      ${it.speech_note ? html`<div class="adj-note">${icon('headset')}<span><b>${ev.source === 'dash_sem_garantia' ? 'Na ligação' : 'Speech'}:</b> ${it.speech_note}</span></div>` : ''}
       ${it.ai_result && it.ai_result === value && it.ai_result === it.speech_result ? html`<div class="adj-note">${icon('sparkles')}<span><b>IA confirma.</b> ${it.ai_reason || ''}</span></div>` : ''}
       ${it.ai_result && !(it.ai_result === value && it.ai_result === it.speech_result) ? html`<div class="ai-sug"><span class="ai-ic">${icon('sparkles')}</span>
         <div><b>${it.ai_result === it.speech_result ? 'IA confirma o speech' : `IA sugere ${RESULT[it.ai_result]}`}</b> <span class="conf" title="Confiança ${Math.round((it.ai_confidence || 0) * 100)}%">${[1, 2, 3, 4, 5].map((k) => html`<i class="${k <= conf ? 'on' : ''}"></i>`)}</span>
           <div class="t2">${it.ai_reason || ''}</div>${it.ai_evidence ? html`<q>${it.ai_evidence}</q>` : ''}</div>
         ${editor && aiDiff ? html`<button class="btn sm" data-ai-apply>Usar sugestão</button>` : ''}</div>` : ''}
-      ${it.adjusted && !changed ? html`<div class="adj-note">${icon('edit')}<span>Ajustado ${it.adjust_source === 'ia' ? 'automaticamente pela IA' : `por ${it.adjusted_by_display || it.adjusted_by_name || 'analista'}`} ${it.adjusted_at ? fmtRel(it.adjusted_at) : ''} · de <b>${RESULT[it.speech_result] || '—'}</b> para <b>${RESULT[it.final_result]}</b>${it.adjust_reason ? html` — “${it.adjust_reason}”` : ''}</span></div>` : ''}
+      ${it.adjusted && !changed ? html`<div class="adj-note">${icon('edit')}<span>Ajustado ${it.adjust_source === 'ia' ? 'automaticamente pela IA' : it.adjust_source === 'dashboard' ? 'na análise do dashboard' : `por ${it.adjusted_by_display || it.adjusted_by_name || 'analista'}`} ${it.adjusted_at ? fmtRel(it.adjusted_at) : ''} · de <b>${RESULT[it.speech_result] || '—'}</b> para <b>${RESULT[it.final_result]}</b>${it.adjust_reason ? html` — “${it.adjust_reason}”` : ''}</span></div>` : ''}
       <div class="reason" ${needsReason && editor ? '' : 'hidden'}><input class="input sm" placeholder="Motivo do ajuste (obrigatório) — ex.: speech não reconheceu a confirmação de CPF" value="${reason}" maxlength="500"></div>
     </div>
   </div>`;
@@ -388,7 +429,7 @@ function suggestion(e) {
     improvements: f?.improvements || weak.map((i) => `${i.name} (${i.final_result === 'NC' ? 'não conforme' : 'parcial'})`).join('; '),
     action_plan: f?.action_plan || (weak.length ? 'Ouvir o trecho da ligação junto com o operador, reforçar o roteiro dos pontos citados e reavaliar na próxima quinzena.' : 'Manter o padrão de atendimento e compartilhar a ligação como boa prática.'),
     content: weak.length
-      ? `Feedback da monitoria de ${fmtDate(e.call_date)} (${e.product === 'REFIN' ? 'Refinanciamento' : 'Entrega Amigável'}, nota ${fmtScore(e.final_score)}). Alinhado com o operador: ${weak.map((i) => i.name).join(', ')}.`
+      ? `Feedback da monitoria de ${fmtDate(e.call_date)} (${PRODUCT[e.product] || e.product}, nota ${fmtScore(e.final_score)}). Alinhado com o operador: ${weak.map((i) => i.name).join(', ')}.`
       : `Feedback positivo da monitoria de ${fmtDate(e.call_date)} (nota ${fmtScore(e.final_score)}). Operador reconhecido pela aderência ao roteiro.`,
   };
 }

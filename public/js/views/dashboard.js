@@ -1,8 +1,15 @@
 import { api, qs } from '../api.js';
-import { html, raw, icon, $, $$, fmtScore, fmtPct, fmtInt, greeting, userName, deltaTag, avatar, sparkline, band, emptyState, esc } from '../ui.js';
+import { html, raw, icon, $, $$, fmtScore, fmtPct, fmtInt, greeting, userName, deltaTag, avatar, sparkline, band, emptyState, esc, PRODUCT, PRODUCT_SHORT, SEGMENT, SEGMENTS_OF, ALERT } from '../ui.js';
 import { lineChart, barChart, scatterChart, palette, legendHtml } from '../charts.js';
 
-export function filterBar(store, { product = '', team = '' } = {}, { showTeam = true, extra = '' } = {}) {
+// Produtos com monitorias (a barra só mostra o que tem dado); sem dados ainda, mostra as carteiras PAN
+const productsOf = (m) => (m.products?.length ? m.products.map((p) => p.product) : ['VEICULOS', 'CARTOES', 'CONSIGNADO']);
+const segmentOptions = (m, product, segment) => {
+  const segs = m.products?.find((p) => p.product === product)?.segments || (SEGMENTS_OF[product] || []).map((sg) => ({ segment: sg }));
+  return html`<option value="">Todos os segmentos</option>${segs.map((x) => html`<option value="${x.segment}" ${segment === x.segment ? 'selected' : ''}>${SEGMENT[x.segment]}${x.total != null ? ` (${x.total})` : ''}</option>`)}`;
+};
+
+export function filterBar(store, { product = '', team = '', segment = '' } = {}, { showTeam = true, extra = '' } = {}) {
   const m = store.meta;
   return html`<div class="filters">
     <span class="muted">${icon('filter')}</span>
@@ -12,9 +19,9 @@ export function filterBar(store, { product = '', team = '' } = {}, { showTeam = 
     </select>
     <div class="seg" id="f-product" role="group" aria-label="Produto">
       <button data-v="" class="${!product ? 'on' : ''}">Todos</button>
-      <button data-v="REFIN" class="${product === 'REFIN' ? 'on' : ''}">Refinanciamento</button>
-      <button data-v="ENTREGA" class="${product === 'ENTREGA' ? 'on' : ''}">Entrega Amigável</button>
+      ${productsOf(m).map((p) => html`<button data-v="${p}" class="${product === p ? 'on' : ''}">${PRODUCT_SHORT[p]}</button>`)}
     </div>
+    <select class="select sm" id="f-segment" aria-label="Segmento" ${SEGMENTS_OF[product] ? '' : 'hidden'}>${segmentOptions(m, product, segment)}</select>
     ${showTeam && m.teams.length > 1 ? html`<select class="select sm" id="f-team" aria-label="Equipe"><option value="">Todas as equipes</option>${m.teams.map((t) => html`<option ${team === t ? 'selected' : ''}>${t}</option>`)}</select>` : ''}
     ${extra}
   </div>`;
@@ -23,12 +30,17 @@ export function filterBar(store, { product = '', team = '' } = {}, { showTeam = 
 export function bindFilterBar(root, store, state, reload) {
   $('#f-cycle', root)?.addEventListener('change', (e) => { store.cycle = e.target.value; localStorage.setItem('px_cycle', store.cycle); reload(); });
   $$('#f-product button', root).forEach((b) => b.addEventListener('click', () => {
-    state.product = b.dataset.v; $$('#f-product button', root).forEach((x) => x.classList.toggle('on', x === b)); reload();
+    state.product = b.dataset.v; state.segment = '';
+    $$('#f-product button', root).forEach((x) => x.classList.toggle('on', x === b));
+    const sel = $('#f-segment', root);
+    if (sel) { sel.hidden = !SEGMENTS_OF[state.product]; sel.innerHTML = String(segmentOptions(store.meta, state.product, '')); }
+    reload();
   }));
+  $('#f-segment', root)?.addEventListener('change', (e) => { state.segment = e.target.value; reload(); });
   $('#f-team', root)?.addEventListener('change', (e) => { state.team = e.target.value; reload(); });
 }
 
-const state = { product: '', team: '' };
+const state = { product: '', team: '', segment: '' };
 
 export async function render(el, _p, ctx) {
   const { store } = ctx;
@@ -38,7 +50,7 @@ export async function render(el, _p, ctx) {
   el.innerHTML = String(html`
     <div class="page-head">
       <div><h2>${greeting()}, <span class="gradient-text">${userName(u)}</span></h2>
-      <p>${cycle ? html`Resultados da <b>${cycle.name}</b>` : 'Visão consolidada de todas as quinzenas'} · Refinanciamento e Entrega Amigável</p></div>
+      <p>${cycle ? html`Resultados da <b>${cycle.name}</b>` : 'Visão consolidada de todas as quinzenas'} · ${productsOf(store.meta).map((p) => PRODUCT[p]).join(', ')}</p></div>
       <div class="grow"></div>
       <a class="btn" href="#/relatorios">${icon('report')}Gerar dashboard</a>
       <a class="btn primary" href="#/atendimentos">${icon('headset')}Ver atendimentos</a>
@@ -53,9 +65,10 @@ async function load(el, ctx) {
   const { store } = ctx;
   const box = $('#dash', el);
   box.style.opacity = '.5';
-  const d = await api.get(`/stats/overview${qs({ cycle_id: store.cycle, product: state.product, team: state.team })}`);
+  const f = { product: state.product, segment: state.segment, team: state.team };
+  const d = await api.get(`/stats/overview${qs({ cycle_id: store.cycle, ...f })}`);
   // Para comparar com a quinzena anterior, sempre buscamos a evolução completa
-  const full = store.cycle ? await api.get(`/stats/overview${qs({ product: state.product, team: state.team })}`) : d;
+  const full = store.cycle ? await api.get(`/stats/overview${qs(f)}`) : d;
   if (!ctx.isCurrent()) return;
   box.style.opacity = '';
   const k = d.kpis;
@@ -69,23 +82,34 @@ async function load(el, ctx) {
   const c = palette();
 
   const insights = buildInsights(d, prev && store.cycle ? prev : null);
+  const present = (d.segments || []).filter((x) => x.level === 'product').map((x) => x.product);
+  const series = present.map((p) => ({ p, key: p.toLowerCase(), label: PRODUCT[p], color: c[p.toLowerCase()] }));
+  const alerts = Object.entries(k.alerts || {}).filter(([, v]) => v).sort((a, b) => b[1] - a[1]);
+  const alertTotal = alerts.reduce((a, [, v]) => a + v, 0);
 
   box.innerHTML = String(html`
     <div class="grid g-6">
       ${kpi('gauge', 'Nota média final', fmtScore(k.avg_final), '', html`${dScore != null ? html`${deltaTag(dScore)} vs. quinzena anterior` : html`Speech: <b>${fmtScore(k.avg_speech)}</b>`}`, k.avg_final)}
-      ${kpi('target', 'Conformidade', fmtScore(k.conformity), '%', html`${dConf != null ? html`${deltaTag(dConf, ' p.p.')} vs. anterior` : `${fmtInt(k.items_conform)} de ${fmtInt(k.items_total)} itens`}`, k.conformity)}
-      ${kpi('headset', 'Monitorias', fmtInt(k.total), '', html`<span class="chip refin">${k.total_refin} Refin</span><span class="chip entrega">${k.total_entrega} Entrega</span>`)}
+      ${kpi('target', 'Aderência ao roteiro', fmtScore(k.adherence ?? k.conformity), '%', html`${dConf != null ? html`${deltaTag(dConf, ' p.p.')} conformidade vs. anterior` : 'itens feitos ÷ itens que cabiam'}`, k.adherence ?? k.conformity)}
+      ${kpi('headset', 'Monitorias', fmtInt(k.total), '', html`${series.map((x) => html`<span class="chip p-${x.key}">${k['total_' + x.key]} ${PRODUCT_SHORT[x.p]}</span>`)}`)}
       ${kpi('msgCheck', 'Feedbacks aplicados', fmtScore(k.feedback_rate), '%', html`${k.feedback_applied} de ${k.total} · <a href="#/feedbacks/pendentes">${k.total - k.feedback_applied} pendentes</a>`, k.feedback_rate)}
-      ${kpi('alert', 'Falhas críticas', fmtInt(k.critical_fails), '', html`${fmtPct(k.total ? (k.critical_fails / k.total) * 100 : 0)} das monitorias zeradas`, null, 'bad')}
+      ${alertTotal || !k.critical_fails
+        ? kpi('alert', 'Alertas de qualidade', fmtInt(alertTotal), '', html`${alerts.slice(0, 2).map(([a, v]) => `${v} ${ALERT[a][0].toLowerCase()}`).join(' · ') || 'nenhum alerta'}${k.critical_fails ? ` · ${k.critical_fails} falha(s) crítica(s)` : ''}`, null, 'bad')
+        : kpi('alert', 'Falhas críticas', fmtInt(k.critical_fails), '', html`${fmtPct(k.total ? (k.critical_fails / k.total) * 100 : 0)} das monitorias zeradas`, null, 'bad')}
       ${kpi('edit', 'Ajustes no speech', fmtInt(k.evals_adjusted), '', html`${fmtPct(k.total ? (k.evals_adjusted / k.total) * 100 : 0)} das análises corrigidas`, null, 'warn')}
     </div>
+
+    ${segTable(d, series)}
+
+    ${alerts.length ? html`<div class="card mt"><div class="card-head"><div><h3>Alertas de qualidade</h3><div class="sub">Pontos que pedem conversa com o operador, além da nota. Clique para ver as ligações.</div></div></div>
+      <div class="card-body"><div class="grid g-4">${alerts.map(([a, v]) => html`<button class="insight click" data-alert="${a}" style="text-align:left"><span class="ic" style="background:var(--bad-soft);color:var(--bad-ink)">${icon('alert')}</span><div><b>${v} · ${ALERT[a][0]}</b><div class="t2 small">${ALERT[a][1]}</div></div></button>`)}</div></div></div>` : ''}
 
     ${insights.length ? html`<div class="grid g-3 mt">${insights.map((i) => html`<div class="insight"><span class="ic" style="background:${i.bg};color:${i.fg}">${icon(i.icon)}</span><div>${raw(i.html)}</div></div>`)}</div>` : ''}
 
     <div class="grid g-3 mt">
       <div class="card span-2">
         <div class="card-head"><div><h3>Evolução da nota por quinzena</h3><div class="sub">Nota final média (após ajustes) × nota original do speech</div></div><div class="grow"></div>
-          ${raw(legendHtml([{ label: 'Geral', color: c.geral, line: true }, { label: 'Refinanciamento', color: c.refin, line: true }, { label: 'Entrega Amigável', color: c.entrega, line: true }, { label: 'Speech (original)', color: c.speech, line: true, dash: true }]))}</div>
+          ${raw(legendHtml([{ label: 'Geral', color: c.geral, line: true }, ...(series.length > 1 ? series.map((x) => ({ label: x.label, color: x.color, line: true })) : []), { label: 'Speech (original)', color: c.speech, line: true, dash: true }]))}</div>
         <div class="card-body"><div class="chart-box"><canvas id="ch-evo" role="img" aria-label="Evolução da nota por quinzena"></canvas></div></div>
       </div>
       <div class="card">
@@ -97,7 +121,7 @@ async function load(el, ctx) {
     <div class="grid g-2 mt">
       <div class="card">
         <div class="card-head"><div><h3>Dispersão: speech × nota final</h3><div class="sub">Pontos acima da linha tiveram a nota corrigida para cima após revisão. Clique para abrir.</div></div><div class="grow"></div>
-          ${raw(legendHtml([{ label: 'Refinanciamento', color: c.refin }, { label: 'Entrega Amigável', color: c.entrega }]))}</div>
+          ${raw(legendHtml(series.map((x) => ({ label: x.label, color: x.color }))))}</div>
         <div class="card-body"><div class="chart-box tall"><canvas id="ch-scatter" role="img" aria-label="Dispersão entre nota do speech e nota final"></canvas></div></div>
       </div>
       <div class="card">
@@ -132,32 +156,58 @@ async function load(el, ctx) {
   `);
 
   $$('[data-op]', box).forEach((tr) => tr.addEventListener('click', () => ctx.navigate(`operadores/${tr.dataset.op}`)));
+  // Linha da tabela por produto/segmento aplica o filtro no próprio painel
+  $$('[data-seg-p]', box).forEach((tr) => tr.addEventListener('click', () => {
+    state.product = tr.dataset.segP; state.segment = tr.dataset.segS || '';
+    const bar = $('.filters', el);
+    bar.outerHTML = String(filterBar(store, state));
+    bindFilterBar(el, store, state, () => load(el, ctx));
+    load(el, ctx);
+  }));
+  $$('[data-alert]', box).forEach((b) => b.addEventListener('click', () => {
+    sessionStorage.setItem('px_eval_preset', JSON.stringify({ product: state.product, segment: state.segment, alert: b.dataset.alert }));
+    ctx.navigate('atendimentos');
+  }));
 
   const labels = evo.map((e) => e.cycle.replace(' Quinzena', ' Q'));
   lineChart($('#ch-evo'), labels, [
     { label: 'Geral', data: evo.map((e) => e.geral), color: c.geral, fill: true },
-    { label: 'Refinanciamento', data: evo.map((e) => e.refin), color: c.refin },
-    { label: 'Entrega Amigável', data: evo.map((e) => e.entrega), color: c.entrega },
+    ...(series.length > 1 ? series.map((x) => ({ label: x.label, data: evo.map((e) => e[x.key]), color: x.color })) : []),
     { label: 'Speech (original)', data: evo.map((e) => e.speech), color: c.speech, dash: [5, 4] },
-  ], { min: 40 });
+  ], { min: Math.max(0, Math.min(40, ...evo.flatMap((e) => [e.geral, e.speech]).filter((v) => v != null).map((v) => Math.floor(v / 10) * 10 - 10))) });
 
   barChart($('#ch-dist'), d.distribution.map((x) => x.label), [{ label: 'Monitorias', data: d.distribution.map((x) => x.count) }],
     { colors: [c.bad, c.warn, c.warn, c.refin, c.ok] });
 
   const go = (p) => p.id && ctx.navigate(`atendimentos/${p.id}`);
-  scatterChart($('#ch-scatter'), [
-    { label: 'Refinanciamento', color: c.refin, data: d.scatter.filter((p) => p.product === 'REFIN').map((p) => ({ ...p, label: p.operator })) },
-    { label: 'Entrega Amigável', color: c.entrega, data: d.scatter.filter((p) => p.product === 'ENTREGA').map((p) => ({ ...p, label: p.operator })), style: 'rectRounded' },
-  ], { xLabel: 'Nota do speech', yLabel: 'Nota final (após revisão)', diagonal: true, onClick: go });
+  const styles = ['circle', 'rectRounded', 'triangle', 'rectRot', 'star'];
+  scatterChart($('#ch-scatter'), series.map((x, i) => (
+    { label: x.label, color: x.color, data: d.scatter.filter((p) => p.product === x.p).map((p) => ({ ...p, label: p.operator })), style: styles[i % styles.length] }
+  )), { xLabel: 'Nota do speech', yLabel: 'Nota final (após revisão)', diagonal: true, onClick: go });
 
   const maxSd = Math.max(10, ...d.operators.map((o) => o.sd || 0));
   scatterChart($('#ch-opmap'), [{ label: 'Operadores', color: c.brand, radius: 8, data: d.operators.filter((o) => o.avg != null).map((o) => ({ x: o.avg, y: o.sd, label: o.name, opId: o.operator_id })) }],
     { xLabel: 'Nota média', yLabel: 'Desvio-padrão (menor = mais consistente)', xmin: Math.max(0, Math.floor(Math.min(...d.operators.map((o) => o.avg ?? 100)) / 10) * 10 - 5), xmax: 100, ymin: 0, ymax: Math.ceil(maxSd / 5) * 5 + 5,
       tooltip: (ctx2) => ` ${ctx2.raw.label}: média ${fmtScore(ctx2.raw.x)} · desvio ${fmtScore(ctx2.raw.y)}`, onClick: (p) => ctx.navigate(`operadores/${p.opId}`) });
 
-  const top = d.criteria.filter((x) => x.base).slice(0, 9);
+  const minB = Math.min(5, Math.max(1, ...d.criteria.map((x) => x.base || 0)));
+  const top = d.criteria.filter((x) => x.base >= minB).slice(0, 9);
   barChart($('#ch-crit'), top.map((x) => `${x.code} · ${x.name}`), [{ label: 'Índice de falha', data: top.map((x) => x.fail_rate) }],
     { horizontal: true, suffix: '%', colors: top.map((x) => (x.critical ? c.bad : c.warn)) });
+}
+
+// Visão apartada: Veículos, Cartões (Clean Curto / Clean Longo) e Consignado (Público / Privado)
+function segTable(d, series) {
+  const rows = d.segments || [];
+  if (!rows.length || (rows.length === 1 && rows[0].level === 'product' && !SEGMENTS_OF[rows[0].product])) return '';
+  return html`<div class="card mt"><div class="card-head"><div><h3>Por produto e segmento</h3><div class="sub">Clique em uma linha para filtrar o painel. Aderência = itens feitos ÷ itens que cabiam na ligação, como nos dashboards PAN.</div></div></div>
+    <div class="card-body" style="padding-top:6px"><div class="table-wrap"><table class="tbl seg-table"><thead><tr><th>Produto / segmento</th><th class="right">Monitorias</th><th class="right">Operadores</th><th class="right">Nota média</th><th class="right">Aderência</th><th class="right">Speech</th><th class="right">Feedback</th><th class="right">Com alerta</th></tr></thead>
+    <tbody>${rows.map((r) => html`<tr class="click lvl-${r.level}" data-seg-p="${r.product}" data-seg-s="${r.segment || ''}" style="--pc:${series.find((x) => x.p === r.product)?.color || 'var(--brand)'}">
+      <td class="lvl-${r.level}">${r.level === 'product' ? html`<span class="dot"></span>${PRODUCT[r.product]}` : SEGMENT[r.segment]}</td>
+      <td class="right num">${fmtInt(r.total)}</td><td class="right num">${r.total ? fmtInt(r.operators) : '—'}</td>
+      <td class="right"><b class="score-txt band-${band(r.avg)} num">${fmtScore(r.avg)}</b></td>
+      <td class="right num">${fmtPct(r.adherence)}</td><td class="right num muted">${fmtScore(r.avg_speech)}</td>
+      <td class="right num">${r.total ? fmtPct(r.feedback_rate) : '—'}</td><td class="right num">${r.total ? fmtInt(r.alerts) : '—'}</td></tr>`)}</tbody></table></div></div></div>`;
 }
 
 function kpi(ic, label, val, suffix, foot, meter = null, tone = '') {
@@ -178,7 +228,9 @@ function buildInsights(d, prev) {
   }
   const movers = d.operators.filter((o) => o.delta != null).sort((a, b) => b.delta - a.delta);
   if (movers.length && movers[0].delta > 0) out.push({ icon: 'trendUp', bg: 'var(--info-soft)', fg: 'var(--info-ink)', html: `<b>Maior evolução:</b> ${esc(movers[0].name)} subiu <b>${fmtScore(movers[0].delta)}</b> pontos na última quinzena.` });
-  const worst = d.criteria.find((c) => c.base);
+  // Ignora critérios com poucas ligações na base (ex.: 1 de 1 falhou = 100%)
+  const minBase = Math.min(5, Math.max(1, ...d.criteria.map((c) => c.base || 0)));
+  const worst = d.criteria.find((c) => c.base >= minBase);
   if (worst) out.push({ icon: 'target', bg: 'var(--warn-soft)', fg: 'var(--warn-ink)', html: `<b>Foco de melhoria:</b> “${esc(worst.name)}” tem <b>${fmtScore(worst.fail_rate)}%</b> de falha.` });
   void prev;
   return out.slice(0, 3);

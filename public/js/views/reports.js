@@ -1,13 +1,13 @@
-import { html, icon, $, $$, toast } from '../ui.js';
+import { html, icon, $, $$, toast, PRODUCT, SEGMENT, SEGMENTS_OF } from '../ui.js';
 
 const TYPES = [
   { id: 'geral', icon: 'dashboard', title: 'Visão geral', desc: 'Report quinzenal completo: KPIs, evolução, dispersão, critérios, ranking e destaques.' },
   { id: 'comparativo', icon: 'layers', title: 'Comparativo entre quinzenas', desc: 'Lado a lado de duas ou mais quinzenas, com variação por operador e por critério.' },
-  { id: 'produto', icon: 'scale', title: 'Refinanciamento × Entrega', desc: 'Compara os dois produtos: notas, critérios ofensores e evolução.' },
+  { id: 'produto', icon: 'scale', title: 'Comparativo por produto', desc: 'Veículos × Cartões × Consignado. Com um produto no recorte, compara os segmentos dele (Clean Curto × Clean Longo, Público × Privado).' },
   { id: 'individual', icon: 'user', title: 'Individual do operador', desc: 'Raio-x de um operador: evolução vs. equipe, critérios e feedbacks.' },
 ];
 const SECTIONS = [
-  ['capa', 'Capa'], ['resumo', 'Resumo executivo'], ['evolucao', 'Evolução e comparativo'], ['dispersao', 'Gráficos de dispersão'],
+  ['capa', 'Capa'], ['resumo', 'Resumo executivo'], ['segmentos', 'Produtos e segmentos'], ['evolucao', 'Evolução e comparativo'], ['dispersao', 'Gráficos de dispersão'],
   ['criterios', 'Critérios'], ['ranking', 'Ranking de operadores'], ['destaques', 'Destaques e feedbacks'], ['speech', 'Qualidade do speech (ajustes)'],
 ];
 
@@ -20,10 +20,12 @@ export async function render(el, _p, ctx) {
   const cfg = {
     type: presetOp ? 'individual' : saved.type || 'geral',
     cycles: saved.cycles?.filter((id) => m.cycles.some((c) => c.id === id)) || (store.cycle ? [Number(store.cycle)] : m.cycles.slice(0, 1).map((c) => c.id)),
-    product: saved.product || '', team: saved.team || '', operator_id: presetOp || saved.operator_id || '',
+    product: saved.product || '', segment: saved.segment || '', team: saved.team || '', operator_id: presetOp || saved.operator_id || '',
     theme: saved.theme || 'dark', title: '', subtitle: saved.subtitle || '',
-    sections: saved.sections || SECTIONS.map((s) => s[0]),
+    // Seções novas entram marcadas mesmo para quem já tinha uma configuração salva
+    sections: saved.sections ? [...saved.sections, ...(saved.known_sections ? [] : ['segmentos'])] : SECTIONS.map((s) => s[0]),
   };
+  const prodOptions = (m.products?.length ? m.products : [{ product: 'VEICULOS' }, { product: 'CARTOES', segments: [] }, { product: 'CONSIGNADO', segments: [] }]);
   el.innerHTML = String(html`
     <div class="page-head"><div><h2>Dashboards &amp; reports</h2><p>Gere o report de qualidade com capa e design de apresentação. Imprima em PDF ou baixe o HTML para enviar.</p></div></div>
     <div class="grid g-3">
@@ -37,7 +39,7 @@ export async function render(el, _p, ctx) {
           <div class="row mt"><button class="btn sm ghost" id="r-last2">Últimas 2</button><button class="btn sm ghost" id="r-last4">Últimas 4</button><button class="btn sm ghost" id="r-all">Todas</button><button class="btn sm ghost" id="r-none">Limpar</button></div></div>
         <div class="card card-pad"><h3 style="margin:0 0 12px;font-size:15px">Recorte</h3>
           <div class="grid g-3">
-            <div class="field"><label for="r-prod">Produto</label><select class="select" id="r-prod"><option value="">Refinanciamento + Entrega</option><option value="REFIN">Refinanciamento</option><option value="ENTREGA">Entrega Amigável</option></select></div>
+            <div class="field"><label for="r-prod">Produto</label><select class="select" id="r-prod"><option value="">Todos os produtos</option>${prodOptions.map((p) => html`<option value="${p.product}">${PRODUCT[p.product]}</option>${(SEGMENTS_OF[p.product] || []).map((sg) => html`<option value="${p.product}:${sg}">${PRODUCT[p.product]} · ${SEGMENT[sg]}</option>`)}`)}</select></div>
             <div class="field"><label for="r-team">Equipe</label><select class="select" id="r-team"><option value="">Todas</option>${m.teams.map((t) => html`<option>${t}</option>`)}</select></div>
             <div class="field" id="r-op-f"><label for="r-op">Operador</label><select class="select" id="r-op"><option value="">Selecione…</option>${m.operators.map((o) => html`<option value="${o.id}">${o.name}</option>`)}</select></div>
           </div></div>
@@ -56,7 +58,7 @@ export async function render(el, _p, ctx) {
       </div>
     </div>`);
 
-  $('#r-prod').value = cfg.product; $('#r-team').value = cfg.team; $('#r-op').value = cfg.operator_id;
+  $('#r-prod').value = cfg.segment ? `${cfg.product}:${cfg.segment}` : cfg.product; $('#r-team').value = cfg.team; $('#r-op').value = cfg.operator_id;
   const sync = () => {
     $$('#r-types [data-type]').forEach((x) => x.classList.toggle('on', x.dataset.type === cfg.type));
     $('#r-op-f').style.display = cfg.type === 'individual' ? '' : 'none';
@@ -78,14 +80,14 @@ export async function render(el, _p, ctx) {
 
   $('#r-go').onclick = () => {
     cfg.cycles = $$('#r-cycles input:checked').map((i) => Number(i.value));
-    cfg.product = $('#r-prod').value; cfg.team = $('#r-team').value; cfg.operator_id = $('#r-op').value;
+    [cfg.product, cfg.segment = ''] = $('#r-prod').value.split(':'); cfg.team = $('#r-team').value; cfg.operator_id = $('#r-op').value;
     cfg.title = $('#r-title').value.trim(); cfg.subtitle = $('#r-sub').value.trim();
     cfg.sections = $$('#r-secs input:checked').map((i) => i.value);
     if (!cfg.cycles.length) return toast('Selecione ao menos uma quinzena.', 'err');
     if (cfg.type === 'comparativo' && cfg.cycles.length < 2) return toast('Selecione duas ou mais quinzenas para o comparativo.', 'err');
     if (cfg.type === 'individual' && !cfg.operator_id) return toast('Selecione o operador.', 'err');
-    localStorage.setItem('px_report_cfg', JSON.stringify({ ...cfg, title: '' }));
-    const p = new URLSearchParams({ type: cfg.type, cycles: cfg.cycles.join(','), product: cfg.product, team: cfg.team, operator_id: cfg.operator_id, theme: cfg.theme, title: cfg.title, subtitle: cfg.subtitle, sections: cfg.sections.join(',') });
+    localStorage.setItem('px_report_cfg', JSON.stringify({ ...cfg, title: '', known_sections: true }));
+    const p = new URLSearchParams({ type: cfg.type, cycles: cfg.cycles.join(','), product: cfg.product, segment: cfg.segment, team: cfg.team, operator_id: cfg.operator_id, theme: cfg.theme, title: cfg.title, subtitle: cfg.subtitle, sections: cfg.sections.join(',') });
     window.open(`report.html?${p}`, '_blank', 'noopener');
   };
 }

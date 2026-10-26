@@ -153,13 +153,14 @@ export async function downloadTemplate(criteria) {
   const legend = wb.addWorksheet('Legenda');
   legend.columns = [{ header: 'Código', key: 'code', width: 10 }, { header: 'Critério', key: 'name', width: 38 }, { header: 'Produto', key: 'product', width: 14 }, { header: 'Peso', key: 'weight', width: 8 }, { header: 'Crítico', key: 'critical', width: 9 }, { header: 'Descrição', key: 'description', width: 90 }];
   styleHeader(legend);
-  criteria.forEach((c) => legend.addRow({ ...c, product: { REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável', AMBOS: 'Ambos' }[c.product], critical: c.critical ? 'Sim' : 'Não' }));
+  criteria.forEach((c) => legend.addRow({ ...c, product: { REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável', AMBOS: 'Refin e Entrega', VEICULOS: 'Veículos', SEM_GARANTIA: 'Cartões e Consignado', CARTOES: 'Cartões', CONSIGNADO: 'Consignado' }[c.product], critical: c.critical ? 'Sim' : 'Não' }));
   legend.addRow({});
   legend.addRow({ code: 'Valores', name: 'C = Conforme · P = Parcial · NC = Não conforme · NA = Não se aplica (também aceita Sim/Não/Parcial)' });
   await saveWorkbook(wb, 'modelo-importacao-px-monitorias.xlsx');
 }
 
-const PRODUCT = { REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável' };
+const PRODUCT = { VEICULOS: 'Veículos', CARTOES: 'Cartões', CONSIGNADO: 'Consignado', REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável' };
+const SEGMENT = { CLEAN_CURTO: 'Clean Curto', CLEAN_LONGO: 'Clean Longo', PUBLICO: 'Público', PRIVADO: 'Privado' };
 const STATUS = { pendente: 'Pendente de revisão', revisada: 'Revisada', feedback_aplicado: 'Feedback aplicado' };
 
 export async function downloadEvaluations(rows) {
@@ -167,12 +168,13 @@ export async function downloadEvaluations(rows) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Atendimentos');
   ws.columns = [
-    ['ID', 'id', 8], ['Ciclo', 'cycle_name', 24], ['Operador', 'operator_name', 28], ['Equipe', 'team', 14], ['Produto', 'product', 18], ['Data', 'call_date', 12],
-    ['Protocolo', 'protocol', 20], ['Nota speech', 'speech_score', 12], ['Nota final', 'final_score', 12], ['Ajustes', 'adjustments', 9], ['Status', 'status', 20],
-    ['Feedback em', 'feedback_at', 18], ['Link áudio', 'audio_link', 40],
+    ['ID', 'id', 8], ['Ciclo', 'cycle_name', 24], ['Operador', 'operator_name', 28], ['Login', 'login', 14], ['Líder', 'supervisor_name', 26], ['Equipe', 'team', 14],
+    ['Produto', 'product', 14], ['Segmento', 'segment', 14], ['Data', 'call_date', 12], ['Hora', 'call_time', 8],
+    ['Protocolo / ID ligação', 'protocol', 20], ['Tabulação', 'tabulation', 26], ['Desfecho', 'outcome', 24], ['Nota speech / 1ª leitura', 'speech_score', 12], ['Nota final', 'final_score', 12],
+    ['Ajustes', 'adjustments', 9], ['Alertas', 'alerts', 24], ['Status', 'status', 20], ['Feedback em', 'feedback_at', 18], ['Arquivo do áudio', 'audio_file', 50], ['Link áudio', 'audio_link', 40],
   ].map(([header, key, width]) => ({ header, key, width }));
   styleHeader(ws);
-  rows.forEach((r) => ws.addRow({ ...r, product: PRODUCT[r.product], status: STATUS[r.status], feedback_at: r.feedback_at ? new Date(r.feedback_at).toLocaleString('pt-BR') : '' }));
+  rows.forEach((r) => ws.addRow({ ...r, product: PRODUCT[r.product], segment: SEGMENT[r.segment] || '', alerts: (r.alerts || []).join(', '), status: STATUS[r.status], feedback_at: r.feedback_at ? new Date(r.feedback_at).toLocaleString('pt-BR') : '' }));
   await saveWorkbook(wb, 'atendimentos-px-monitorias.xlsx');
 }
 

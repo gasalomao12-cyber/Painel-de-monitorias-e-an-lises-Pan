@@ -8,6 +8,7 @@ import { computeScore } from './scoring.ts';
 import { analyzeTranscript, aiConfigured } from './ai.ts';
 import { seedDemo, clearDemo } from './seed.ts';
 import { normalizeRows } from './normalize.ts';
+import { importDashboard } from './dashboard.ts';
 
 const router = new Router();
 const sb = () => admin();
@@ -15,6 +16,11 @@ const { requireAuth, requireRole } = auth;
 const ADMIN = requireRole('admin');
 const QUALITY = requireRole('admin', 'qualidade');
 const RESULTS = ['C', 'P', 'NC', 'NA'];
+// Carteiras PAN importadas dos dashboards + Refinanciamento/Entrega Amigável lançados à mão
+const PRODUCTS = ['VEICULOS', 'CARTOES', 'CONSIGNADO', 'REFIN', 'ENTREGA'];
+const SEGMENTS = { CARTOES: ['CLEAN_CURTO', 'CLEAN_LONGO'], CONSIGNADO: ['PUBLICO', 'PRIVADO'] };
+const CRITERIA_PRODUCTS = ['REFIN', 'ENTREGA', 'AMBOS', 'VEICULOS', 'SEM_GARANTIA', 'CARTOES', 'CONSIGNADO'];
+const CRITERIA_FOR = { REFIN: ['AMBOS', 'REFIN'], ENTREGA: ['AMBOS', 'ENTREGA'], VEICULOS: ['VEICULOS'], CARTOES: ['SEM_GARANTIA', 'CARTOES'], CONSIGNADO: ['SEM_GARANTIA', 'CONSIGNADO'] };
 
 const n = (v) => (v === undefined || v === '' ? null : v);
 const nowIso = () => new Date().toISOString();
@@ -108,6 +114,7 @@ function applyFilters(query, req, q, { cards = true } = {}) {
   const ids = (v) => String(v).split(',').map(Number).filter(Boolean);
   if (q.cycle_id) { const l = ids(q.cycle_id); if (l.length) x = x.in('cycle_id', l); }
   if (q.product) x = x.eq('product', q.product);
+  if (q.segment) x = q.segment === 'none' ? x.is('segment', null) : x.eq('segment', q.segment);
   if (q.operator_id) x = x.eq('operator_id', Number(q.operator_id));
   if (q.team) x = x.eq('team', q.team);
   if (q.supervisor) x = x.eq('supervisor_user_id', q.supervisor);
@@ -119,7 +126,8 @@ function applyFilters(query, req, q, { cards = true } = {}) {
   if (q.from) x = x.gte('call_date', q.from);
   if (q.to) x = x.lte('call_date', q.to);
   const s = likeSafe(q.q);
-  if (s) x = x.or(['operator_name', 'protocol', 'customer', 'contract', 'registration'].map((c) => `${c}.ilike.*${s}*`).join(','));
+  if (s) x = x.or(['operator_name', 'protocol', 'customer', 'contract', 'registration', ...(cards ? ['login', 'audio_file', 'supervisor_name'] : [])].map((c) => `${c}.ilike.*${s}*`).join(','));
+  if (cards && q.alert) x = x.contains('alerts', [q.alert]);
   if (cards && q.adjusted === '1') x = x.gt('adjustments', 0);
   if (cards && q.critical === '1') x = x.gt('critical_fail', 0);
   return x;
@@ -134,16 +142,25 @@ async function assertEvalAccess(req, evalId) {
 router.get('/meta', h(async (req, res) => {
   const ops = await must(scoped(sb().from('px_operators').select('*'), req).order('name'));
   const pend = (st) => count(scoped(sb().from('px_v_eval_cards').select('id', { count: 'exact', head: true }), req)[st === 'review' ? 'eq' : 'neq']('status', st === 'review' ? 'pendente' : 'feedback_aplicado'));
-  const [cycles, criteria, supervisors, pendingFeedback, pendingReview, openBugs, unread] = await Promise.all([
+  const [cycles, criteria, supervisors, pendingFeedback, pendingReview, openBugs, unread, mix] = await Promise.all([
     must(sb().from('px_cycles').select('*').order('start_date', { ascending: false })),
     must(sb().from('px_criteria').select('*').order('sort').order('id')),
     must(sb().from('px_profiles').select('id, name, display_name').eq('role', 'supervisor').eq('active', true).order('name')),
     pend('feedback'), pend('review'),
     req.user.role === 'admin' ? count(sb().from('px_bugs').select('id', { count: 'exact', head: true }).in('status', ['aberto', 'em_analise'])) : 0,
     count(sb().from('px_notifications').select('id', { count: 'exact', head: true }).eq('user_id', req.user.id).eq('read', false)),
+    // Tolerante: antes da migração de carteiras a coluna "segment" ainda não existe
+    fetchAll(() => scoped(sb().from('px_v_eval_cards').select('product, segment'), req).order('id')).catch(() => []),
   ]);
+  // Quantas monitorias existem por produto e segmento (os filtros só mostram o que tem dado)
+  const products = PRODUCTS.map((p) => {
+    const rows = mix.filter((r) => r.product === p);
+    const segs = (SEGMENTS[p] || []).map((sg) => ({ segment: sg, total: rows.filter((r) => r.segment === sg).length }));
+    const none = rows.filter((r) => !r.segment).length;
+    return { product: p, total: rows.length, segments: SEGMENTS[p] ? [...segs, ...(none ? [{ segment: 'none', total: none }] : [])] : [] };
+  }).filter((p) => p.total);
   res.json({
-    cycles, operators: ops, criteria, supervisors,
+    cycles, operators: ops, criteria, supervisors, products, segments: SEGMENTS,
     teams: [...new Set(ops.map((o) => o.team).filter(Boolean))].sort(),
     ai: { configured: aiConfigured(), model: getSetting('ai_model', 'claude-opus-5-5'), auto_apply: getSetting('ai_auto_apply', '1') === '1' },
     company: getSetting('company_name', 'Paschoalotto'),
@@ -170,7 +187,10 @@ async function loadEvaluation(id) {
   const e = await must(sb().from('px_v_eval_cards').select('*').eq('id', id).maybeSingle());
   if (!e) return null;
   const [full, items, feedbacks, history] = await Promise.all([
-    must(sb().from('px_evaluations').select('transcript, transcript_name, ai_summary, ai_model, ai_ran_at, speech_summary, reviewed_by').eq('id', id).single()),
+    must(sb().from('px_evaluations').select('*').eq('id', id).single()).then((r) => ({
+      transcript: r.transcript, transcript_name: r.transcript_name, ai_summary: r.ai_summary, ai_model: r.ai_model, ai_ran_at: r.ai_ran_at,
+      speech_summary: r.speech_summary, reviewed_by: r.reviewed_by, details: r.details || null,
+    })),
     must(sb().from('px_v_eval_items').select('*').eq('evaluation_id', id).order('sort').order('criterion_id')),
     must(sb().from('px_v_feedbacks').select('*').eq('evaluation_id', id).order('applied_at', { ascending: false })),
     must(sb().from('px_v_audit').select('*').eq('entity', 'evaluation').eq('entity_id', id).order('id', { ascending: false }).limit(100)),
@@ -198,11 +218,12 @@ async function recompute(evalId) {
 }
 
 async function criteriaFor(product) {
-  return must(sb().from('px_criteria').select('*').eq('active', true).in('product', ['AMBOS', product]).order('sort').order('id'));
+  return must(sb().from('px_criteria').select('*').eq('active', true).in('product', CRITERIA_FOR[product] || ['AMBOS', product]).order('sort').order('id'));
 }
+const segmentFor = (product, segment) => ((SEGMENTS[product] || []).includes(segment) ? segment : null);
 
 async function createEvaluation(b, userId) {
-  const product = b.product === 'ENTREGA' ? 'ENTREGA' : 'REFIN';
+  const product = PRODUCTS.includes(b.product) ? b.product : 'REFIN';
   if (!b.operator_id) throw httpError(400, 'Selecione o operador.');
   const op = await must(sb().from('px_operators').select('id').eq('id', Number(b.operator_id)).maybeSingle());
   if (!op) throw httpError(400, 'Operador inválido.');
@@ -216,7 +237,7 @@ async function createEvaluation(b, userId) {
   const speechCalc = computeScore(items.map((i) => ({ ...i.c, speech_result: i.speech_result })), 'speech_result').score;
   const speechScore = b.speech_score !== undefined && b.speech_score !== null && b.speech_score !== '' ? Number(b.speech_score) : speechCalc;
   const ev = await must(sb().from('px_evaluations').insert({
-    cycle_id: intOrNull(b.cycle_id), operator_id: Number(b.operator_id), product, call_date: n(b.call_date), protocol: n(b.protocol),
+    cycle_id: intOrNull(b.cycle_id), operator_id: Number(b.operator_id), product, segment: segmentFor(product, b.segment), call_date: n(b.call_date), protocol: n(b.protocol),
     contract: n(b.contract), customer: n(b.customer), duration_sec: intOrNull(b.duration_sec),
     audio_url: b.audio_url && isUrl(b.audio_url) ? b.audio_url : null, speech_score: speechScore, final_score: speechCalc ?? speechScore,
     speech_summary: n(b.speech_summary), transcript: n(b.transcript), transcript_name: n(b.transcript_name), created_by: userId,
@@ -251,6 +272,10 @@ router.patch('/evaluations/:id', QUALITY, h(async (req, res) => {
   const changes = {};
   for (const f of ['call_date', 'protocol', 'contract', 'customer', 'speech_summary']) if (b[f] !== undefined && b[f] !== e[f]) changes[f] = n(b[f]);
   if (b.cycle_id !== undefined) changes.cycle_id = intOrNull(b.cycle_id);
+  if (b.segment !== undefined && (b.segment || null) !== e.segment) {
+    if (b.segment && !segmentFor(e.product, b.segment)) return res.status(400).json({ error: 'Segmento inválido para este produto.' });
+    changes.segment = b.segment || null;
+  }
   if (b.operator_id !== undefined && Number(b.operator_id) !== e.operator_id) changes.operator_id = Number(b.operator_id);
   if (Object.keys(changes).length) {
     await must(sb().from('px_evaluations').update({ ...changes, updated_at: nowIso() }).eq('id', id));
@@ -510,6 +535,7 @@ function feedbackQuery(req, q) {
   if (q.cycle_id) x = x.eq('cycle_id', Number(q.cycle_id));
   if (q.operator_id) x = x.eq('operator_id', Number(q.operator_id));
   if (q.product) x = x.eq('product', q.product);
+  if (q.segment) x = q.segment === 'none' ? x.is('segment', null) : x.eq('segment', q.segment);
   if (q.team) x = x.eq('team', q.team);
   if (q.applied_by) x = x.eq('applied_by', q.applied_by);
   if (q.from) x = x.gte('applied_at', q.from);
@@ -527,11 +553,26 @@ router.get('/feedbacks', h(async (req, res) => {
 async function loadStatsRows(req, q) {
   const evals = await fetchAll(() => applyFilters(sb().from('px_v_eval_cards').select('*'), req, q).order('id'));
   const ids = new Set(evals.map((e) => e.id));
+  const cols = 'evaluation_id, speech_result, final_result, adjusted, adjust_source, criterion_id, code, name, critical, criterion_product, sort';
+  const facts = (extra) => fetchAll(() => applyFilters(sb().from('px_v_item_facts').select(cols + extra), req, q, { cards: false }).order('id'));
   const items = evals.length
-    ? (await fetchAll(() => applyFilters(sb().from('px_v_item_facts').select('evaluation_id, speech_result, final_result, adjusted, adjust_source, criterion_id, code, name, critical, criterion_product, sort'), req, q, { cards: false }).order('id')))
+    // Antes da migração de carteiras a view ainda não tem o peso do critério
+    ? (await facts(', weight, stage').catch(() => facts('')))
       .filter((i) => ids.has(i.evaluation_id)).map((i) => ({ ...i, product: i.criterion_product }))
     : [];
   return { evals, items };
+}
+
+// Aderência ao roteiro como nos dashboards PAN: itens feitos ÷ itens que cabiam, somando todas as
+// ligações (peso 0 e N/A ficam fora). Difere da nota média, que pesa cada ligação igualmente.
+function adherence(items) {
+  let tot = 0, pts = 0;
+  for (const i of items) {
+    const w = i.weight == null ? 1 : Number(i.weight);
+    if (!(w > 0) || !i.final_result || i.final_result === 'NA') continue;
+    tot += w; pts += i.final_result === 'C' ? w : i.final_result === 'P' ? w * 0.5 : 0;
+  }
+  return tot ? Math.round((pts / tot) * 1000) / 10 : null;
 }
 
 const avg = (arr) => { const v = arr.filter((x) => x != null); return v.length ? Math.round((v.reduce((a, b) => a + Number(b), 0) / v.length) * 10) / 10 : null; };
@@ -550,14 +591,17 @@ function computeStats(evals, items) {
     items_adjusted: items.filter((i) => i.adjusted).length,
     evals_adjusted: new Set(items.filter((i) => i.adjusted).map((i) => i.evaluation_id)).size,
   };
+  kpis.adherence = adherence(items);
   kpis.conformity = kpis.items_total ? Math.round((kpis.items_conform / kpis.items_total) * 1000) / 10 : null;
   kpis.feedback_rate = kpis.total ? Math.round((kpis.feedback_applied / kpis.total) * 1000) / 10 : null;
   kpis.speech_accuracy = items.length ? Math.round((1 - kpis.items_adjusted / items.length) * 1000) / 10 : null;
-  for (const p of ['REFIN', 'ENTREGA']) {
+  for (const p of PRODUCTS) {
     const ev = evals.filter((e) => e.product === p);
     kpis[`avg_${p.toLowerCase()}`] = avg(ev.map((e) => e.final_score));
     kpis[`total_${p.toLowerCase()}`] = ev.length;
   }
+  kpis.alerts = Object.fromEntries(['sigilo', 'conduta', 'oferta_perdida', 'postura', 'sem_proposta', 'audio_ruim', 'sem_speech']
+    .map((a) => [a, evals.filter((e) => (e.alerts || []).includes(a)).length]));
 
   const itemsByEval = new Map();
   for (const i of items) { if (!itemsByEval.has(i.evaluation_id)) itemsByEval.set(i.evaluation_id, []); itemsByEval.get(i.evaluation_id).push(i); }
@@ -570,8 +614,7 @@ function computeStats(evals, items) {
     return {
       cycle_id: c.id, cycle: c.name, total: ev.length,
       geral: avg(ev.map((e) => e.final_score)),
-      refin: avg(ev.filter((e) => e.product === 'REFIN').map((e) => e.final_score)),
-      entrega: avg(ev.filter((e) => e.product === 'ENTREGA').map((e) => e.final_score)),
+      ...Object.fromEntries(PRODUCTS.map((p) => [p.toLowerCase(), avg(ev.filter((e) => e.product === p).map((e) => e.final_score))])),
       speech: avg(ev.map((e) => e.speech_score)),
       conformity: applicable.length ? Math.round((applicable.filter((i) => i.final_result === 'C').length / applicable.length) * 1000) / 10 : null,
       feedback_rate: ev.length ? Math.round((ev.filter((e) => e.status === 'feedback_aplicado').length / ev.length) * 1000) / 10 : null,
@@ -580,7 +623,7 @@ function computeStats(evals, items) {
 
   const byOp = new Map();
   for (const e of evals) {
-    const o = byOp.get(e.operator_id) || { operator_id: e.operator_id, name: e.operator_name, team: e.team, evals: [] };
+    const o = byOp.get(e.operator_id) || { operator_id: e.operator_id, name: e.operator_name, team: e.team, supervisor_name: e.supervisor_name, login: e.login, evals: [] };
     o.evals.push(e); byOp.set(e.operator_id, o);
   }
   const lastCycle = cycles[cycles.length - 1], prevCycle = cycles[cycles.length - 2];
@@ -591,10 +634,11 @@ function computeStats(evals, items) {
     const last = lastCycle ? avg(o.evals.filter((e) => e.cycle_id === lastCycle.id).map((e) => e.final_score)) : null;
     const prev = prevCycle ? avg(o.evals.filter((e) => e.cycle_id === prevCycle.id).map((e) => e.final_score)) : null;
     return {
-      operator_id: o.operator_id, name: o.name, team: o.team, total: o.evals.length, avg: mean, sd,
+      operator_id: o.operator_id, name: o.name, team: o.team, supervisor_name: o.supervisor_name || null, login: o.login || null, total: o.evals.length, avg: mean, sd,
+      adherence: adherence(o.evals.flatMap((e) => itemsByEval.get(e.id) || [])),
       avg_speech: avg(o.evals.map((e) => e.speech_score)),
-      refin: avg(o.evals.filter((e) => e.product === 'REFIN').map((e) => e.final_score)),
-      entrega: avg(o.evals.filter((e) => e.product === 'ENTREGA').map((e) => e.final_score)),
+      ...Object.fromEntries(PRODUCTS.map((p) => [p.toLowerCase(), avg(o.evals.filter((e) => e.product === p).map((e) => e.final_score))])),
+      products: [...new Set(o.evals.map((e) => e.product))],
       last, prev, delta: last != null && prev != null ? Math.round((last - prev) * 10) / 10 : null,
       feedback_rate: Math.round((o.evals.filter((e) => e.status === 'feedback_aplicado').length / o.evals.length) * 1000) / 10,
       pending_feedback: o.evals.filter((e) => e.status !== 'feedback_aplicado').length,
@@ -622,7 +666,31 @@ function computeStats(evals, items) {
     const ev = evals.filter((e) => e.team === t);
     return { team: t, total: ev.length, avg: avg(ev.map((e) => e.final_score)), feedback_rate: Math.round((ev.filter((e) => e.status === 'feedback_aplicado').length / ev.length) * 1000) / 10 };
   });
-  return { kpis, evolution, operators, criteria, distribution, scatter, teams, cycles };
+  // Visão apartada: cada produto e, dentro dele, cada segmento (Clean Curto/Longo, Público/Privado)
+  const groupStats = (ev) => {
+    const its = ev.flatMap((e) => itemsByEval.get(e.id) || []).filter((i) => i.final_result && i.final_result !== 'NA');
+    return {
+      total: ev.length, avg: avg(ev.map((e) => e.final_score)), avg_speech: avg(ev.map((e) => e.speech_score)),
+      adherence: adherence(ev.flatMap((e) => itemsByEval.get(e.id) || [])),
+      conformity: its.length ? Math.round((its.filter((i) => i.final_result === 'C').length / its.length) * 1000) / 10 : null,
+      feedback_rate: ev.length ? Math.round((ev.filter((e) => e.status === 'feedback_aplicado').length / ev.length) * 1000) / 10 : null,
+      operators: new Set(ev.map((e) => e.operator_id)).size,
+      alerts: ev.filter((e) => (e.alerts || []).length).length,
+    };
+  };
+  const segments = PRODUCTS.flatMap((p) => {
+    const ev = evals.filter((e) => e.product === p);
+    if (!ev.length) return [];
+    const rows = [{ product: p, segment: null, level: 'product', ...groupStats(ev) }];
+    if (SEGMENTS[p]) {
+      for (const sg of [...SEGMENTS[p], 'none']) {
+        const sev = ev.filter((e) => (sg === 'none' ? !e.segment : e.segment === sg));
+        if (sev.length || sg !== 'none') rows.push({ product: p, segment: sg, level: 'segment', ...groupStats(sev) });
+      }
+    }
+    return rows;
+  });
+  return { kpis, evolution, operators, criteria, distribution, scatter, teams, cycles, segments };
 }
 
 router.get('/stats/overview', h(async (req, res) => {
@@ -657,7 +725,7 @@ router.get('/reports/data', h(async (req, res) => {
   });
   const scoredDesc = evals.filter((e) => e.final_score != null).sort((a, b) => b.final_score - a.final_score);
   const ids = new Set(evals.map((e) => e.id));
-  const fbs = (await must(feedbackQuery(req, { cycle_id: cycleIds.length === 1 ? cycleIds[0] : undefined, product: q.product, team: q.team, operator_id: q.operator_id }).limit(300)))
+  const fbs = (await must(feedbackQuery(req, { cycle_id: cycleIds.length === 1 ? cycleIds[0] : undefined, product: q.product, segment: q.segment, team: q.team, operator_id: q.operator_id }).limit(300)))
     .filter((f) => ids.has(f.evaluation_id)).slice(0, 12);
   res.json({
     ...data, selected_cycles: cycles, per_cycle: perCycle, highlights: scoredDesc.slice(0, 5), lowlights: scoredDesc.slice(-5).reverse(), feedbacks: fbs,
@@ -701,6 +769,14 @@ router.post('/import/commit', QUALITY, h(async (req, res) => {
   }
   await audit(req.user.id, 'importacao', 'import', null, { created, newOps, ciclo: cycleId, arquivo: b.filename || null });
   res.json({ created, newOps });
+}));
+
+// Dashboards de monitoria PAN (HTML com JSON embutido): o navegador extrai o JSON e envia em lotes
+router.post('/import/dashboard', QUALITY, h(async (req, res) => {
+  const b = req.body || {};
+  const out = await importDashboard({ kind: b.kind, calls: b.calls, cycle_id: intOrNull(b.cycle_id), period: b.period ? String(b.period).slice(0, 60) : null }, req.user.id);
+  if (out.created || b.last) await audit(req.user.id, 'importacao_dashboard', 'import', null, { ...out, arquivo: b.filename ? String(b.filename).slice(0, 200) : null, lote: b.batch || null });
+  res.json(out);
 }));
 
 // --------------------------------------------------------------- Bugs
@@ -886,13 +962,15 @@ router.put('/operators/:id', QUALITY, h(async (req, res) => {
 }));
 
 // --------------------------------------------------------------- Critérios
+// Peso 0 é permitido: o item aparece na monitoria, mas fica fora da nota
+const weightOf = (v) => { const w = Number(v); return Number.isFinite(w) && w >= 0 ? Math.min(w, 10) : 1; };
 router.post('/criteria', ADMIN, h(async (req, res) => {
   const b = req.body || {};
-  if (!['REFIN', 'ENTREGA', 'AMBOS'].includes(b.product) || !b.code || !b.name) return res.status(400).json({ error: 'Informe produto, código e nome.' });
+  if (!CRITERIA_PRODUCTS.includes(b.product) || !b.code || !b.name) return res.status(400).json({ error: 'Informe produto, código e nome.' });
   const last = await must(sb().from('px_criteria').select('sort').order('sort', { ascending: false }).limit(1));
   const c = await must(sb().from('px_criteria').insert({
     product: b.product, code: String(b.code).toUpperCase().slice(0, 8), name: b.name, description: n(b.description),
-    weight: Number(b.weight) || 1, critical: !!b.critical, sort: (last[0]?.sort || 0) + 1,
+    weight: weightOf(b.weight), critical: !!b.critical, sort: (last[0]?.sort || 0) + 1, stage: n(b.stage),
   }).select().single());
   await audit(req.user.id, 'criterio_criado', 'criterion', c.id, { codigo: b.code });
   res.json(c);
@@ -903,9 +981,10 @@ router.put('/criteria/:id', ADMIN, h(async (req, res) => {
   const c = await must(sb().from('px_criteria').select('*').eq('id', id).maybeSingle());
   if (!c) return res.status(404).json({ error: 'Critério não encontrado.' });
   const b = { ...c, ...req.body };
+  if (!CRITERIA_PRODUCTS.includes(b.product)) return res.status(400).json({ error: 'Produto inválido.' });
   const saved = await must(sb().from('px_criteria').update({
     product: b.product, code: String(b.code).toUpperCase().slice(0, 8), name: b.name, description: n(b.description),
-    weight: Number(b.weight) || 1, critical: !!b.critical, sort: Number(b.sort) || c.sort, active: !!b.active,
+    weight: weightOf(b.weight), critical: !!b.critical, sort: Number(b.sort) || c.sort, active: !!b.active, stage: n(b.stage),
   }).eq('id', id).select().single());
   await audit(req.user.id, 'criterio_editado', 'criterion', id);
   res.json(saved);
