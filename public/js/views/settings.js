@@ -1,5 +1,5 @@
 import { api, saveBlob } from '../api.js';
-import { html, icon, $, toast, busy, confirmDialog } from '../ui.js';
+import { html, icon, $, $$, toast, busy, confirmDialog } from '../ui.js';
 
 const MODELS = [
   ['claude-opus-5-5', 'Claude Opus 5.5 — máxima qualidade (recomendado)'],
@@ -45,6 +45,24 @@ export async function render(el, _p, ctx) {
           <div class="row"><button type="button" class="btn" id="st-az-test">${icon('zap')}Testar conexão</button><span class="small t2" id="st-az-st"></span></div>
           <p class="tiny muted" style="margin-bottom:0">O áudio vai do servidor direto para o recurso de Speech da empresa e não fica guardado na plataforma, só o texto. Confirme com a TI o uso das gravações nesse serviço.</p>
         </div>
+        <div class="card card-pad"><h3 style="margin:0 0 14px;font-size:15px">${icon('list')} Planilha de ações (Excel online)</h3>
+          <p class="small t2" style="margin-top:0">Cada feedback, análise, calibragem e ação registrada vira uma linha na planilha “CONTROLE DE AÇÕES” (LOGIN, SEGMENTO, TEMA, AÇÃO, DATA, OBS, RESPONSÁVEL). O envio usa um aplicativo da empresa no Microsoft Entra ID.</p>
+          <label class="switch mb"><input type="checkbox" id="st-sh-on" ${s.sheet_sync_enabled === '1' ? 'checked' : ''}> Enviar as ações para a planilha</label>
+          <div class="field"><label for="st-sh-url">Link da planilha</label><input class="input" id="st-sh-url" name="sheet_url" value="${s.sheet_url || ''}" placeholder="https://paschoalotto-my.sharepoint.com/:x:/g/personal/…">
+            <span class="hint">O link de compartilhamento do arquivo no OneDrive/SharePoint.</span></div>
+          <div class="grid g-2">
+            <div class="field"><label for="st-sh-tb">Tabela</label><input class="input" id="st-sh-tb" name="sheet_table" value="${s.sheet_table || 'Tabela2'}"><span class="hint">Nome da tabela do Excel na aba de controle.</span></div>
+            <div class="field"><label for="st-sh-tn">Tenant ID (diretório)</label><input class="input" id="st-sh-tn" name="ms_tenant_id" value="${s.ms_tenant_id || ''}" placeholder="00000000-0000-…"></div>
+            <div class="field"><label for="st-sh-ci">Client ID do aplicativo</label><input class="input" id="st-sh-ci" name="ms_client_id" value="${s.ms_client_id || ''}" placeholder="00000000-0000-…"></div>
+            <div class="field"><label for="st-sh-sc">Segredo do aplicativo</label><input class="input" id="st-sh-sc" type="password" autocomplete="off" placeholder="${s.ms_client_secret_hint ? 'Deixe em branco para manter o atual' : 'Valor do segredo do cliente'}" ${s.ms_env ? 'disabled' : ''}>
+              <span class="hint">${s.ms_env ? 'Definido na variável de ambiente MS_CLIENT_SECRET.' : s.ms_client_secret_hint ? html`Cadastrado (<code>${s.ms_client_secret_hint}</code>). Fica só no servidor.` : 'Fica só no servidor.'}</span></div>
+          </div>
+          <details class="mb"><summary class="small strong" style="cursor:pointer">Segmentos da planilha</summary>
+            <p class="tiny muted">Como cada carteira/segmento da plataforma aparece na coluna SEGMENTO. Deixe em branco para usar o padrão.</p>
+            <div class="grid g-2" id="st-sh-map">${Object.entries(s.sheet_default_segments || {}).map(([k, v]) => { let cur = ''; try { cur = JSON.parse(s.sheet_segment_map || '{}')[k] || ''; } catch { /* mapa inválido */ } return html`<div class="field" style="margin-bottom:6px"><label class="tiny">${({ 'VEICULOS:CONTACT': 'Veículos · Contact', 'VEICULOS:ATIVAS': 'Veículos · Ativas', 'VEICULOS:WO': 'Veículos · W.O', 'CARTOES:CLEAN_CURTO': 'Cartões · Clean Curto', 'CARTOES:CLEAN_LONGO': 'Cartões · Clean Longo', 'CARTOES:': 'Cartões · sem segmento', 'CONSIGNADO:PUBLICO': 'Consignado · Público', 'CONSIGNADO:PRIVADO': 'Consignado · Privado', 'CONSIGNADO:': 'Consignado · sem segmento', 'REFIN:': 'Refinanciamento', 'ENTREGA:': 'Entrega Amigável' })[k] || k}</label><input class="input sm" data-seg="${k}" value="${cur}" placeholder="${v}"></div>`; })}</div></details>
+          <div class="row"><button type="button" class="btn" id="st-sh-test">${icon('zap')}Testar conexão</button><span class="small t2" id="st-sh-st">${s.sheet_pending ? `${s.sheet_pending} linha(s) aguardando envio.` : ''}</span></div>
+          <p class="tiny muted" style="margin-bottom:0">A TI cria o aplicativo em Entra ID › Registros de aplicativo, com a permissão de aplicativo <b>Files.ReadWrite.All</b> (ou <b>Sites.Selected</b> com acesso a este arquivo) do Microsoft Graph e consentimento do administrador. Passo a passo no README.</p>
+        </div>
         <div class="card card-pad"><h3 style="margin:0 0 14px;font-size:15px">${icon('settings')} Geral</h3>
           <div class="field"><label for="st-co">Nome da empresa (capa dos reports)</label><input class="input" id="st-co" name="company_name" value="${s.company_name || ''}"></div>
           <div class="field"><label for="st-ft">Rodapé dos reports (opcional)</label><input class="input" id="st-ft" name="report_footer" value="${s.report_footer || ''}" placeholder="Uso interno · Confidencial"></div>
@@ -68,6 +86,12 @@ export async function render(el, _p, ctx) {
     if ($('#st-key-rm')?.checked) body.anthropic_api_key = '';
     if (!f.azure_speech_endpoint.disabled) body.azure_speech_endpoint = f.azure_speech_endpoint.value.trim();
     body.azure_speech_mode = f.azure_speech_mode.value;
+    body.sheet_sync_enabled = $('#st-sh-on').checked ? '1' : '0';
+    body.sheet_url = f.sheet_url.value.trim(); body.sheet_table = f.sheet_table.value.trim() || 'Tabela2';
+    body.ms_tenant_id = f.ms_tenant_id.value.trim(); body.ms_client_id = f.ms_client_id.value.trim();
+    body.sheet_segment_map = JSON.stringify(Object.fromEntries($$('[data-seg]', f).map((i) => [i.dataset.seg, i.value.trim()]).filter(([, v]) => v)));
+    const msSecret = $('#st-sh-sc').value.trim();
+    if (msSecret) body.ms_client_secret = msSecret;
     const azKey = $('#st-az-key').value.trim();
     if (azKey) body.azure_speech_key = azKey;
     if ($('#st-az-rm')?.checked) body.azure_speech_key = '';
@@ -75,6 +99,18 @@ export async function render(el, _p, ctx) {
     try { await api.put('/settings', body); toast('Configurações salvas.'); await ctx.refreshMeta(); ctx.store.company = body.company_name || ctx.store.company; render(el, _p, ctx); }
     catch (ex) { toast(ex.message, 'err'); busy($('#st-save'), false); }
   });
+  $('#st-sh-test').onclick = async (e) => {
+    const btnEl = e.currentTarget;
+    const st = $('#st-sh-st');
+    st.textContent = 'Testa a configuração salva: salve antes se mudou algum campo.'; st.style.color = '';
+    busy(btnEl, true, 'Testando');
+    try {
+      const r = await api.post('/settings/sheet-test');
+      st.textContent = r.columns_ok ? `Conexão ok · ${r.file || 'planilha'} · tabela ${r.table}${r.rows != null ? ` (${r.rows} linhas)` : ''}` : `Conectou, mas as colunas da tabela ${r.table} são: ${r.columns.join(', ')}. Esperado: LOGIN, SEGMENTO, TEMA, AÇÃO, DATA, OBS, RESPONSÁVEL.`;
+      st.style.color = r.columns_ok ? 'var(--ok-ink)' : 'var(--warn-ink)';
+    } catch (ex) { st.textContent = ex.message; st.style.color = 'var(--bad-ink)'; }
+    busy(btnEl, false);
+  };
   $('#st-az-test').onclick = async (e) => {
     const btnEl = e.currentTarget;
     const st = $('#st-az-st');

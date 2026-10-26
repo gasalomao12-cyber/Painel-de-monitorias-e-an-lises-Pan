@@ -10,6 +10,7 @@ import { seedDemo, clearDemo } from './seed.ts';
 import { normalizeRows } from './normalize.ts';
 import { importDashboard } from './dashboard.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
+import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
 
 const router = new Router();
 const sb = () => admin();
@@ -156,6 +157,7 @@ router.get('/meta', h(async (req, res) => {
     fetchAll(() => scoped(sb().from('px_v_eval_cards').select('product, segment'), req).order('id')).catch(() => []),
   ]);
   const openContests = await count(contestQuery(req, { status: 'aberta' }, { head: true })).catch(() => 0);
+  const sheetErrors = req.user.role === 'supervisor' ? 0 : await count(sb().from('px_actions').select('id', { count: 'exact', head: true }).eq('sync_status', 'erro')).catch(() => 0);
   // Quantas monitorias existem por produto e segmento (os filtros só mostram o que tem dado)
   const products = PRODUCTS.map((p) => {
     const rows = mix.filter((r) => r.product === p);
@@ -168,7 +170,7 @@ router.get('/meta', h(async (req, res) => {
     teams: [...new Set(ops.map((o) => o.team).filter(Boolean))].sort(),
     ai: { configured: aiConfigured(), model: getSetting('ai_model', 'claude-opus-5-5'), auto_apply: getSetting('ai_auto_apply', '1') === '1', speech: speechConfigured() },
     company: getSetting('company_name', 'Paschoalotto'),
-    counts: { pending_feedback: pendingFeedback, pending_review: pendingReview, open_bugs: openBugs, unread, open_contests: openContests },
+    counts: { pending_feedback: pendingFeedback, pending_review: pendingReview, open_bugs: openBugs, unread, open_contests: openContests, sheet_errors: sheetErrors },
   });
 }));
 
@@ -336,6 +338,7 @@ router.put('/evaluations/:id/items', QUALITY, h(async (req, res) => {
   }
   if (updates.length) await audit(req.user.id, 'analise_ajustada', 'evaluation', id, { alteracoes: updates.map((u) => u.log), nota_final: score });
   else if (markReviewed) await audit(req.user.id, 'analise_validada', 'evaluation', id, { nota_final: score });
+  if (updates.length || markReviewed) await recordAnalysisAction(req, id, 'analise', updates.length ? `${updates.length} item(ns) ajustado(s)` : 'análise validada');
   res.json(forUser(req, await loadEvaluation(id)));
 }));
 
@@ -446,6 +449,7 @@ async function runAnalysis(id, user) {
   await must(sb().from('px_evaluations').update({ ai_status: 'concluida', ai_summary: summary, ai_model: result.model, ai_ran_at: nowIso(), updated_at: nowIso() }).eq('id', id));
   await recompute(id);
   await audit(user.id, 'ia_analise', 'evaluation', id, { motor: result.engine, modelo: result.model, correcoes_aplicadas: applied });
+  await recordAnalysisAction({ user }, id, 'ia', applied.length ? `${applied.length} correção(ões) automática(s)` : null);
   return loadEvaluation(id);
 }
 
@@ -600,9 +604,99 @@ router.put('/contests/:id', h(async (req, res) => {
   if (response.length < 10) return res.status(400).json({ error: 'Escreva a resposta para a supervisão (mínimo 10 caracteres).' });
   await must(sb().from('px_contests').update({ status: b.status, response, responded_by: req.user.id, responded_at: nowIso() }).eq('id', cid));
   await audit(req.user.id, 'contestacao_respondida', 'evaluation', ct.evaluation_id, { contestacao: cid, decisao: b.status, resposta: response });
+  {
+    const { ev, theme } = await actionContext(ct.evaluation_id);
+    await recordAction({
+      source: 'contestacao', action: 'Calibragem', theme, evaluation: ev, operator_id: ev.operator_id, contest_id: cid,
+      obs: `Contestação ${b.status} da ligação ${ev.protocol || '#' + ev.id}: ${response}`, dedupe_key: `contestacao:${cid}`,
+    }, req.user);
+    flushInBackground();
+  }
   const who = req.user.display_name || req.user.name;
   await notify([ct.requested_by].filter((u) => u && u !== req.user.id), `Contestação ${b.status === 'aceita' ? 'aceita' : 'recusada'}`, `${who} respondeu: ${response.slice(0, 140)}`, `#/atendimentos/${ct.evaluation_id}`);
   res.json(forUser(req, await loadEvaluation(ct.evaluation_id)));
+}));
+
+// --------------------------------------------------------------- Planilha de ações
+// Dados da monitoria usados nas linhas da planilha (segmento, tema sugerido, protocolo, nota)
+async function actionContext(evalId) {
+  const [ev, items] = await Promise.all([
+    must(sb().from('px_v_eval_cards').select('id, operator_id, product, segment, team, campaign, protocol, final_score, alerts').eq('id', evalId).single()),
+    must(sb().from('px_v_eval_items').select('final_result, weight, stage').eq('evaluation_id', evalId)),
+  ]);
+  return { ev, theme: suggestTheme(items, ev.alerts), ref: `ligação ${ev.protocol || '#' + ev.id}${ev.final_score != null ? ` (nota ${String(ev.final_score).replace('.', ',')})` : ''}` };
+}
+const FEEDBACK_ONLINE = ['Remoto (Teams)', 'Chat corporativo'];
+
+async function recordAnalysisAction(req, evalId, source, detail) {
+  const { ev, theme, ref } = await actionContext(evalId);
+  await recordAction({
+    source, action: 'Análise', theme, evaluation: ev, operator_id: ev.operator_id,
+    obs: `${source === 'ia' ? 'Análise com IA' : 'Análise'} da ${ref}${detail ? ` · ${detail}` : ''}`,
+    // uma linha por monitoria, pessoa e dia (validar e depois ajustar no mesmo dia não duplica)
+    dedupe_key: `analise:${evalId}:${req.user.id}:${dayInBrazil()}`,
+  }, req.user);
+  flushInBackground();
+}
+
+// Histórico de ações (o que foi / vai para a planilha)
+function actionsQuery(req, q) {
+  let x = scoped(sb().from('px_v_actions').select('*'), req);
+  if (q.from) x = x.gte('action_date', q.from);
+  if (q.to) x = x.lte('action_date', q.to);
+  if (q.operator_id) x = x.eq('operator_id', Number(q.operator_id));
+  if (q.source) x = x.eq('source', q.source);
+  if (q.status === 'pendentes') x = x.in('sync_status', ['pendente', 'enviando', 'erro']);
+  else if (q.status) x = x.eq('sync_status', q.status);
+  const s = likeSafe(q.q);
+  if (s) x = x.or(['operator_name', 'login', 'obs', 'responsible', 'action', 'theme'].map((c) => `${c}.ilike.*${s}*`).join(','));
+  return x.order('action_date', { ascending: false }).order('id', { ascending: false });
+}
+
+router.get('/actions', h(async (req, res) => {
+  const rows = await must(actionsQuery(req, req.query).limit(Math.min(Number(req.query.limit) || 500, 2000)));
+  const cfg = sheetConfig();
+  res.json({
+    rows, themes: THEMES, actions: ACTIONS, segments: [...new Set(Object.values(segmentMap()))].sort(),
+    sheet: { enabled: cfg.enabled, configured: sheetConfigured() },
+  });
+}));
+
+// Ações feitas fora da plataforma (in loco, treinamento, simulador…): uma linha por operador
+router.post('/actions', QUALITY, h(async (req, res) => {
+  const b = req.body || {};
+  const ids = (Array.isArray(b.operator_ids) ? b.operator_ids : []).map(Number).filter(Boolean).slice(0, 300);
+  if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos um operador.' });
+  if (!String(b.action || '').trim()) return res.status(400).json({ error: 'Informe a ação.' });
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(b.action_date || '') ? b.action_date : dayInBrazil();
+  let created = 0;
+  for (const opId of ids) {
+    // Segmento: o escolhido ou o da monitoria mais recente do operador
+    let segment = String(b.segment_label || '').trim() || null;
+    if (!segment) {
+      const last = await must(sb().from('px_v_eval_cards').select('product, segment, team, campaign').eq('operator_id', opId).order('call_date', { ascending: false }).limit(1));
+      segment = last[0] ? segmentLabel(last[0]) : null;
+    }
+    if (await recordAction({ source: 'manual', action: b.action, theme: b.theme, action_date: date, obs: b.obs, operator_id: opId, segment_label: segment }, req.user)) created++;
+  }
+  await audit(req.user.id, 'acoes_registradas', 'actions', null, { operadores: ids.length, acao: b.action, tema: b.theme || null, data: date });
+  const sync = await flushActions();
+  res.json({ created, sync });
+}));
+
+router.delete('/actions/:id', QUALITY, h(async (req, res) => {
+  const a = await must(sb().from('px_actions').select('id, sync_status, responsible_user').eq('id', Number(req.params.id)).maybeSingle());
+  if (!a) return res.status(404).json({ error: 'Ação não encontrada.' });
+  if (a.sync_status === 'enviado' || a.sync_status === 'enviando') return res.status(409).json({ error: 'Esta linha já está na planilha. Para corrigir, edite direto na planilha.' });
+  if (req.user.role !== 'admin' && a.responsible_user !== req.user.id) return res.status(403).json({ error: 'Só quem registrou (ou o admin) pode excluir.' });
+  await must(sb().from('px_actions').delete().eq('id', a.id));
+  res.json({ ok: true });
+}));
+
+// Reenvia o que estiver pendente ou com erro (também zera as tentativas das linhas com erro)
+router.post('/actions/sync', QUALITY, h(async (_req, res) => {
+  await must(sb().from('px_actions').update({ sync_attempts: 0 }).eq('sync_status', 'erro'));
+  res.json(await flushActions({ limit: 500 }));
 }));
 
 // --------------------------------------------------------------- Feedbacks
@@ -621,14 +715,31 @@ async function saveFeedback(req, evalId, fbId) {
     if (req.user.role !== 'admin' && f.applied_by !== req.user.id) throw httpError(403, 'Só quem registrou o feedback (ou o admin) pode editá-lo.');
     await must(sb().from('px_feedbacks').update({ ...vals, updated_at: nowIso() }).eq('id', fbId));
     await audit(req.user.id, 'feedback_editado', 'evaluation', evalId, { feedback_id: fbId });
+    // Linha ainda não enviada para a planilha acompanha a edição
+    const { ev } = await actionContext(evalId);
+    await sb().from('px_actions').update({
+      action_date: dayInBrazil(appliedAt), action: FEEDBACK_ONLINE.includes(vals.modality) ? 'Feedback online' : 'Feedback',
+      ...(THEMES.includes(b.sheet_theme) ? { theme: b.sheet_theme } : {}), obs: feedbackObs(ev, vals),
+    }).eq('feedback_id', fbId).in('sync_status', ['pendente', 'erro', 'ignorado']);
   } else {
     const f = await must(sb().from('px_feedbacks').insert({ ...vals, evaluation_id: evalId, operator_id: e.operator_id, applied_by: req.user.id }).select('id').single());
     await audit(req.user.id, 'feedback_aplicado', 'evaluation', evalId, { feedback_id: f.id, modalidade: b.modality || null });
     const op = await must(sb().from('px_operators').select('name, supervisor_user_id').eq('id', e.operator_id).single());
     const who = req.user.display_name || req.user.name;
     await notify([op.supervisor_user_id, e.reviewed_by].filter((u) => u && u !== req.user.id), 'Feedback aplicado', `${who} aplicou feedback para ${op.name}.`, `#/atendimentos/${evalId}`);
+    const { ev, theme } = await actionContext(evalId);
+    await recordAction({
+      source: 'feedback', action: FEEDBACK_ONLINE.includes(vals.modality) ? 'Feedback online' : 'Feedback',
+      theme: THEMES.includes(b.sheet_theme) ? b.sheet_theme : theme, evaluation: ev, operator_id: e.operator_id,
+      action_date: dayInBrazil(appliedAt), obs: feedbackObs(ev, vals), feedback_id: f.id, dedupe_key: `feedback:${f.id}`,
+    }, req.user);
+    flushInBackground();
   }
   await must(sb().from('px_evaluations').update({ status: 'feedback_aplicado', updated_at: nowIso() }).eq('id', evalId));
+}
+
+function feedbackObs(ev, vals) {
+  return `Feedback da ligação ${ev.protocol || '#' + ev.id}${vals.modality ? ` (${vals.modality})` : ''}: ${vals.content}`;
 }
 
 router.post('/evaluations/:id/feedback', QUALITY, h(async (req, res) => {
@@ -650,6 +761,8 @@ router.delete('/evaluations/:id/feedback/:fid', QUALITY, h(async (req, res) => {
   const f = await must(sb().from('px_feedbacks').select('*').eq('id', fid).eq('evaluation_id', id).maybeSingle());
   if (!f) return res.status(404).json({ error: 'Feedback não encontrado.' });
   if (req.user.role !== 'admin' && f.applied_by !== req.user.id) return res.status(403).json({ error: 'Só quem registrou o feedback (ou o admin) pode removê-lo.' });
+  // Linha que ainda não foi para a planilha sai junto; a já enviada continua lá (histórico)
+  await sb().from('px_actions').delete().eq('feedback_id', fid).in('sync_status', ['pendente', 'erro', 'ignorado']);
   await must(sb().from('px_feedbacks').delete().eq('id', fid));
   const left = await count(sb().from('px_feedbacks').select('id', { count: 'exact', head: true }).eq('evaluation_id', id));
   if (!left) {
@@ -1121,8 +1234,9 @@ router.put('/criteria/:id', ADMIN, h(async (req, res) => {
 }));
 
 // --------------------------------------------------------------- Configurações
-const SETTING_KEYS = ['company_name', 'ai_model', 'ai_effort', 'ai_auto_apply', 'ai_confidence_threshold', 'supervisor_scope', 'report_footer', 'azure_speech_endpoint', 'azure_speech_mode'];
-const SECRET_KEYS = ['anthropic_api_key', 'azure_speech_key'];
+const SETTING_KEYS = ['company_name', 'ai_model', 'ai_effort', 'ai_auto_apply', 'ai_confidence_threshold', 'supervisor_scope', 'report_footer', 'azure_speech_endpoint', 'azure_speech_mode',
+  'sheet_sync_enabled', 'sheet_url', 'sheet_table', 'ms_tenant_id', 'ms_client_id', 'sheet_segment_map'];
+const SECRET_KEYS = ['anthropic_api_key', 'azure_speech_key', 'ms_client_secret'];
 router.get('/settings', ADMIN, h(async (req, res) => {
   await loadSettings();
   const out = Object.fromEntries(SETTING_KEYS.map((k) => [k, getSetting(k)]));
@@ -1136,6 +1250,12 @@ router.get('/settings', ADMIN, h(async (req, res) => {
   out.azure_speech_key_source = sc.keySource;
   out.azure_speech_key_hint = skey ? `${skey.slice(0, 4)}…${skey.slice(-4)}` : null;
   out.azure_speech_endpoint_env = !!Deno.env.get('AZURE_SPEECH_ENDPOINT');
+  const ms = getSetting('ms_client_secret');
+  out.ms_client_secret_set = !!(ms || Deno.env.get('MS_CLIENT_SECRET'));
+  out.ms_client_secret_hint = ms ? `${ms.slice(0, 3)}…${ms.slice(-3)}` : null;
+  out.ms_env = !!Deno.env.get('MS_CLIENT_SECRET');
+  out.sheet_default_segments = DEFAULT_SEGMENT_MAP;
+  out.sheet_pending = await count(sb().from('px_actions').select('id', { count: 'exact', head: true }).in('sync_status', ['pendente', 'erro'])).catch(() => 0);
   out.storage = 'Supabase';
   res.json(out);
 }));
@@ -1147,6 +1267,8 @@ router.put('/settings', ADMIN, h(async (req, res) => {
   await audit(req.user.id, 'configuracoes_alteradas', 'settings', null, { chaves: Object.keys(b).map((k) => (SECRET_KEYS.includes(k) ? `${k} (oculta)` : k)) });
   res.json({ ok: true });
 }));
+
+router.post('/settings/sheet-test', ADMIN, h(async (_req, res) => { await loadSettings(); res.json(await testSheet()); }));
 
 router.post('/settings/speech-test', ADMIN, h(async (_req, res) => { await loadSettings(); res.json(await testSpeech()); }));
 
