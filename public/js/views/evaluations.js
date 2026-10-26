@@ -1,6 +1,6 @@
 import { api, qs } from '../api.js';
 import { downloadEvaluations } from '../files.js';
-import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, scoreRing, deltaTag, emptyState, toast, modal, busy, debounce, STATUS, userName, ALERT, origLabel } from '../ui.js';
+import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, scoreRing, deltaTag, emptyState, toast, modal, busy, debounce, STATUS, userName, ALERT, origLabel, CONTEST } from '../ui.js';
 import { filterBar, bindFilterBar } from './dashboard.js';
 import { palette } from '../charts.js';
 
@@ -22,6 +22,7 @@ export function evalCard(e, { selectable = false, selected = false } = {}) {
       ${(e.alerts || []).map((a) => html`<span class="chip alert ${a === 'audio_ruim' || a === 'sem_speech' ? 'warn' : ''}" title="${ALERT[a]?.[1] || ''}">${icon('alert')}${ALERT[a]?.[0] || a}</span>`)}
       ${e.status === 'pendente' ? html`<span class="chip warn">${icon('msgClock')}Pendente de revisão</span>` : e.status === 'revisada' ? html`<span class="chip info">${icon('check')}Revisada · aguarda feedback</span>` : ''}
       ${e.critical_fail ? html`<span class="chip bad">${icon('alert')}Falha crítica</span>` : ''}
+      ${e.contest_status && CONTEST[e.contest_status] ? html`<span class="chip ${CONTEST[e.contest_status][1]}">${icon('flag')}${CONTEST[e.contest_status][0]}</span>` : ''}
       ${e.adjustments ? html`<span class="chip brand">${icon('edit')}${e.adjustments} ajuste${e.adjustments > 1 ? 's' : ''}</span>` : ''}
       ${e.ai_status === 'concluida' ? html`<span class="chip outline">${icon('sparkles')}IA</span>` : e.has_transcript ? html`<span class="chip outline">${icon('file')}Transcrição</span>` : ''}
     </div>
@@ -60,7 +61,7 @@ export async function render(el, _p, ctx) {
       <div class="grow"></div>
       ${can('admin') ? html`<button class="btn" id="sel-mode">${icon('link')}Links de áudio em lote</button>` : ''}
       <button class="btn" id="exp">${icon('download')}Exportar</button>
-      ${can('admin', 'qualidade') ? html`<a class="btn primary" href="#/analise-ia">${icon('plus')}Nova monitoria</a>` : ''}
+      ${can('admin') ? html`<a class="btn primary" href="#/analise-ia">${icon('plus')}Nova monitoria</a>` : ''}
     </div>
     ${filterBar(store, state, { extra: html`
       <select class="select sm" id="f-op" aria-label="Operador"><option value="">Todos os operadores</option>${m.operators.map((o) => html`<option value="${o.id}" ${String(state.operator_id) === String(o.id) ? 'selected' : ''}>${o.name}</option>`)}</select>

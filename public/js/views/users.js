@@ -3,7 +3,7 @@ import { html, icon, $, $$, toast, modal, busy, confirmDialog, avatar, fmtRel, R
 
 const ROLE_DESC = {
   admin: 'Acesso total: usuários, quinzenas, links de áudio, critérios, configurações e bugs.',
-  qualidade: 'Importa monitorias, ajusta análises, usa a IA, aplica feedbacks e gera reports.',
+  qualidade: 'Altera análises, aplica feedbacks, responde contestações, importa monitorias e gera reports. Sem acesso à IA.',
   supervisor: 'Consulta atendimentos e gráficos, aplica e registra feedbacks aos operadores.',
 };
 

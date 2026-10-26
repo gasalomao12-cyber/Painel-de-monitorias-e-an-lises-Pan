@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import {
   html, raw, icon, $, $$, esc, fmtScore, fmtDate, fmtDur, fmtRel, avatar, productChip, scoreRing, deltaTag, resChip, toast, modal, busy,
-  confirmDialog, RESULT, ROLE, userName, emptyState, parseDate, PRODUCT, SEGMENT, SEGMENTS_OF, ALERT, origLabel,
+  confirmDialog, RESULT, ROLE, userName, emptyState, parseDate, PRODUCT, SEGMENT, SEGMENTS_OF, ALERT, origLabel, CONTEST,
 } from '../ui.js';
 import { readTranscriptFile } from '../files.js';
 
@@ -25,7 +25,7 @@ const ACTIONS = {
   ajustes_revertidos: 'Ajustes revertidos para o speech', link_audio_alterado: 'Link do áudio alterado', transcricao_anexada: 'Transcrição anexada',
   ia_analise: 'Análise automática executada', ia_erro: 'Falha na análise automática', ia_sugestoes_aplicadas: 'Sugestões da IA aplicadas',
   feedback_aplicado: 'Feedback aplicado', feedback_editado: 'Feedback editado', feedback_removido: 'Feedback removido', dados_editados: 'Dados da monitoria editados',
-  importacao_dashboard: 'Importada do dashboard',
+  importacao_dashboard: 'Importada do dashboard', contestacao_aberta: 'Contestação aberta', contestacao_respondida: 'Contestação respondida', contestacao_cancelada: 'Contestação cancelada',
 };
 
 let ev = null, draft = new Map(), tab = 'analise';
@@ -46,6 +46,8 @@ function draw(el, ctx) {
   const fb = e.feedbacks[0];
   const delta = e.final_score != null && e.speech_score != null ? e.final_score - e.speech_score : null;
   const editor = can('admin', 'qualidade');
+  const isAdmin = can('admin');
+  const openContest = (e.contests || []).find((c) => c.status === 'aberta');
   const steps = [
     ['Monitoria registrada', true],
     ['Análise revisada', e.status !== 'pendente'],
@@ -55,6 +57,7 @@ function draw(el, ctx) {
     <div class="row mb"><a class="btn sm ghost" href="#/atendimentos">${icon('chevLeft')}Voltar aos atendimentos</a><div class="grow" style="flex:1"></div>
       ${can('admin') ? html`<button class="btn sm danger" id="del-ev">${icon('trash')}Excluir</button>` : ''}</div>
 
+    ${contestBanners(e, ctx)}
     ${fb ? html`<div class="banner ok">${icon('checkCircle')}<div><b>Feedback aplicado ao operador</b> em ${fmtDate(fb.applied_at, true)} por ${fb.applied_by_display || fb.applied_by_name}${fb.modality ? ` · ${fb.modality}` : ''}${fb.operator_ack ? ' · operador ciente' : ''}.</div></div>` : ''}
 
     <div class="card" style="${e.status === 'feedback_aplicado' ? 'border-color:color-mix(in srgb, var(--ok) 45%, transparent)' : ''}">
@@ -80,9 +83,11 @@ function draw(el, ctx) {
         ${audioBar(e, can('admin'))}
         ${callDetails(e)}
         <div class="row mt">
-          <button class="btn ${e.status === 'feedback_aplicado' ? '' : 'success'}" data-goto="feedback">${icon('msgCheck')}${e.status === 'feedback_aplicado' ? 'Ver / registrar feedback' : 'Aplicar feedback'}</button>
-          ${editor ? html`<button class="btn" id="btn-transcript">${icon('file')}${e.transcript ? 'Substituir transcrição' : 'Anexar transcrição'}</button>
-            <button class="btn primary" id="btn-ai" ${e.transcript ? '' : raw('disabled title="Anexe a transcrição primeiro"')}>${icon('sparkles')}${e.ai_status === 'concluida' ? 'Reanalisar com IA' : 'Analisar com IA'}</button>` : ''}
+          ${editor ? html`<button class="btn ${e.status === 'feedback_aplicado' ? '' : 'success'}" data-goto="feedback">${icon('msgCheck')}${e.status === 'feedback_aplicado' ? 'Ver / registrar feedback' : 'Aplicar feedback'}</button>`
+            : html`<button class="btn" data-goto="feedback">${icon('msgCheck')}Ver feedbacks${e.feedbacks.length ? ` (${e.feedbacks.length})` : ''}</button>`}
+          ${can('supervisor', 'admin') && !openContest ? html`<button class="btn ${editor ? '' : 'primary'}" id="btn-contest">${icon('flag')}Contestar monitoria</button>` : ''}
+          ${editor ? html`<button class="btn" id="btn-transcript">${icon('file')}${e.transcript ? 'Substituir transcrição' : 'Anexar transcrição'}</button>` : ''}
+          ${isAdmin ? html`<button class="btn primary" id="btn-ai" ${e.transcript ? '' : raw('disabled title="Anexe a transcrição primeiro"')}>${icon('sparkles')}${e.ai_status === 'concluida' ? 'Reanalisar com IA' : 'Analisar com IA'}</button>` : ''}
           ${e.reviewer ? html`<span class="small muted">Revisado por <b>${e.reviewer.display_name || e.reviewer.name}</b> ${fmtRel(e.reviewed_at)}</span>` : ''}
         </div>
       </div>
@@ -90,7 +95,7 @@ function draw(el, ctx) {
 
     <div class="tabs mt" role="tablist">
       ${tabBtn('analise', 'list', 'Análise', e.items.length)}
-      ${tabBtn('transcricao', 'sparkles', 'Transcrição & IA', e.ai_status === 'concluida' ? 'IA' : e.transcript ? '1' : '')}
+      ${tabBtn('transcricao', isAdmin ? 'sparkles' : 'file', isAdmin ? 'Transcrição & IA' : 'Transcrição', isAdmin && e.ai_status === 'concluida' ? 'IA' : e.transcript ? '1' : '')}
       ${tabBtn('feedback', 'msgCheck', 'Feedback', e.feedbacks.length || '')}
       ${tabBtn('historico', 'refresh', 'Histórico', e.history.length || '')}
     </div>
@@ -106,6 +111,12 @@ function draw(el, ctx) {
   $('#btn-ai', el)?.addEventListener('click', (x) => runAI(el, ctx, x.currentTarget));
   $('#edit-audio', el)?.addEventListener('click', () => editAudio(el, ctx));
   $('#edit-seg', el)?.addEventListener('click', () => editSegment(el, ctx));
+  $('#btn-contest', el)?.addEventListener('click', () => openContestForm(el, ctx));
+  $$('[data-ct-answer]', el).forEach((b) => b.addEventListener('click', () => answerContest(el, ctx, Number(b.dataset.ctAnswer), b.dataset.decision)));
+  $$('[data-ct-cancel]', el).forEach((b) => b.addEventListener('click', async () => {
+    if (!(await confirmDialog('Cancelar contestação', 'A contestação será encerrada sem resposta da Qualidade.', { ok: 'Cancelar contestação', danger: true }))) return;
+    try { ev = await api.put(`/contests/${b.dataset.ctCancel}`, { status: 'cancelada' }); toast('Contestação cancelada.'); ctx.refreshMeta(); draw(el, ctx); } catch (ex) { toast(ex.message, 'err'); }
+  }));
   $$('[data-copy]', el).forEach((b) => b.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(b.dataset.copy); toast('Nome do arquivo copiado. Cole na busca da pasta de áudios.'); } catch { toast('Não foi possível copiar.', 'err'); }
   }));
@@ -130,6 +141,68 @@ function audioBar(e, isAdmin) {
     ${e.audio_link ? html`<a class="btn primary" href="${e.audio_link}" target="_blank" rel="noopener">${icon('external')}Abrir no OneDrive</a>` : ''}
     ${isAdmin ? html`<button class="btn" id="edit-audio">${icon('edit')}${e.audio_link ? 'Editar link' : 'Adicionar link'}</button>` : ''}
   </div>`;
+}
+
+// ------------------------------------------------------------------ Contestação
+// A supervisão contesta (motivo + itens); a Qualidade aceita e ajusta a análise, ou recusa, com resposta
+function contestBanners(e, ctx) {
+  const list = (e.contests || []).filter((c) => c.status !== 'cancelada' || c.requested_by === ctx.store.user.id);
+  if (!list.length) return '';
+  const quality = ctx.can('admin', 'qualidade');
+  return html`${list.slice(0, 3).map((c) => html`<div class="banner ${c.status === 'aberta' ? 'warn' : c.status === 'aceita' ? 'ok' : c.status === 'recusada' ? 'bad' : 'info'}">${icon('flag')}
+    <div style="flex:1;min-width:0"><b>${CONTEST[c.status][0]}</b> · por ${c.requested_by_display || c.requested_by_name || 'supervisão'} em ${fmtDate(c.created_at, true)}
+      <div class="t2" style="margin-top:4px">“${c.reason}”</div>
+      ${c.criteria?.length ? html`<div class="row" style="gap:6px;margin-top:6px">${c.criteria.map((i) => html`<span class="chip outline">${i.code} · ${i.name}</span>`)}</div>` : ''}
+      ${c.response ? html`<div style="margin-top:8px"><b>Resposta da Qualidade</b> (${c.responded_by_display || c.responded_by_name}, ${fmtDate(c.responded_at, true)}): ${c.response}</div>` : ''}
+      ${c.status === 'aberta' && quality ? html`<div class="row" style="gap:8px;margin-top:10px"><button class="btn sm success" data-ct-answer="${c.id}" data-decision="aceita">${icon('check')}Aceitar</button><button class="btn sm danger" data-ct-answer="${c.id}" data-decision="recusada">${icon('x')}Recusar</button><span class="tiny muted">Ao aceitar, ajuste os itens na aba Análise.</span></div>` : ''}
+      ${c.status === 'aberta' && c.requested_by === ctx.store.user.id ? html`<div style="margin-top:8px"><button class="btn sm ghost" data-ct-cancel="${c.id}">Cancelar contestação</button></div>` : ''}
+    </div></div>`)}`;
+}
+
+function openContestForm(el, ctx) {
+  modal({
+    title: 'Contestar monitoria',
+    wide: true,
+    body: html`<p class="t2" style="margin-top:0">Explique o que não confere na análise. A Qualidade recebe o pedido, revisa e responde aqui no card.</p>
+      <div class="field"><label for="ct-reason">Motivo *</label><textarea class="textarea" id="ct-reason" style="min-height:110px" maxlength="3000" placeholder="Ex.: o operador confirmou o CPF em 0:12, mas o item ficou como não conforme."></textarea></div>
+      <div class="field"><span class="lbl">Itens contestados (opcional)</span>
+        <div class="stack" style="gap:6px;max-height:240px;overflow:auto">${ev.items.map((i) => html`<label class="check small"><input type="checkbox" value="${i.criterion_id}"> <b>${i.code}</b> ${i.name} <span class="muted">· ${RESULT[i.final_result] || '—'}</span></label>`)}</div></div>`,
+    foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="ct-ok">${icon('flag')}Enviar contestação</button>`,
+    onMount: (m, close) => {
+      $('#ct-ok', m).onclick = async (x) => {
+        const reason = $('#ct-reason', m).value.trim();
+        if (reason.length < 15) { toast('Explique o motivo (mínimo 15 caracteres).', 'err'); return; }
+        busy(x.currentTarget, true, 'Enviando');
+        try {
+          ev = await api.post(`/evaluations/${ev.id}/contests`, { reason, criteria: $$('input[type=checkbox]:checked', m).map((i) => Number(i.value)) });
+          close(); toast('Contestação enviada para a Qualidade.'); ctx.refreshMeta(); draw(el, ctx);
+        } catch (ex) { toast(ex.message, 'err'); busy(x.currentTarget, false); }
+      };
+    },
+  });
+}
+
+function answerContest(el, ctx, id, decision) {
+  const accept = decision === 'aceita';
+  modal({
+    title: accept ? 'Aceitar contestação' : 'Recusar contestação',
+    body: html`<p class="t2" style="margin-top:0">${accept ? 'A resposta vai para quem contestou. Lembre de ajustar os itens na aba Análise para a nota ser recalculada.' : 'Explique por que a análise se mantém. A resposta vai para quem contestou.'}</p>
+      <div class="field"><label for="ct-resp">Resposta *</label><textarea class="textarea" id="ct-resp" style="min-height:100px" maxlength="3000"></textarea></div>`,
+    foot: html`<button class="btn ghost" data-close>Voltar</button><button class="btn ${accept ? 'success' : 'danger'}" id="ct-send">${accept ? 'Aceitar' : 'Recusar'}</button>`,
+    onMount: (m, close) => {
+      $('#ct-send', m).onclick = async (x) => {
+        const response = $('#ct-resp', m).value.trim();
+        if (response.length < 10) { toast('Escreva a resposta (mínimo 10 caracteres).', 'err'); return; }
+        busy(x.currentTarget, true);
+        try {
+          ev = await api.put(`/contests/${id}`, { status: decision, response });
+          close(); toast(accept ? 'Contestação aceita. Ajuste os itens na aba Análise.' : 'Contestação recusada.'); ctx.refreshMeta();
+          if (accept) tab = 'analise';
+          draw(el, ctx);
+        } catch (ex) { toast(ex.message, 'err'); busy(x.currentTarget, false); }
+      };
+    },
+  });
 }
 
 // Dados que vieram do dashboard (tabulação, desfecho, aptidão, conduta, sigilo...)
@@ -301,7 +374,7 @@ function drawTranscript(body, el, ctx) {
   const e = ev;
   const editor = ctx.can('admin', 'qualidade');
   if (!e.transcript) {
-    body.innerHTML = String(html`<div class="card card-pad">${emptyState('file', 'Nenhuma transcrição anexada', 'Anexe a transcrição (.txt, .docx, .vtt, .srt ou .json) para a IA revisar a análise do speech e corrigir divergências.',
+    body.innerHTML = String(html`<div class="card card-pad">${emptyState('file', 'Nenhuma transcrição anexada', ctx.can('admin') ? 'Anexe a transcrição (.txt, .docx, .vtt, .srt ou .json) para a IA revisar a análise do speech e corrigir divergências.' : 'Anexe a transcrição (.txt, .docx, .vtt, .srt ou .json) para consultar a conversa ao revisar a análise.',
       editor ? html`<button class="btn primary" id="t-attach">${icon('upload')}Anexar transcrição</button>` : '')}</div>`);
     $('#t-attach', body)?.addEventListener('click', () => attachTranscript(el, ctx));
     return;
@@ -320,13 +393,13 @@ function drawTranscript(body, el, ctx) {
       })}</div></div>
     </div>
     <div class="stack">
-      <div class="card card-pad">
+      ${!ctx.can('admin') ? (editor ? html`<div class="card card-pad"><button class="btn" id="t-replace">${icon('upload')}Substituir arquivo</button></div>` : '') : html`<div class="card card-pad">
         <h3 style="margin:0 0 6px;font-size:15px">Análise automática</h3>
         <p class="small t2" style="margin:0 0 12px">A IA lê a transcrição, avalia cada critério com evidências e corrige o que o speech interpretou de forma diferente. Itens ajustados manualmente por analistas nunca são sobrescritos.</p>
         ${e.ai_status === 'concluida' ? html`<div class="banner ok" style="margin-bottom:12px">${icon('checkCircle')}<div>Concluída ${fmtRel(e.ai_ran_at)} · ${e.items.filter((i) => i.ai_result && i.ai_result !== i.speech_result).length} divergência(s) com o speech.</div></div>` : ''}
         ${e.ai_status === 'erro' ? html`<div class="banner warn" style="margin-bottom:12px">${icon('alert')}<div>A última tentativa falhou. Tente novamente.</div></div>` : ''}
-        ${editor ? html`<div class="stack"><button class="btn primary" id="t-ai">${icon('sparkles')}${e.ai_status === 'concluida' ? 'Reanalisar' : 'Analisar agora'}</button><button class="btn" id="t-replace">${icon('upload')}Substituir arquivo</button></div>` : ''}
-      </div>
+        <div class="stack"><button class="btn primary" id="t-ai">${icon('sparkles')}${e.ai_status === 'concluida' ? 'Reanalisar' : 'Analisar agora'}</button><button class="btn" id="t-replace">${icon('upload')}Substituir arquivo</button></div>
+      </div>`}
       ${e.ai?.feedback ? html`<div class="card card-pad"><h3 style="margin:0 0 10px;font-size:15px">Sugestão de feedback</h3>
         <dl class="small" style="margin:0;display:grid;gap:8px">
           ${e.ai.feedback.strengths ? html`<div><dt class="muted strong">Pontos fortes</dt><dd style="margin:0">${e.ai.feedback.strengths}</dd></div>` : ''}
@@ -358,7 +431,7 @@ function attachTranscript(el, ctx) {
         <div class="ic">${icon('upload')}</div><h4>Arraste o arquivo ou clique para escolher</h4><p class="muted small" style="margin:0" id="tr-name">.txt, .docx, .vtt, .srt ou .json</p></label>
       <div class="row mt mb" style="gap:8px"><hr class="sep" style="flex:1;margin:0"><span class="tiny muted">ou cole o texto</span><hr class="sep" style="flex:1;margin:0"></div>
       <textarea class="textarea" id="tr-text" style="min-height:180px" placeholder="[00:00] Operador: Bom dia...\n[00:05] Cliente: ..."></textarea>
-      <label class="check mt"><input type="checkbox" id="tr-run" checked ${ctx.can('admin', 'qualidade') ? '' : 'disabled'}> Executar a análise automática em seguida</label>`,
+      ${ctx.can('admin') ? html`<label class="check mt"><input type="checkbox" id="tr-run" checked> Executar a análise automática em seguida</label>` : ''}`,
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="tr-ok">${icon('check')}Anexar</button>`,
     onMount: (m, close) => {
       const drop = $('#tr-drop', m);
@@ -376,7 +449,7 @@ function attachTranscript(el, ctx) {
           ev = await api.post(`/evaluations/${ev.id}/transcript`, payload);
           close(); toast('Transcrição anexada.');
           tab = 'transcricao';
-          if ($('#tr-run', m).checked) { draw(el, ctx); await runAI(el, ctx, $('#t-ai')); } else draw(el, ctx);
+          if ($('#tr-run', m)?.checked) { draw(el, ctx); await runAI(el, ctx, $('#t-ai')); } else draw(el, ctx);
         } catch (ex) { toast(ex.message, 'err'); busy(x.currentTarget, false); }
       };
     },
@@ -442,6 +515,13 @@ function localDateTime(d = new Date()) {
 function drawFeedback(body, el, ctx) {
   const e = ev;
   const me = ctx.store.user;
+  // Supervisão acompanha os feedbacks; quem aplica é a Qualidade
+  if (!ctx.can('admin', 'qualidade')) {
+    body.innerHTML = String(html`<div class="card card-pad">${e.feedbacks.length
+      ? html`<h3 style="margin:0 0 10px;font-size:15px">Feedbacks registrados</h3><div class="stack">${e.feedbacks.map((x) => fbCard(x, me))}</div>`
+      : emptyState('msgClock', 'Feedback ainda não aplicado', 'A Qualidade registra aqui o feedback passado ao operador. Se discordar da análise, use “Contestar monitoria”.')}</div>`);
+    return;
+  }
   let editing = null;
   const paint = () => {
     const f = editing;
