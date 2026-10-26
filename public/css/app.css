@@ -28,6 +28,7 @@
 
   /* séries de gráfico (validadas p/ daltonismo) */
   --s-refin: #3987e5; --s-entrega: #d95926; --s-geral: #199e70; --s-speech: #898781;
+  --s-veiculos: #9085e9; --s-cartoes: #d55181; --s-consignado: #22a2c3;
   /* status */
   --ok: #0ca30c; --ok-ink: #3ddc6b; --ok-soft: rgba(12,163,12,.14);
   --warn: #fab219; --warn-ink: #ffc94d; --warn-soft: rgba(250,178,25,.14);
@@ -49,6 +50,7 @@
   --shadow: 0 1px 2px rgba(15,23,42,.04), 0 10px 30px -12px rgba(15,23,42,.14);
   --shadow-lg: 0 30px 70px -20px rgba(15,23,42,.28);
   --s-refin: #2a78d6; --s-entrega: #eb6834; --s-geral: #1baf7a;
+  --s-veiculos: #6f5fd8; --s-cartoes: #c23d6f; --s-consignado: #0f89a8;
   --ok-ink: #067a06; --ok-soft: rgba(12,163,12,.10);
   --warn-ink: #9a6700; --warn-soft: rgba(250,178,25,.16);
   --bad-ink: #b42323; --bad-soft: rgba(208,59,59,.10);
@@ -250,6 +252,29 @@ hr.sep { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
 .chip svg { width: 13px; height: 13px; }
 .chip.refin { background: color-mix(in srgb, var(--s-refin) 16%, transparent); color: color-mix(in srgb, var(--s-refin) 70%, var(--text)); }
 .chip.entrega { background: color-mix(in srgb, var(--s-entrega) 16%, transparent); color: color-mix(in srgb, var(--s-entrega) 70%, var(--text)); }
+.chip.p-refin { --pc: var(--s-refin); } .chip.p-entrega { --pc: var(--s-entrega); } .chip.p-veiculos { --pc: var(--s-veiculos); }
+.chip.p-cartoes { --pc: var(--s-cartoes); } .chip.p-consignado { --pc: var(--s-consignado); }
+.chip[class*="p-"] { background: color-mix(in srgb, var(--pc) 16%, transparent); color: color-mix(in srgb, var(--pc) 70%, var(--text)); }
+.chip .sg { margin-left: 6px; padding-left: 6px; border-left: 1px solid color-mix(in srgb, currentColor 35%, transparent); font-weight: 500; }
+.chip.alert { background: var(--bad-soft); color: var(--bad-ink); }
+.chip.alert.warn { background: var(--warn-soft); color: var(--warn-ink); }
+/* Dados da ligação trazidos dos dashboards */
+.facts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 18px; }
+.facts-grid div { min-width: 0; }
+.facts-grid dt { font-size: 11.5px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.facts-grid dd { margin: 2px 0 0; font-size: 13.5px; overflow-wrap: anywhere; }
+.hl { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); font-size: 13px; }
+.hl + .hl { margin-top: 8px; }
+.hl svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.hl.bad { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 30%, transparent); } .hl.bad svg { color: var(--bad-ink); }
+.hl.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 30%, transparent); } .hl.warn svg { color: var(--warn-ink); }
+.hl.ok { background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 30%, transparent); } .hl.ok svg { color: var(--ok-ink); }
+.hl.info svg { color: var(--info-ink); }
+.file-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
+/* Visão apartada por produto e segmento */
+.seg-table td.lvl-segment:first-child { padding-left: 28px; color: var(--text-2); }
+.seg-table tr.lvl-product td { font-weight: 600; }
+.seg-table tr.lvl-product td:first-child .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; background: var(--pc); }
 .chip.ok { background: var(--ok-soft); color: var(--ok-ink); }
 .chip.warn { background: var(--warn-soft); color: var(--warn-ink); }
 .chip.bad { background: var(--bad-soft); color: var(--bad-ink); }

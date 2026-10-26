@@ -28,8 +28,13 @@ function toResult(v) {
   return undefined;
 }
 
+const CRITERIA_FOR = { REFIN: ['AMBOS', 'REFIN'], ENTREGA: ['AMBOS', 'ENTREGA'], VEICULOS: ['VEICULOS'], CARTOES: ['SEM_GARANTIA', 'CARTOES'], CONSIGNADO: ['SEM_GARANTIA', 'CONSIGNADO'] };
+
 function toProduct(v) {
   const s = strip(v);
+  if (/consign/.test(s)) return 'CONSIGNADO';
+  if (/cart/.test(s)) return 'CARTOES';
+  if (/veicul/.test(s)) return 'VEICULOS';
   if (/entrega|amigavel|devolu/.test(s)) return 'ENTREGA';
   if (/refin|renegoc|refinanc/.test(s)) return 'REFIN';
   return null;
@@ -74,8 +79,9 @@ function normalizeRows(rows, criteria, operators) {
     if (field) { map[h] = field[0]; continue; }
     const obs = k.match(/^(obs|observacao|nota)\s*[-:]?\s*(.+)$/);
     const target = obs ? obs[2] : k;
-    const c = criteria.find((cr) => strip(cr.code) === target || strip(cr.name) === target);
-    if (c) { (obs ? noteMap : critMap)[h] = c; continue; }
+    // O mesmo código pode existir em mais de um roteiro (ex.: SMO em Veículos e Sem Garantia)
+    const c = criteria.filter((cr) => strip(cr.code) === target || strip(cr.name) === target);
+    if (c.length) { (obs ? noteMap : critMap)[h] = c; continue; }
     unmatched.push(h);
   }
   const out = rows.map((r, idx) => {
@@ -90,15 +96,17 @@ function normalizeRows(rows, criteria, operators) {
     o.protocol = o.protocol != null ? String(o.protocol) : null;
     if (o.audio_url && !/^https?:\/\//i.test(String(o.audio_url))) { o.warnings.push('Link de áudio ignorado (não é uma URL).'); o.audio_url = null; }
     if (!o.operator) o.errors.push('Operador não informado.');
-    if (!o.product) o.errors.push('Produto não reconhecido (use Refinanciamento ou Entrega Amigável).');
+    if (!o.product) o.errors.push('Produto não reconhecido (use Veículos, Cartões, Consignado, Refinanciamento ou Entrega Amigável).');
     const op = operators.find((x) => (o.registration && x.registration && String(x.registration) === o.registration) || strip(x.name) === strip(o.operator));
     o.operator_id = op ? op.id : null;
     if (!op && o.operator) o.warnings.push('Operador novo — será cadastrado.');
-    for (const [h, c] of Object.entries(critMap)) {
-      if (o.product && c.product !== 'AMBOS' && c.product !== o.product) continue;
+    const allowed = CRITERIA_FOR[o.product] || [];
+    for (const [h, list] of Object.entries(critMap)) {
+      const c = list.find((x) => allowed.includes(x.product));
+      if (!c) continue;
       const res = toResult(r[h]);
       if (res === undefined) { o.warnings.push(`Valor "${r[h]}" em ${c.code} não reconhecido.`); continue; }
-      const noteH = Object.entries(noteMap).find(([, nc]) => nc.id === c.id)?.[0];
+      const noteH = Object.entries(noteMap).find(([, nl]) => nl.some((nc) => nc.id === c.id))?.[0];
       o.items.push({ criterion_id: c.id, code: c.code, speech_result: res, speech_note: noteH ? r[noteH] || null : null });
     }
     if (!o.items.length && o.speech_score == null) o.warnings.push('Nenhum critério ou nota encontrado nesta linha.');
@@ -107,7 +115,7 @@ function normalizeRows(rows, criteria, operators) {
   return {
     rows: out,
     mapped: Object.entries(map).map(([h, f]) => ({ header: h, field: f })),
-    criteria_columns: Object.entries(critMap).map(([h, c]) => ({ header: h, code: c.code, name: c.name })),
+    criteria_columns: Object.entries(critMap).map(([h, c]) => ({ header: h, code: c[0].code, name: c[0].name })),
     unmatched,
     summary: { total: out.length, valid: out.filter((r) => !r.errors.length).length, invalid: out.filter((r) => r.errors.length).length, new_operators: new Set(out.filter((r) => !r.operator_id && r.operator).map((r) => strip(r.operator))).size },
   };

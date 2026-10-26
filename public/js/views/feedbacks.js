@@ -4,7 +4,7 @@ import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, emptyState, 
 import { filterBar, bindFilterBar } from './dashboard.js';
 import { evalCard, bindEvalCards } from './evaluations.js';
 
-const state = { product: '', team: '', q: '', group: localStorage.getItem('px_fb_group') || 'operador' };
+const state = { product: '', segment: '', team: '', q: '', group: localStorage.getItem('px_fb_group') || 'operador' };
 
 export async function render(el, [kind], ctx) {
   if (kind === 'aplicados') return renderApplied(el, ctx);
@@ -22,7 +22,7 @@ async function renderPending(el, ctx) {
   bindFilterBar(el, store, state, reload);
   $$('#g-mode button').forEach((b) => b.addEventListener('click', () => { state.group = b.dataset.v; localStorage.setItem('px_fb_group', state.group); $$('#g-mode button').forEach((x) => x.classList.toggle('on', x === b)); load(); }));
   const load = async () => {
-    const rows = await api.get(`/evaluations${qs({ cycle_id: store.cycle, product: state.product, team: state.team, feedback: 'pending', sort: 'nota_asc' })}`);
+    const rows = await api.get(`/evaluations${qs({ cycle_id: store.cycle, product: state.product, segment: state.segment, team: state.team, feedback: 'pending', sort: 'nota_asc' })}`);
     if (!ctx.isCurrent()) return;
     const box = $('#pend', el);
     if (!rows.length) { box.innerHTML = String(emptyState('checkCircle', 'Tudo em dia!', 'Todas as monitorias do filtro já têm feedback aplicado.')); return; }
@@ -65,7 +65,7 @@ async function renderApplied(el, ctx) {
       <div class="grow"></div><input class="input sm" id="fa-q" placeholder="Buscar no conteúdo…">` })}
     <div id="fa-sum"></div><div id="fa-list"></div>`);
   const load = async () => {
-    const rows = await api.get(`/feedbacks${qs({ cycle_id: store.cycle, product: state.product, team: state.team, operator_id: st.operator_id, from: st.from, to: st.to, q: state.q })}`);
+    const rows = await api.get(`/feedbacks${qs({ cycle_id: store.cycle, product: state.product, segment: state.segment, team: state.team, operator_id: st.operator_id, from: st.from, to: st.to, q: state.q })}`);
     if (!ctx.isCurrent()) return;
     const box = $('#fa-list', el);
     const by = new Map(); rows.forEach((r) => by.set(r.applied_by_display || r.applied_by_name, (by.get(r.applied_by_display || r.applied_by_name) || 0) + 1));
@@ -78,7 +78,7 @@ async function renderApplied(el, ctx) {
     box.innerHTML = String(html`<div class="stack">${rows.map((f) => html`<div class="fb-card" style="cursor:pointer" data-ev="${f.evaluation_id}">
       <div class="fb-h">${avatar(f.operator_name)}<div class="grow"><b>${f.operator_name}</b> <span class="tiny muted">${f.team || ''}</span>
         <div class="tiny muted">${f.cycle_name || ''} · ligação ${fmtDate(f.call_date)} · ${f.protocol || ''}</div></div>
-        ${productChip(f.product)}<span class="chip">nota <b class="score-txt band-${band(f.final_score)}" style="margin-left:4px">${fmtScore(f.final_score)}</b></span>
+        ${productChip(f.product, f.segment)}<span class="chip">nota <b class="score-txt band-${band(f.final_score)}" style="margin-left:4px">${fmtScore(f.final_score)}</b></span>
         <span class="chip ok">${icon('checkCircle')}${fmtDate(f.applied_at)}</span></div>
       <p class="small">${f.content}</p>
       <div class="row tiny muted mt-0" style="margin-top:10px">${icon('user')}<span>${f.applied_by_display || f.applied_by_name} · ${ROLE[f.applied_by_role] || ''}${f.modality ? ` · ${f.modality}` : ''}${f.operator_ack ? ' · operador ciente' : ''}${f.followup_date ? ` · reavaliar em ${fmtDate(f.followup_date)}` : ''}</span></div>

@@ -104,8 +104,20 @@ export const PX_MARK = '<svg viewBox="0 0 920 528" aria-hidden="true"><path fill
 export const pxLogo = (size = 40) => raw(`<span class="px-logo" style="width:${size}px;height:${size}px" role="img" aria-label="PX">${PX_MARK}</span>`);
 
 // ---------------- Formatação ----------------
-export const PRODUCT = { REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável' };
-export const PRODUCT_SHORT = { REFIN: 'Refin', ENTREGA: 'Entrega' };
+// Carteiras PAN (dashboards importados) + Refinanciamento/Entrega Amigável lançados à mão
+export const PRODUCTS = ['VEICULOS', 'CARTOES', 'CONSIGNADO', 'REFIN', 'ENTREGA'];
+export const PRODUCT = { VEICULOS: 'Veículos', CARTOES: 'Cartões', CONSIGNADO: 'Consignado', REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável' };
+export const PRODUCT_SHORT = { VEICULOS: 'Veículos', CARTOES: 'Cartões', CONSIGNADO: 'Consignado', REFIN: 'Refin', ENTREGA: 'Entrega' };
+export const SEGMENT = { CLEAN_CURTO: 'Clean Curto', CLEAN_LONGO: 'Clean Longo', PUBLICO: 'Público', PRIVADO: 'Privado', none: 'Segmento a definir' };
+export const SEGMENTS_OF = { CARTOES: ['CLEAN_CURTO', 'CLEAN_LONGO'], CONSIGNADO: ['PUBLICO', 'PRIVADO'] };
+export const CRITERIA_GROUP = { VEICULOS: 'Veículos', SEM_GARANTIA: 'Sem Garantia (Cartões e Consignado)', CARTOES: 'Só Cartões', CONSIGNADO: 'Só Consignado', AMBOS: 'Refin e Entrega', REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável' };
+// No roteiro Sem Garantia a "nota original" é a 1ª leitura da transcrição, não o speech
+export const origLabel = (e) => (e?.source === 'dash_sem_garantia' ? '1ª leitura' : 'Speech');
+export const productLabel = (p, seg) => `${PRODUCT[p] || p}${SEGMENTS_OF[p] ? ` · ${SEGMENT[seg || 'none']}` : ''}`;
+export const ALERT = {
+  sigilo: ['Sigilo', 'Dados passados a outra pessoa'], conduta: ['Conduta', 'Conduta inadequada com o cliente'], oferta_perdida: ['Oferta perdida', 'Cliente apto a E.A./refin sem a oferta'],
+  postura: ['Postura', 'Postura inadequada (speech)'], sem_proposta: ['Sem proposta', 'Negociação sem nenhuma proposta'], audio_ruim: ['Áudio ruim', 'Sem condições de avaliação'], sem_speech: ['Sem speech', 'Speech não devolveu respostas'],
+};
 export const RESULT = { C: 'Conforme', P: 'Parcial', NC: 'Não conforme', NA: 'N/A' };
 export const RESULT_ICON = { C: 'checkCircle', P: 'half', NC: 'xCircle', NA: 'minus' };
 export const STATUS = { pendente: 'Pendente de revisão', revisada: 'Revisada', feedback_aplicado: 'Feedback aplicado' };
@@ -161,7 +173,9 @@ export function resChip(r) {
   if (!r) return html`<span class="res none">—</span>`;
   return html`<span class="res ${r}">${icon(RESULT_ICON[r])}${RESULT[r]}</span>`;
 }
-export function productChip(p) { return html`<span class="chip ${p === 'REFIN' ? 'refin' : 'entrega'}">${PRODUCT[p]}</span>`; }
+export function productChip(p, seg) {
+  return html`<span class="chip p-${String(p || '').toLowerCase()}">${PRODUCT[p] || p}${SEGMENTS_OF[p] ? html`<span class="sg">${SEGMENT[seg || 'none']}</span>` : ''}</span>`;
+}
 export function deltaTag(v, suffix = '') {
   if (v == null || Number.isNaN(v)) return '';
   const cls = v > 0.05 ? 'up' : v < -0.05 ? 'down' : 'flat';
