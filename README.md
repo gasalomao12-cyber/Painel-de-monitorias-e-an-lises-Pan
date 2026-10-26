@@ -151,6 +151,37 @@ O áudio vai do servidor direto para o recurso da empresa e não é guardado na 
 - **Ligação que já existe** (por exemplo, vinda de um dashboard) só tem os campos vazios completados. Reimportar não duplica.
 - **Vínculo automático depois:** o áudio ou a transcrição enviados em seguida se vinculam sozinhos à ligação, pelo ID no nome do arquivo. Vale tanto o padrão do discador (`43501102_…wav`) quanto o nome original do speech (`asp-t2-epro…_43501102.wav`).
 
+## Análises AGV (campanhas com assistente virtual)
+
+Menu **Análises AGV**. Reúne só as ligações das campanhas AGV (campanha com "AGV" no nome, como `APTI_PAFIXA_AGVIA`
+e `APTI_PCART02IAGV`), avaliadas no **roteiro AGV**: as 9 perguntas do relatório do speech "PAN TESTE DE PERGUNTAS AGV",
+olhando só o que o operador fez depois da transferência. O desfecho (acordo com boleto, promessa, retorno, sem acordo)
+fica no campo desfecho da ligação.
+
+- **Importar**: botão "Importar ligações e speech". Envie o `.csv` do discador e o `.xlsx` do relatório do speech
+  juntos ou separados. O discador cria as ligações (operador pelo login, carteira pela operação). O relatório preenche as
+  respostas, ligando cada uma pelo ID no nome do áudio. Quando a mesma ligação foi avaliada mais de uma vez, vale a
+  avaliação mais recente.
+- **Regras de coerência na entrada**:
+  - Sem negociação com o titular (ou quem atendeu não era o titular), as perguntas da negociação viram N/A.
+  - Confirmar valor e data só cabe quando houve acordo com boleto.
+  - Explicar as consequências não cabe quando houve acordo.
+  - Oferecer outra condição só cabe depois de uma proposta.
+  - Acordo com boleto conta como proposta feita.
+
+  A resposta original do speech fica guardada. Cada correção aparece no card, com o motivo. O que a Qualidade
+  ajustou à mão nunca é sobrescrito.
+- **Comparativos**:
+  - Carteira, campanha, equipe, supervisor, operador, quinzena, semana e dia, com a aderência de cada pergunta num
+    mapa de calor e o desfecho das ligações.
+  - Período A × período B, mostrando quanto cada pergunta subiu ou caiu.
+  - Conformidade final × resposta original do speech.
+  - Evolução diária.
+  - AGV × Convencional na mesma carteira.
+- Em **Atendimentos**, o filtro "Canal" separa AGV e Convencional.
+- **Migração**: rode `supabase/migrations/20261029120000_px_agv.sql` no SQL Editor. Ela cria o roteiro AGV e passa
+  para ele as ligações AGV do discador que ainda não foram avaliadas.
+
 ## Importação dos dashboards de monitoria PAN (.html)
 *Importar monitorias › Dashboard de monitoria já trabalhado*: arraste o arquivo .html do dashboard da quinzena. São reconhecidos:
 - **Speech E.A. e Refin (Veículos)**: 13 itens do roteiro (postura fora da nota), ajustes de coerência com o motivo, aptidão a E.A./refin, oferta Nelson, gerência, líder, campanha, canal (AGV/convencional), tabulação, desfecho e nome do áudio.

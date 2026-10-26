@@ -596,3 +596,14 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .zoom-pop .zsteps button { border: 1px solid var(--border-strong); background: var(--surface-2); border-radius: 8px; padding: 6px 0; font-weight: 700; font-size: 12px; cursor: pointer; color: var(--text-2); }
 .zoom-pop .zsteps button.on { background: var(--brand); border-color: transparent; color: #fff; }
 .btn-icon.zoom-btn { display: inline-flex; align-items: center; font-weight: 800; font-size: 12px; width: auto; padding: 0 10px; gap: 6px; }
+
+/* Divisão AGV: mapa de calor do comparativo */
+.tbl.heat td.h-ok { background: var(--ok-soft); color: var(--ok-ink); font-weight: 650; }
+.tbl.heat td.h-warn { background: var(--warn-soft); color: var(--warn-ink); font-weight: 650; }
+.tbl.heat td.h-bad { background: var(--bad-soft); color: var(--bad-ink); font-weight: 650; }
+.tbl.heat td.h-na { color: var(--muted); }
+.tbl.heat th, .tbl.heat td { padding-left: 8px; padding-right: 8px; }
+.tbl .total-row td { border-top: 2px solid var(--border-strong); font-weight: 700; background: var(--surface-2); }
+.tbl .delta-row td { padding-top: 4px; padding-bottom: 10px; }
+#agv-dim { max-width: 100%; overflow-x: auto; }
+#agv-compare .card-head, #agv-ab .row { flex-wrap: wrap; }

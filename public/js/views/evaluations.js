@@ -4,7 +4,7 @@ import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, scoreRing, d
 import { filterBar, bindFilterBar } from './dashboard.js';
 import { palette } from '../charts.js';
 
-const state = { product: '', segment: '', alert: '', team: '', status: '', feedback: '', operator_id: '', adjusted: false, critical: false, q: '', sort: 'recentes', view: localStorage.getItem('px_eval_view') || 'grid', selecting: false, selected: new Set(), shown: 60 };
+const state = { product: '', segment: '', channel: '', campaign: '', alert: '', team: '', status: '', feedback: '', operator_id: '', adjusted: false, critical: false, q: '', sort: 'recentes', view: localStorage.getItem('px_eval_view') || 'grid', selecting: false, selected: new Set(), shown: 60 };
 
 export function evalCard(e, { selectable = false, selected = false } = {}) {
   const c = palette();
@@ -19,6 +19,7 @@ export function evalCard(e, { selectable = false, selected = false } = {}) {
     </div>
     <div class="ev-meta">
       ${productChip(e.product, e.segment)}
+      ${e.channel === 'AGV' ? html`<span class="chip brand" title="${e.campaign || 'Campanha AGV'}">${icon('zap')}AGV</span>` : ''}
       ${(e.alerts || []).map((a) => html`<span class="chip alert ${a === 'audio_ruim' || a === 'sem_speech' ? 'warn' : ''}" title="${ALERT[a]?.[1] || ''}">${icon('alert')}${ALERT[a]?.[0] || a}</span>`)}
       ${e.status === 'pendente' ? html`<span class="chip warn">${icon('msgClock')}Pendente de revisão</span>` : e.status === 'revisada' ? html`<span class="chip info">${icon('check')}Revisada · aguarda feedback</span>` : ''}
       ${e.critical_fail ? html`<span class="chip bad">${icon('alert')}Falha crítica</span>` : ''}
@@ -51,7 +52,7 @@ export async function render(el, _p, ctx) {
   // Vindo do painel (ex.: clique em um alerta), já abre filtrado
   try {
     const f = JSON.parse(sessionStorage.getItem('px_eval_preset') || 'null');
-    if (f) { Object.assign(state, { product: f.product || '', segment: f.segment || '', alert: f.alert || '' }); sessionStorage.removeItem('px_eval_preset'); }
+    if (f) { Object.assign(state, { product: f.product || '', segment: f.segment || '', alert: f.alert || '', channel: f.channel || '', campaign: f.campaign || '' }); sessionStorage.removeItem('px_eval_preset'); }
   } catch { /* ignora */ }
   state.selecting = false; state.selected.clear(); state.shown = 60;
   const m = store.meta;
@@ -69,6 +70,8 @@ export async function render(el, _p, ctx) {
         <option value="">Todos os status</option>
         ${Object.entries(STATUS).map(([k, v]) => html`<option value="${k}" ${state.status === k ? 'selected' : ''}>${v}</option>`)}
       </select>
+      <select class="select sm" id="f-channel" aria-label="Canal"><option value="">Todos os canais</option>${[['AGV', 'AGV (assistente virtual)'], ['Convencional', 'Convencional']].map(([k, t]) => html`<option value="${k}" ${state.channel === k ? 'selected' : ''}>${t}</option>`)}</select>
+      ${state.campaign ? html`<span class="chip brand" id="f-campaign" title="Clique para remover" style="cursor:pointer">${icon('x')}${state.campaign}</span>` : ''}
       <select class="select sm" id="f-alert" aria-label="Alerta"><option value="">Todos os alertas</option>${Object.entries(ALERT).map(([k, [t]]) => html`<option value="${k}" ${state.alert === k ? 'selected' : ''}>${t}</option>`)}</select>
       <label class="check small"><input type="checkbox" id="f-adj" ${state.adjusted ? 'checked' : ''}>Com ajustes</label>
       <label class="check small"><input type="checkbox" id="f-crit" ${state.critical ? 'checked' : ''}>Falha crítica</label>
@@ -90,6 +93,8 @@ export async function render(el, _p, ctx) {
   $('#f-op').onchange = (e) => { state.operator_id = e.target.value; reload(); };
   $('#f-status').onchange = (e) => { state.status = e.target.value; reload(); };
   $('#f-alert').onchange = (e) => { state.alert = e.target.value; reload(); };
+  $('#f-channel').onchange = (e) => { state.channel = e.target.value; reload(); };
+  $('#f-campaign')?.addEventListener('click', (e) => { state.campaign = ''; e.currentTarget.remove(); reload(); });
   $('#f-adj').onchange = (e) => { state.adjusted = e.target.checked; reload(); };
   $('#f-crit').onchange = (e) => { state.critical = e.target.checked; reload(); };
   $('#f-sort').onchange = (e) => { state.sort = e.target.value; reload(); };
@@ -106,7 +111,7 @@ export async function render(el, _p, ctx) {
 }
 
 function params(store) {
-  return { cycle_id: store.cycle, product: state.product, segment: state.segment, alert: state.alert, team: state.team, status: state.status, operator_id: state.operator_id, adjusted: state.adjusted ? 1 : '', critical: state.critical ? 1 : '', q: state.q, sort: state.sort };
+  return { cycle_id: store.cycle, product: state.product, segment: state.segment, channel: state.channel, campaign: state.campaign, alert: state.alert, team: state.team, status: state.status, operator_id: state.operator_id, adjusted: state.adjusted ? 1 : '', critical: state.critical ? 1 : '', q: state.q, sort: state.sort };
 }
 
 let rows = [];
