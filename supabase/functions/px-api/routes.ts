@@ -5,7 +5,7 @@ import { admin, authClient, must, count, fetchAll } from './supa.ts';
 import { getSetting, setSetting, audit, notify, loadSettings, ensureSettings } from './db.ts';
 import * as auth from './auth.ts';
 import { computeScore } from './scoring.ts';
-import { analyzeTranscript, aiConfigured } from './ai.ts';
+import { analyzeTranscript, aiConfigured, splitWithClaude } from './ai.ts';
 import { seedDemo, clearDemo } from './seed.ts';
 import { normalizeRows } from './normalize.ts';
 import { importDashboard } from './dashboard.ts';
@@ -469,6 +469,18 @@ router.post('/evaluations/:id/ai/apply', ADMIN, h(async (req, res) => {
   await recompute(id);
   if (applied.length) await audit(req.user.id, 'ia_sugestoes_aplicadas', 'evaluation', id, { alteracoes: applied });
   res.json(forUser(req, await loadEvaluation(id)));
+}));
+
+// Documento com várias transcrições fora do padrão: a IA aponta onde cada ligação começa e termina
+router.post('/transcripts/split', ADMIN, h(async (req, res) => {
+  const lines = (Array.isArray(req.body?.lines) ? req.body.lines : []).map((l) => String(l ?? '')).slice(0, 20000);
+  if (lines.length < 3) return res.status(400).json({ error: 'Documento vazio.' });
+  if (!aiConfigured()) return res.status(400).json({ error: 'Configure a chave da API da Anthropic para separar com IA.' });
+  try {
+    const out = await splitWithClaude(lines);
+    await audit(req.user.id, 'ia_separacao_documento', 'import', null, { linhas: lines.length, ligacoes: out.calls.length, arquivo: req.body?.name ? String(req.body.name).slice(0, 200) : null });
+    res.json(out);
+  } catch (e) { res.status(502).json({ error: friendlyAiError(e) }); }
 }));
 
 // Nova análise a partir de uma transcrição (sem speech prévio)
