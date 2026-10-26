@@ -13,7 +13,7 @@ const CALL_COLS = {
   disconnect: ['tipo de desconexao', 'desconexao'],
 };
 const plain = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-function mapCalls(rows) {
+export function mapCalls(rows) {
   if (!rows.length) return null;
   const heads = Object.keys(rows[0]);
   const col = Object.fromEntries(Object.entries(CALL_COLS).map(([k, al]) => [k, heads.find((h) => al.includes(plain(h)))]));

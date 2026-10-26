@@ -10,6 +10,7 @@ import { seedDemo, clearDemo } from './seed.ts';
 import { normalizeRows } from './normalize.ts';
 import { importDashboard } from './dashboard.ts';
 import { importCalls } from './discador.ts';
+import { importSpeechAgv, AGV_CODES } from './agv.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
 
@@ -24,8 +25,11 @@ const RESULTS = ['C', 'P', 'NC', 'NA'];
 // Carteiras PAN importadas dos dashboards + Refinanciamento/Entrega Amigável lançados à mão
 const PRODUCTS = ['VEICULOS', 'CARTOES', 'CONSIGNADO', 'REFIN', 'ENTREGA'];
 const SEGMENTS = { CARTOES: ['CLEAN_CURTO', 'CLEAN_LONGO'], CONSIGNADO: ['PUBLICO', 'PRIVADO'] };
-const CRITERIA_PRODUCTS = ['REFIN', 'ENTREGA', 'AMBOS', 'VEICULOS', 'SEM_GARANTIA', 'CARTOES', 'CONSIGNADO'];
+const CRITERIA_PRODUCTS = ['REFIN', 'ENTREGA', 'AMBOS', 'VEICULOS', 'SEM_GARANTIA', 'CARTOES', 'CONSIGNADO', 'AGV'];
 const CRITERIA_FOR = { REFIN: ['AMBOS', 'REFIN'], ENTREGA: ['AMBOS', 'ENTREGA'], VEICULOS: ['VEICULOS'], CARTOES: ['SEM_GARANTIA', 'CARTOES'], CONSIGNADO: ['SEM_GARANTIA', 'CONSIGNADO'] };
+// Ligações das campanhas AGV (assistente virtual que transfere para o operador) usam o roteiro AGV em qualquer carteira
+const CHANNELS = ['AGV', 'Convencional'];
+const criteriaGroups = (product, channel) => (channel === 'AGV' ? ['AGV'] : CRITERIA_FOR[product] || ['AMBOS', product]);
 
 const n = (v) => (v === undefined || v === '' ? null : v);
 const nowIso = () => new Date().toISOString();
@@ -120,6 +124,8 @@ function applyFilters(query, req, q, { cards = true } = {}) {
   if (q.cycle_id) { const l = ids(q.cycle_id); if (l.length) x = x.in('cycle_id', l); }
   if (q.product) x = x.eq('product', q.product);
   if (q.segment) x = q.segment === 'none' ? x.is('segment', null) : x.eq('segment', q.segment);
+  if (q.channel) x = q.channel === 'none' ? x.is('channel', null) : q.channel === 'Convencional' ? x.or('channel.is.null,channel.neq.AGV') : x.eq('channel', q.channel);
+  if (q.campaign) x = x.eq('campaign', q.campaign);
   if (q.operator_id) x = x.eq('operator_id', Number(q.operator_id));
   if (q.team) x = x.eq('team', q.team);
   if (q.supervisor) x = x.eq('supervisor_user_id', q.supervisor);
@@ -155,7 +161,7 @@ router.get('/meta', h(async (req, res) => {
     req.user.role === 'admin' ? count(sb().from('px_bugs').select('id', { count: 'exact', head: true }).in('status', ['aberto', 'em_analise'])) : 0,
     count(sb().from('px_notifications').select('id', { count: 'exact', head: true }).eq('user_id', req.user.id).eq('read', false)),
     // Tolerante: antes da migração de carteiras a coluna "segment" ainda não existe
-    fetchAll(() => scoped(sb().from('px_v_eval_cards').select('product, segment'), req).order('id')).catch(() => []),
+    fetchAll(() => scoped(sb().from('px_v_eval_cards').select('product, segment, channel, campaign'), req).order('id')).catch(() => []),
   ]);
   const openContests = await count(contestQuery(req, { status: 'aberta' }, { head: true })).catch(() => 0);
   const sheetErrors = req.user.role === 'supervisor' ? 0 : await count(sb().from('px_actions').select('id', { count: 'exact', head: true }).eq('sync_status', 'erro')).catch(() => 0);
@@ -168,6 +174,8 @@ router.get('/meta', h(async (req, res) => {
   }).filter((p) => p.total);
   res.json({
     cycles, operators: ops, criteria, supervisors, products, segments: SEGMENTS,
+    // Campanhas AGV com ligações (filtros da divisão AGV)
+    agv: { total: mix.filter((r) => r.channel === 'AGV').length, campaigns: [...new Set(mix.filter((r) => r.channel === 'AGV').map((r) => r.campaign).filter(Boolean))].sort() },
     teams: [...new Set(ops.map((o) => o.team).filter(Boolean))].sort(),
     ai: { configured: aiConfigured(), model: getSetting('ai_model', 'claude-opus-5-5'), auto_apply: getSetting('ai_auto_apply', '1') === '1', speech: speechConfigured() },
     company: getSetting('company_name', 'Paschoalotto'),
@@ -244,8 +252,8 @@ async function recompute(evalId) {
   return fin;
 }
 
-async function criteriaFor(product) {
-  return must(sb().from('px_criteria').select('*').eq('active', true).in('product', CRITERIA_FOR[product] || ['AMBOS', product]).order('sort').order('id'));
+async function criteriaFor(product, channel = null) {
+  return must(sb().from('px_criteria').select('*').eq('active', true).in('product', criteriaGroups(product, channel)).order('sort').order('id'));
 }
 const segmentFor = (product, segment) => ((SEGMENTS[product] || []).includes(segment) ? segment : null);
 
@@ -254,7 +262,8 @@ async function createEvaluation(b, userId) {
   if (!b.operator_id) throw httpError(400, 'Selecione o operador.');
   const op = await must(sb().from('px_operators').select('id').eq('id', Number(b.operator_id)).maybeSingle());
   if (!op) throw httpError(400, 'Operador inválido.');
-  const crit = await criteriaFor(product);
+  const channel = CHANNELS.includes(b.channel) ? b.channel : null;
+  const crit = await criteriaFor(product, channel);
   const given = new Map((b.items || []).map((i) => [Number(i.criterion_id), i]));
   const items = crit.map((c) => {
     const g = given.get(c.id) || {};
@@ -268,6 +277,7 @@ async function createEvaluation(b, userId) {
     contract: n(b.contract), customer: n(b.customer), duration_sec: intOrNull(b.duration_sec),
     audio_url: b.audio_url && isUrl(b.audio_url) ? b.audio_url : null, speech_score: speechScore, final_score: speechCalc ?? speechScore,
     speech_summary: n(b.speech_summary), transcript: n(b.transcript), transcript_name: n(b.transcript_name), created_by: userId,
+    ...(channel ? { channel } : {}), ...(b.campaign ? { campaign: String(b.campaign).slice(0, 120) } : {}),
   }).select('id').single());
   try {
     if (items.length) {
@@ -956,6 +966,54 @@ router.get('/stats/operator/:id', h(async (req, res) => {
   res.json({ operator: op, ...computeStats(mine.evals, mine.items), evaluations, feedbacks, team_avg: teamStats.kpis.avg_final, team_evolution: teamStats.evolution });
 }));
 
+// --------------------------------------------------------------- Divisão AGV
+// Dados enxutos das ligações AGV (roteiro AGV) para a tela de comparativos montar os recortes no navegador,
+// mais o confronto AGV x Convencional por carteira (cada canal no seu roteiro).
+const isDeal = (o) => /^acordo/i.test(String(o || ''));
+router.get('/agv/data', h(async (req, res) => {
+  const q = { ...req.query };
+  delete q.channel;
+  const { evals, items } = await loadStatsRows(req, q);
+  // Entram na divisão as ligações AGV avaliadas no roteiro AGV; as que vieram de dashboards antigos
+  // (roteiro de Veículos) ficam só no confronto AGV x Convencional
+  const agvItems = items.filter((i) => i.criterion_product === 'AGV');
+  const agvIds = new Set(agvItems.map((i) => i.evaluation_id));
+  const agv = evals.filter((e) => e.channel === 'AGV' && agvIds.has(e.id));
+  const criteria = await must(sb().from('px_criteria').select('id, code, name, description, stage, sort').eq('product', 'AGV').eq('active', true).order('sort'));
+  const pick = (e) => ({
+    id: e.id, cycle_id: e.cycle_id, cycle: e.cycle_name, cycle_start: e.cycle_start, product: e.product, segment: e.segment, campaign: e.campaign,
+    team: e.team, supervisor: e.supervisor_name, operator_id: e.operator_id, operator: e.operator_name, login: e.login, date: e.call_date, time: e.call_time,
+    outcome: e.outcome, tabulation: e.tabulation, score: e.final_score == null ? null : Number(e.final_score), speech: e.speech_score == null ? null : Number(e.speech_score),
+    status: e.status, alerts: e.alerts || [], duration: e.duration_sec, contest: e.contest_status || null,
+  });
+  const byEval = new Map();
+  for (const i of items) { if (!byEval.has(i.evaluation_id)) byEval.set(i.evaluation_id, []); byEval.get(i.evaluation_id).push(i); }
+  const group = (ev) => {
+    const its = ev.flatMap((e) => byEval.get(e.id) || []);
+    const scored = ev.filter((e) => e.final_score != null);
+    return {
+      total: ev.length, scored: scored.length, avg: avg(scored.map((e) => e.final_score)), adherence: adherence(its),
+      deal_rate: ev.length ? Math.round((ev.filter((e) => isDeal(e.outcome)).length / ev.length) * 1000) / 10 : null,
+      with_outcome: ev.filter((e) => e.outcome).length,
+      feedback_rate: ev.length ? Math.round((ev.filter((e) => e.status === 'feedback_aplicado').length / ev.length) * 1000) / 10 : null,
+      operators: new Set(ev.map((e) => e.operator_id)).size,
+    };
+  };
+  const channels = PRODUCTS.map((p) => {
+    const ev = evals.filter((e) => e.product === p);
+    const a = ev.filter((e) => e.channel === 'AGV'), c = ev.filter((e) => e.channel !== 'AGV');
+    return a.length && c.length ? { product: p, agv: group(a), conv: group(c) } : null;
+  }).filter(Boolean);
+  res.json({
+    criteria, codes: AGV_CODES,
+    evals: agv.map(pick),
+    // [atendimento, código, resultado final, resultado do speech, corrigido (1/0)]
+    items: agvItems.map((i) => [i.evaluation_id, i.code, i.final_result, i.speech_result, i.adjusted ? 1 : 0]),
+    channels,
+    other_roteiro: evals.filter((e) => e.channel === 'AGV' && !agvIds.has(e.id)).length,
+  });
+}));
+
 router.get('/reports/data', h(async (req, res) => {
   const q = req.query;
   const { evals, items } = await loadStatsRows(req, q);
@@ -1020,6 +1078,14 @@ router.post('/import/calls', QUALITY, h(async (req, res) => {
   const b = req.body || {};
   const out = await importCalls({ calls: b.calls, cycle_id: intOrNull(b.cycle_id) }, req.user.id);
   if (out.created || out.updated || b.last) await audit(req.user.id, 'importacao_discador', 'import', null, { ...out, arquivo: b.filename ? String(b.filename).slice(0, 200) : null, lote: b.batch || null });
+  res.json(out);
+}));
+
+// Relatório do speech "PAN TESTE DE PERGUNTAS AGV" (.xlsx): completa as ligações AGV já importadas do discador
+router.post('/import/speech-agv', QUALITY, h(async (req, res) => {
+  const b = req.body || {};
+  const out = await importSpeechAgv({ rows: b.rows }, req.user.id);
+  if (out.updated || b.last) await audit(req.user.id, 'importacao_speech_agv', 'import', null, { atualizadas: out.updated, sem_ligacao: out.unmatched.length, ignoradas: out.skipped.length, corrigidos: out.corrected, arquivo: b.filename ? String(b.filename).slice(0, 200) : null, lote: b.batch || null });
   res.json(out);
 }));
 
