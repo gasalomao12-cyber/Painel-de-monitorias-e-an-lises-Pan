@@ -67,6 +67,8 @@ export function makeRes() {
   return res;
 }
 
+const MAX_UPLOAD = 100 * 1024 * 1024;
+
 export async function makeReq(request, basePath) {
   const url = new URL(request.url);
   let path = url.pathname;
@@ -76,14 +78,24 @@ export async function makeReq(request, basePath) {
   const headers = {};
   request.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
   let body = {};
+  let raw = null;
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
-    const text = await request.text();
-    if (text) {
-      try { body = JSON.parse(text); } catch { const e = new Error('JSON inválido.'); e.status = 400; throw e; }
+    const ct = (headers['content-type'] || '').toLowerCase();
+    if (ct && !ct.includes('json') && !ct.startsWith('text/')) {
+      // Arquivo binário (ex.: áudio da ligação para transcrever)
+      const len = Number(headers['content-length'] || 0);
+      if (len > MAX_UPLOAD) { const e = new Error('Arquivo grande demais (limite de 100 MB).'); e.status = 413; throw e; }
+      raw = new Uint8Array(await request.arrayBuffer());
+      if (raw.byteLength > MAX_UPLOAD) { const e = new Error('Arquivo grande demais (limite de 100 MB).'); e.status = 413; throw e; }
+    } else {
+      const text = await request.text();
+      if (text) {
+        try { body = JSON.parse(text); } catch { const e = new Error('JSON inválido.'); e.status = 400; throw e; }
+      }
     }
   }
   return {
-    method: request.method, path, headers, body, params: {},
+    method: request.method, path, headers, body, raw, params: {},
     query: Object.fromEntries(url.searchParams.entries()),
     ip: (headers['x-forwarded-for'] || '').split(',')[0].trim() || 'desconhecido',
   };

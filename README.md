@@ -95,6 +95,17 @@ Para apontar as telas para o Supabase local, no console do navegador:
 `localStorage.setItem('px_dev_config', JSON.stringify({ supabaseUrl: 'http://127.0.0.1:54321', publishableKey: '<chave publicável local>' }))`.
 Dados fictícios para conhecer a plataforma: *Configurações › Dados › Carregar demonstração* (cria usuários fictícios **sem acesso**).
 
+## Transcrição de áudio (Azure Speech)
+O admin envia o áudio da ligação (.wav, .mp3…) no card do atendimento (**Transcrever áudio**) ou em lote na tela **Análise com IA**. O Azure Speech transcreve em português, separando operador e cliente, e a IA analisa em seguida. Áudios cujo nome traz o ID da ligação (padrão do discador) são vinculados sozinhos à monitoria já importada.
+
+Para ativar:
+1. No portal da Azure, crie um recurso **Speech** (Serviços de IA › Speech), de preferência na região do Brasil (*Brazil South*) ou na que a TI indicar.
+2. Em *Chaves e Ponto de Extremidade*, copie a **Chave 1** e a **Região**.
+3. Na plataforma, em *Configurações › Transcrição de áudio*, cole a região e a chave, salve e clique em **Testar conexão**.
+   (Alternativa: `supabase secrets set AZURE_SPEECH_KEY=... AZURE_SPEECH_ENDPOINT=brazilsouth`.)
+
+O áudio vai do servidor direto para o recurso da empresa e não é guardado na plataforma, só o texto. Limite de 100 MB por arquivo. A Azure cobra por hora de áudio transcrito.
+
 ## Importação dos dashboards de monitoria PAN (.html)
 *Importar monitorias › Dashboard de monitoria já trabalhado*: arraste o arquivo .html do dashboard da quinzena. São reconhecidos:
 - **Speech E.A. e Refin (Veículos)**: 13 itens do roteiro (postura fora da nota), ajustes de coerência com o motivo, aptidão a E.A./refin, oferta Nelson, gerência, líder, campanha, canal (AGV/convencional), tabulação, desfecho e nome do áudio.

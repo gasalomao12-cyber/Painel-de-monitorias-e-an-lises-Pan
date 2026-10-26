@@ -98,7 +98,9 @@ export async function render(el, _p, ctx) {
     state.view = b.dataset.v; localStorage.setItem('px_eval_view', state.view);
     $$('#f-view button').forEach((x) => x.classList.toggle('on', x === b)); draw(el, ctx);
   }));
-  $('#exp').onclick = async (e) => { busy(e.currentTarget, true); try { await downloadEvaluations(await api.get(`/export/evaluations${qs(params(store))}`)); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
+  $('#exp').onclick = async (e) => {
+    const btnEl = e.currentTarget;
+    busy(btnEl, true); try { await downloadEvaluations(await api.get(`/export/evaluations${qs(params(store))}`)); } catch (ex) { toast(ex.message, 'err'); } busy(btnEl, false); };
   $('#sel-mode')?.addEventListener('click', () => { state.selecting = !state.selecting; state.selected.clear(); drawBulk(el, ctx); draw(el, ctx); });
   await load(el, ctx);
 }
@@ -176,11 +178,12 @@ export function bulkAudio(ids, done) {
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="ba-ok">Aplicar</button>`,
     onMount: (m, close) => {
       $('#ba-ok', m).onclick = async (e) => {
-        busy(e.currentTarget, true);
+        const btnEl = e.currentTarget;
+        busy(btnEl, true);
         try {
           const r = await api.post('/evaluations/bulk-audio', { ids, audio_url: $('#ba-url', m).value.trim(), mode: $('#ba-only', m).checked ? 'only_empty' : 'replace' });
           toast(`${r.updated} atendimento(s) atualizados.`); close(); done?.();
-        } catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
+        } catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
   });

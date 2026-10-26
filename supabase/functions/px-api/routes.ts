@@ -9,6 +9,7 @@ import { analyzeTranscript, aiConfigured, splitWithClaude } from './ai.ts';
 import { seedDemo, clearDemo } from './seed.ts';
 import { normalizeRows } from './normalize.ts';
 import { importDashboard } from './dashboard.ts';
+import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 
 const router = new Router();
 const sb = () => admin();
@@ -165,7 +166,7 @@ router.get('/meta', h(async (req, res) => {
   res.json({
     cycles, operators: ops, criteria, supervisors, products, segments: SEGMENTS,
     teams: [...new Set(ops.map((o) => o.team).filter(Boolean))].sort(),
-    ai: { configured: aiConfigured(), model: getSetting('ai_model', 'claude-opus-5-5'), auto_apply: getSetting('ai_auto_apply', '1') === '1' },
+    ai: { configured: aiConfigured(), model: getSetting('ai_model', 'claude-opus-5-5'), auto_apply: getSetting('ai_auto_apply', '1') === '1', speech: speechConfigured() },
     company: getSetting('company_name', 'Paschoalotto'),
     counts: { pending_feedback: pendingFeedback, pending_review: pendingReview, open_bugs: openBugs, unread, open_contests: openContests },
   });
@@ -488,10 +489,26 @@ router.post('/analyses', ADMIN, h(async (req, res) => {
   const b = req.body || {};
   const { text, name } = readTranscript(b);
   if (!text.trim()) return res.status(400).json({ error: 'A transcrição está vazia.' });
+  res.json(await analyzeNew(req, b, text, name, 'transcricao'));
+}));
+
+// Nova análise a partir do áudio: Azure Speech transcreve, a IA analisa. Dados da ligação vão na URL.
+router.post('/analyses/audio', ADMIN, h(async (req, res) => {
+  const name = String(req.query.name || 'ligacao.wav').slice(0, 200);
+  const tr = await transcribeAudio(req.raw, { filename: name, contentType: req.headers['content-type'] });
+  const b = { ...req.query, duration_sec: req.query.duration_sec || tr.durationSec };
+  if (!b.audio_file) b.audio_file = name;
+  const out = await analyzeNew(req, b, tr.text, `${name} (Azure Speech)`, 'audio', tr);
+  res.json(out);
+}));
+
+async function analyzeNew(req, b, text, name, origin, speech = null) {
   const id = await createEvaluation({ ...b, transcript: text, transcript_name: name, audio_url: req.user.role === 'admin' ? b.audio_url : null }, req.user.id);
-  await audit(req.user.id, 'atendimento_criado', 'evaluation', id, { origem: 'transcricao', arquivo: name });
+  if (b.audio_file) await must(sb().from('px_evaluations').update({ audio_file: String(b.audio_file).slice(0, 300) }).eq('id', id));
+  await audit(req.user.id, 'atendimento_criado', 'evaluation', id, { origem: origin, arquivo: name });
+  if (speech) await audit(req.user.id, 'audio_transcrito', 'evaluation', id, { arquivo: name, duracao: speech.durationSec, falantes: speech.speakers, modo: speech.mode });
   try { await runAnalysis(id, req.user); }
-  catch (err) { return res.json({ ...(await loadEvaluation(id)), ai_error: err.message }); }
+  catch (err) { return { ...(await loadEvaluation(id)), ai_error: err.message }; }
   // Sem speech prévio, o resultado da IA vira a base da monitoria
   const items = await must(sb().from('px_evaluation_items').select('*').eq('evaluation_id', id));
   for (const it of items.filter((x) => x.speech_result == null && x.ai_result)) {
@@ -504,9 +521,25 @@ router.post('/analyses', ADMIN, h(async (req, res) => {
   const ev = await must(sb().from('px_evaluations').select('speech_score, ai_summary').eq('id', id).single());
   await must(sb().from('px_evaluations').update({
     speech_score: ev.speech_score ?? computeScore(full, 'speech_result').score,
-    ai_summary: { ...(ev.ai_summary || {}), applied: [], origin: 'transcricao' },
+    ai_summary: { ...(ev.ai_summary || {}), applied: [], origin },
   }).eq('id', id));
   await recompute(id);
+  return forUser(req, await loadEvaluation(id));
+}
+
+// Transcreve o áudio de uma monitoria existente (e, se pedido, já roda a análise com IA)
+router.post('/evaluations/:id/audio-transcribe', ADMIN, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const e = await must(sb().from('px_evaluations').select('id, duration_sec, audio_file').eq('id', id).maybeSingle());
+  if (!e) return res.status(404).json({ error: 'Atendimento não encontrado.' });
+  const name = String(req.query.name || 'ligacao.wav').slice(0, 200);
+  const tr = await transcribeAudio(req.raw, { filename: name, contentType: req.headers['content-type'] });
+  await must(sb().from('px_evaluations').update({
+    transcript: tr.text, transcript_name: `${name} (Azure Speech)`, ai_status: 'nao_executada', updated_at: nowIso(),
+    ...(e.duration_sec ? {} : { duration_sec: tr.durationSec }), ...(e.audio_file ? {} : { audio_file: name }),
+  }).eq('id', id));
+  await audit(req.user.id, 'audio_transcrito', 'evaluation', id, { arquivo: name, duracao: tr.durationSec, falantes: tr.speakers, modo: tr.mode, confianca: tr.confidence });
+  if (req.query.analyze === '1') return res.json(await runAnalysis(id, req.user));
   res.json(forUser(req, await loadEvaluation(id)));
 }));
 
@@ -1088,7 +1121,8 @@ router.put('/criteria/:id', ADMIN, h(async (req, res) => {
 }));
 
 // --------------------------------------------------------------- Configurações
-const SETTING_KEYS = ['company_name', 'ai_model', 'ai_effort', 'ai_auto_apply', 'ai_confidence_threshold', 'supervisor_scope', 'report_footer'];
+const SETTING_KEYS = ['company_name', 'ai_model', 'ai_effort', 'ai_auto_apply', 'ai_confidence_threshold', 'supervisor_scope', 'report_footer', 'azure_speech_endpoint', 'azure_speech_mode'];
+const SECRET_KEYS = ['anthropic_api_key', 'azure_speech_key'];
 router.get('/settings', ADMIN, h(async (req, res) => {
   await loadSettings();
   const out = Object.fromEntries(SETTING_KEYS.map((k) => [k, getSetting(k)]));
@@ -1096,6 +1130,12 @@ router.get('/settings', ADMIN, h(async (req, res) => {
   out.anthropic_api_key_set = !!key || !!Deno.env.get('ANTHROPIC_API_KEY');
   out.anthropic_api_key_source = Deno.env.get('ANTHROPIC_API_KEY') ? 'variavel_ambiente' : key ? 'banco' : null;
   out.anthropic_api_key_hint = key ? `${key.slice(0, 7)}…${key.slice(-4)}` : null;
+  const sc = speechConfig();
+  const skey = getSetting('azure_speech_key');
+  out.azure_speech_key_set = !!sc.key;
+  out.azure_speech_key_source = sc.keySource;
+  out.azure_speech_key_hint = skey ? `${skey.slice(0, 4)}…${skey.slice(-4)}` : null;
+  out.azure_speech_endpoint_env = !!Deno.env.get('AZURE_SPEECH_ENDPOINT');
   out.storage = 'Supabase';
   res.json(out);
 }));
@@ -1103,10 +1143,12 @@ router.get('/settings', ADMIN, h(async (req, res) => {
 router.put('/settings', ADMIN, h(async (req, res) => {
   const b = req.body || {};
   for (const k of SETTING_KEYS) if (b[k] !== undefined) await setSetting(k, b[k]);
-  if (b.anthropic_api_key !== undefined) await setSetting('anthropic_api_key', String(b.anthropic_api_key || '').trim() || null);
-  await audit(req.user.id, 'configuracoes_alteradas', 'settings', null, { chaves: Object.keys(b).filter((k) => k !== 'anthropic_api_key').concat(b.anthropic_api_key !== undefined ? ['anthropic_api_key (oculta)'] : []) });
+  for (const k of SECRET_KEYS) if (b[k] !== undefined) await setSetting(k, String(b[k] || '').trim() || null);
+  await audit(req.user.id, 'configuracoes_alteradas', 'settings', null, { chaves: Object.keys(b).map((k) => (SECRET_KEYS.includes(k) ? `${k} (oculta)` : k)) });
   res.json({ ok: true });
 }));
+
+router.post('/settings/speech-test', ADMIN, h(async (_req, res) => { await loadSettings(); res.json(await testSpeech()); }));
 
 router.get('/audit', ADMIN, h(async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 300, 1000);
@@ -1133,7 +1175,7 @@ router.get('/admin/backup', ADMIN, h(async (req, res) => {
   const out = { generated_at: nowIso(), source: 'PX Monitorias & Feedbacks', tables: {} };
   for (const t of BACKUP_TABLES) {
     const rows = await fetchAll(() => sb().from(t).select('*').order(t === 'px_settings' ? 'key' : 'id'));
-    out.tables[t] = t === 'px_settings' ? rows.filter((r) => r.key !== 'anthropic_api_key') : rows;
+    out.tables[t] = t === 'px_settings' ? rows.filter((r) => !SECRET_KEYS.includes(r.key)) : rows;
   }
   await audit(req.user.id, 'backup_baixado', 'settings', null);
   res.setHeader('Content-Type', 'application/json; charset=utf-8');

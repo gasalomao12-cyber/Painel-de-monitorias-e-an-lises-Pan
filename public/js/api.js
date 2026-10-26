@@ -5,13 +5,14 @@ export class ApiError extends Error {
   constructor(message, status, code) { super(message); this.status = status; this.code = code; }
 }
 
-async function request(method, url, body, { raw = false } = {}) {
+async function request(method, url, body, { raw = false, file = null } = {}) {
   const token = await accessToken();
   const headers = { apikey: window.PX_CONFIG.publishableKey };
   if (token) headers.Authorization = `Bearer ${token}`;
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (file) headers['Content-Type'] = file.type || 'application/octet-stream';
+  else if (body !== undefined) headers['Content-Type'] = 'application/json';
   let res;
-  try { res = await fetch(`${API_URL}${url}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined }); }
+  try { res = await fetch(`${API_URL}${url}`, { method, headers, body: file || (body !== undefined ? JSON.stringify(body) : undefined) }); }
   catch { throw new ApiError('Sem conexão com o servidor. Verifique sua internet.', 0); }
   if (raw && res.ok) return res;
   const ct = res.headers.get('content-type') || '';
@@ -32,6 +33,8 @@ export const api = {
   patch: (u, b = {}) => request('PATCH', u, b),
   del: (u) => request('DELETE', u),
   blob: async (u) => (await request('GET', u, undefined, { raw: true })).blob(),
+  // Envia um arquivo binário (ex.: áudio da ligação); dados extras vão na query string
+  upload: (u, file) => request('POST', u, undefined, { file }),
 };
 
 export function qs(obj) {

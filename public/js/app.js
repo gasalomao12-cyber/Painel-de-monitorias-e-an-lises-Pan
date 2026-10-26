@@ -252,14 +252,15 @@ export function openBugReport() {
       $('#b-shot', m).onchange = (e) => setShot(e.target.files[0]);
       m.addEventListener('paste', (e) => { const f = [...(e.clipboardData?.files || [])].find((x) => x.type.startsWith('image/')); if (f) setShot(f); });
       $('#b-send', m).onclick = async (e) => {
+        const btnEl = e.currentTarget;
         const f = $('#bug-form', m);
         if (!f.reportValidity()) return;
-        busy(e.currentTarget, true, 'Enviando');
+        busy(btnEl, true, 'Enviando');
         try {
           await api.post('/bugs', { title: f.title.value, description: f.description.value, severity: f.severity.value, page: location.hash, screenshot: shot });
           close(); toast('Report enviado. Obrigado por ajudar a melhorar a plataforma!');
           refreshMeta().catch(() => {});
-        } catch (err) { toast(err.message, 'err'); busy(e.currentTarget, false); }
+        } catch (err) { toast(err.message, 'err'); busy(btnEl, false); }
       };
     },
   });

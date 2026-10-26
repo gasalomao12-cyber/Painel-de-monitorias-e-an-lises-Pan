@@ -22,8 +22,8 @@ export async function render(el, _p, ctx) {
       <div class="card span-2">
         <div class="card-head"><div><h3>1. Transcrições para analisar</h3><div class="sub">Um arquivo por ligação ou um .docx com várias ligações: a plataforma separa cada uma, encontra o operador (login, nome ou arquivo de áudio) e vincula à monitoria já importada quando acha o ID da ligação. Confira antes de analisar.</div></div></div>
         <div class="card-body">
-          <label class="drop" id="ai-drop"><input type="file" id="ai-files" multiple accept=".txt,.docx,.vtt,.srt,.json,.md" hidden>
-            <div class="ic">${icon('upload')}</div><h4>Arraste as transcrições aqui</h4><p class="muted small" style="margin:0">Vários arquivos de uma vez, ou um documento com várias ligações · .docx, .txt, .vtt, .srt, .json</p></label>
+          <label class="drop" id="ai-drop"><input type="file" id="ai-files" multiple accept=".txt,.docx,.vtt,.srt,.json,.md,.wav,.mp3,.ogg,.opus,.m4a,.flac,.wma,.amr,.webm,.gsm,audio/*" hidden>
+            <div class="ic">${icon('upload')}</div><h4>Arraste as transcrições aqui</h4><p class="muted small" style="margin:0">Vários arquivos de uma vez, ou um documento com várias ligações · .docx, .txt, .vtt, .srt, .json · ou o áudio (.wav, .mp3), transcrito pelo Azure Speech</p></label>
           <div id="ai-queue" class="stack mt"></div>
           <div class="row mt" id="ai-actions" hidden><span class="small" id="ai-missing" style="color:var(--warn-ink)"></span><div style="flex:1"></div><button class="btn ghost" id="ai-clear">Limpar</button><button class="btn primary lg" id="ai-run">${icon('sparkles')}Analisar</button></div>
         </div>
@@ -88,10 +88,24 @@ function makeItem(it, ctx) {
   };
 }
 
+const AUDIO_EXT = /\.(wav|mp3|ogg|opus|m4a|flac|wma|amr|webm|gsm)$/i;
+
 async function addFiles(files, ctx) {
   const okExt = /\.(txt|docx|vtt|srt|json|md)$/i;
-  const bad = files.filter((f) => !okExt.test(f.name));
+  const bad = files.filter((f) => !okExt.test(f.name) && !AUDIO_EXT.test(f.name));
   if (bad.length) toast(`${bad.length} arquivo(s) ignorado(s): formato não suportado.`, 'err');
+  // Áudios: o nome do arquivo (ID, login, data) já identifica a ligação; a transcrição sai do Azure Speech
+  const audios = files.filter((f) => AUDIO_EXT.test(f.name));
+  if (audios.length) {
+    let d = docs.find((x) => x.audio);
+    if (!d) { d = { name: 'Áudios para transcrever', method: 'áudio', audio: true, texts: null, items: [] }; docs.push(d); }
+    for (const f of audios) {
+      const meta = metaOf(classify([{ text: f.name }]));
+      const q = makeItem({ n: d.items.length + 1, meta: { ...meta, title: f.name }, text: '' }, ctx);
+      q.audio = f;
+      d.items.push(q);
+    }
+  }
   for (const f of files.filter((x) => okExt.test(x.name))) {
     try {
       const { name, lines } = await readTranscriptLines(f);
@@ -129,6 +143,7 @@ async function splitWithAI(d, btn, ctx) {
 }
 
 function itemRow(q, di, ii, m) {
+  if (q.audio && q.status !== 'ok' && !q.text) q.preview = `Áudio · ${(q.audio.size / 1048576).toFixed(1)} MB · será transcrito pelo Azure Speech`;
   const ready = q.link || q.operator_id;
   return html`<div class="crit" data-d="${di}" data-i="${ii}" style="${q.status === 'ok' ? 'border-color:color-mix(in srgb, var(--ok) 45%, transparent)' : !ready ? 'border-color:color-mix(in srgb, var(--warn) 50%, transparent)' : ''}">
     <div class="row" style="flex-wrap:nowrap">
@@ -148,8 +163,8 @@ function itemRow(q, di, ii, m) {
         <input class="input sm" type="date" data-f="call_date" value="${q.call_date}" aria-label="Data da ligação">
         <input class="input sm" data-f="protocol" value="${q.protocol}" placeholder="Protocolo / ID da ligação" aria-label="Protocolo">
       </div>` : ''}
-      <details style="margin-top:8px"><summary class="tiny muted" style="cursor:pointer">Ver transcrição (${q.text.split('\n').length} linhas)</summary>
-        <pre class="small t2" style="white-space:pre-wrap;max-height:220px;overflow:auto;margin:6px 0 0;font-family:inherit">${q.text.slice(0, 6000)}</pre></details>` : ''}
+      ${q.audio ? html`<div class="tiny muted" style="margin-top:8px">${icon('audio')} ${q.preview}</div>` : html`<details style="margin-top:8px"><summary class="tiny muted" style="cursor:pointer">Ver transcrição (${q.text.split('\n').length} linhas)</summary>
+        <pre class="small t2" style="white-space:pre-wrap;max-height:220px;overflow:auto;margin:6px 0 0;font-family:inherit">${q.text.slice(0, 6000)}</pre></details>`}` : ''}
   </div>`;
 }
 
@@ -163,7 +178,8 @@ function drawQueue(ctx) {
   const m = ctx.store.meta;
   box.innerHTML = String(html`${docs.map((d, di) => html`<div class="card card-pad" style="background:var(--surface-2)">
     <div class="row" style="flex-wrap:nowrap;gap:8px">${icon('file')}<b class="small ellipsis" style="flex:1;min-width:0" title="${d.name}">${d.name}</b>
-      ${d.items.every((q) => q.status !== 'ok') ? html`<button class="btn sm" data-split="${di}" title="Use se a separação automática não acertou">${icon('sparkles')}Separar com IA</button><button class="btn-icon" data-rmdoc="${di}" aria-label="Remover arquivo">${icon('x')}</button>` : ''}</div>
+      ${d.audio && !ctx.store.meta.ai.speech ? html`<span class="chip warn">Azure Speech não configurado</span>` : ''}
+      ${!d.audio && d.items.every((q) => q.status !== 'ok') ? html`<button class="btn sm" data-split="${di}" title="Use se a separação automática não acertou">${icon('sparkles')}Separar com IA</button><button class="btn-icon" data-rmdoc="${di}" aria-label="Remover arquivo">${icon('x')}</button>` : ''}</div>
     <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
       <span class="chip ${d.items.length > 1 ? 'brand' : ''}">${d.items.length} ligação(ões)</span>
       <span class="chip outline" title="Como o documento foi separado">${d.method === 'IA' ? 'separado pela IA' : d.method === 'documento único' ? 'uma ligação' : `separado por ${d.method}`}</span>
@@ -185,6 +201,12 @@ function drawQueue(ctx) {
 }
 
 async function analyzeOne(q) {
+  if (q.audio) {
+    if (q.link && q.match) return api.upload(`/evaluations/${q.match.id}/audio-transcribe${qs({ name: q.audio.name, analyze: 1 })}`, q.audio);
+    const r = await api.upload(`/analyses/audio${qs({ name: q.audio.name, operator_id: q.operator_id, product: q.product, cycle_id: q.cycle_id, call_date: q.call_date, protocol: q.protocol })}`, q.audio);
+    if (r.ai_error) throw Object.assign(new Error(r.ai_error), { result: r });
+    return r;
+  }
   const tr = { name: q.title, text: q.text };
   if (q.link && q.match) {
     await api.post(`/evaluations/${q.match.id}/transcript`, tr);
@@ -196,8 +218,8 @@ async function analyzeOne(q) {
 }
 
 async function runQueue(btn, ctx) {
-  const todo = allItems().filter((q) => q.status !== 'ok' && (q.link || q.operator_id));
-  if (!todo.length) { toast('Escolha o operador das ligações antes de analisar.', 'err'); return; }
+  const todo = allItems().filter((q) => q.status !== 'ok' && (q.link || q.operator_id) && (!q.audio || ctx.store.meta.ai.speech));
+  if (!todo.length) { toast(allItems().some((q) => q.audio) && !ctx.store.meta.ai.speech ? 'Configure o Azure Speech para transcrever os áudios.' : 'Escolha o operador das ligações antes de analisar.', 'err'); return; }
   busy(btn, true, 'Analisando');
   // Até 3 análises ao mesmo tempo
   let next = 0;

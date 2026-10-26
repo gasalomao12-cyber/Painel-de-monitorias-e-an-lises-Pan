@@ -57,9 +57,10 @@ function edit(u, done, ctx) {
     onMount: (m, close) => {
       $$('input[name=role]', m).forEach((r) => r.addEventListener('change', () => $$('.theme-opt', m).forEach((o) => o.classList.toggle('on', o.contains(r) && r.checked || ($('input', o).checked)))));
       $('#u-ok', m).onclick = async (e) => {
+        const btnEl = e.currentTarget;
         const f = $('#u-form', m); if (!f.reportValidity()) return;
         const body = { name: f.name.value, email: f.email.value, role: f.role.value };
-        busy(e.currentTarget, true);
+        busy(btnEl, true);
         try {
           if (u) { await api.put(`/users/${u.id}`, { ...body, active: f.active.checked }); toast('Usuário atualizado.'); close(); }
           else {
@@ -68,7 +69,7 @@ function edit(u, done, ctx) {
             else toast('Acesso liberado. Este e-mail já tinha conta no Supabase (ex.: simulador) — a pessoa entra com a senha que já usa.', 'ok', 7000);
           }
           await ctx.refreshMeta(); done();
-        } catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
+        } catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
   });

@@ -1,4 +1,4 @@
-import { api } from '../api.js';
+import { api, qs } from '../api.js';
 import {
   html, raw, icon, $, $$, esc, fmtScore, fmtDate, fmtDur, fmtRel, avatar, productChip, scoreRing, deltaTag, resChip, toast, modal, busy,
   confirmDialog, RESULT, ROLE, userName, emptyState, parseDate, PRODUCT, SEGMENT, SEGMENTS_OF, ALERT, origLabel, CONTEST,
@@ -87,6 +87,7 @@ function draw(el, ctx) {
             : html`<button class="btn" data-goto="feedback">${icon('msgCheck')}Ver feedbacks${e.feedbacks.length ? ` (${e.feedbacks.length})` : ''}</button>`}
           ${can('supervisor', 'admin') && !openContest ? html`<button class="btn ${editor ? '' : 'primary'}" id="btn-contest">${icon('flag')}Contestar monitoria</button>` : ''}
           ${editor ? html`<button class="btn" id="btn-transcript">${icon('file')}${e.transcript ? 'Substituir transcrição' : 'Anexar transcrição'}</button>` : ''}
+          ${isAdmin ? html`<button class="btn" id="btn-audio" title="Transcrever o áudio da ligação com o Azure Speech">${icon('audio')}Transcrever áudio</button>` : ''}
           ${isAdmin ? html`<button class="btn primary" id="btn-ai" ${e.transcript ? '' : raw('disabled title="Anexe a transcrição primeiro"')}>${icon('sparkles')}${e.ai_status === 'concluida' ? 'Reanalisar com IA' : 'Analisar com IA'}</button>` : ''}
           ${e.reviewer ? html`<span class="small muted">Revisado por <b>${e.reviewer.display_name || e.reviewer.name}</b> ${fmtRel(e.reviewed_at)}</span>` : ''}
         </div>
@@ -108,6 +109,7 @@ function draw(el, ctx) {
     await api.del(`/evaluations/${e.id}`); toast('Atendimento excluído.'); ctx.refreshMeta(); ctx.navigate('atendimentos');
   });
   $('#btn-transcript', el)?.addEventListener('click', () => attachTranscript(el, ctx));
+  $('#btn-audio', el)?.addEventListener('click', () => transcribeAudioFile(el, ctx));
   $('#btn-ai', el)?.addEventListener('click', (x) => runAI(el, ctx, x.currentTarget));
   $('#edit-audio', el)?.addEventListener('click', () => editAudio(el, ctx));
   $('#edit-seg', el)?.addEventListener('click', () => editSegment(el, ctx));
@@ -170,13 +172,14 @@ function openContestForm(el, ctx) {
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="ct-ok">${icon('flag')}Enviar contestação</button>`,
     onMount: (m, close) => {
       $('#ct-ok', m).onclick = async (x) => {
+        const btnEl = x.currentTarget;
         const reason = $('#ct-reason', m).value.trim();
         if (reason.length < 15) { toast('Explique o motivo (mínimo 15 caracteres).', 'err'); return; }
-        busy(x.currentTarget, true, 'Enviando');
+        busy(btnEl, true, 'Enviando');
         try {
           ev = await api.post(`/evaluations/${ev.id}/contests`, { reason, criteria: $$('input[type=checkbox]:checked', m).map((i) => Number(i.value)) });
           close(); toast('Contestação enviada para a Qualidade.'); ctx.refreshMeta(); draw(el, ctx);
-        } catch (ex) { toast(ex.message, 'err'); busy(x.currentTarget, false); }
+        } catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
   });
@@ -191,15 +194,16 @@ function answerContest(el, ctx, id, decision) {
     foot: html`<button class="btn ghost" data-close>Voltar</button><button class="btn ${accept ? 'success' : 'danger'}" id="ct-send">${accept ? 'Aceitar' : 'Recusar'}</button>`,
     onMount: (m, close) => {
       $('#ct-send', m).onclick = async (x) => {
+        const btnEl = x.currentTarget;
         const response = $('#ct-resp', m).value.trim();
         if (response.length < 10) { toast('Escreva a resposta (mínimo 10 caracteres).', 'err'); return; }
-        busy(x.currentTarget, true);
+        busy(btnEl, true);
         try {
           ev = await api.put(`/contests/${id}`, { status: decision, response });
           close(); toast(accept ? 'Contestação aceita. Ajuste os itens na aba Análise.' : 'Contestação recusada.'); ctx.refreshMeta();
           if (accept) tab = 'analise';
           draw(el, ctx);
-        } catch (ex) { toast(ex.message, 'err'); busy(x.currentTarget, false); }
+        } catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
   });
@@ -226,9 +230,10 @@ function editSegment(el, ctx) {
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="sg-ok">Salvar</button>`,
     onMount: (m, close) => {
       $('#sg-ok', m).onclick = async (x) => {
-        busy(x.currentTarget, true);
+        const btnEl = x.currentTarget;
+        busy(btnEl, true);
         try { ev = await api.patch(`/evaluations/${ev.id}`, { segment: $('#sg-v', m).value }); close(); toast('Segmento atualizado.'); ctx.refreshMeta(); draw(el, ctx); }
-        catch (ex) { toast(ex.message, 'err'); busy(x.currentTarget, false); }
+        catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
   });
@@ -304,9 +309,10 @@ function drawAnalysis(body, el, ctx) {
     });
   });
   $('#ai-apply-all', body)?.addEventListener('click', async (x) => {
-    busy(x.currentTarget, true);
+    const btnEl = x.currentTarget;
+    busy(btnEl, true);
     try { ev = await api.post(`/evaluations/${e.id}/ai/apply`, {}); draft.clear(); toast('Sugestões aplicadas.'); draw(el, ctx); }
-    catch (ex) { toast(ex.message, 'err'); busy(x.currentTarget, false); }
+    catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
   });
   refreshBar();
 }
@@ -441,16 +447,52 @@ function attachTranscript(el, ctx) {
       ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (x) => { x.preventDefault(); drop.classList.remove('over'); }));
       drop.addEventListener('drop', (x) => setFile(x.dataTransfer.files[0]));
       $('#tr-ok', m).onclick = async (x) => {
+        const btnEl = x.currentTarget;
         const text = $('#tr-text', m).value;
         if (!file && !text.trim()) { toast('Escolha um arquivo ou cole o texto.', 'err'); return; }
-        busy(x.currentTarget, true, 'Enviando');
+        busy(btnEl, true, 'Enviando');
         try {
           const payload = file ? await readTranscriptFile(file) : { name: 'texto-colado.txt', text };
           ev = await api.post(`/evaluations/${ev.id}/transcript`, payload);
           close(); toast('Transcrição anexada.');
           tab = 'transcricao';
           if ($('#tr-run', m)?.checked) { draw(el, ctx); await runAI(el, ctx, $('#t-ai')); } else draw(el, ctx);
-        } catch (ex) { toast(ex.message, 'err'); busy(x.currentTarget, false); }
+        } catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
+      };
+    },
+  });
+}
+
+// Áudio da ligação → Azure Speech → transcrição com operador e cliente separados → (opcional) análise com IA
+function transcribeAudioFile(el, ctx) {
+  const ready = ctx.store.meta.ai.speech;
+  let file = null;
+  modal({
+    title: 'Transcrever o áudio da ligação',
+    body: html`${ready ? '' : html`<div class="banner warn">${icon('alert')}<div>O Azure Speech ainda não está configurado. <a href="#/configuracoes">Cadastre a chave e a região em Configurações</a>.</div></div>`}
+      <p class="t2" style="margin-top:0">Baixe o áudio da pasta da quinzena${ev.audio_file ? html` (arquivo <span class="file-name">${ev.audio_file}</span>)` : ''} e envie aqui. A transcrição separa operador e cliente e substitui a transcrição atual.</p>
+      <label class="drop" id="au-drop"><input type="file" id="au-file" accept="audio/*,.wav,.mp3,.ogg,.opus,.m4a,.flac,.wma,.amr,.webm" hidden>
+        <div class="ic">${icon('audio')}</div><h4>Arraste o áudio ou clique</h4><p class="muted small" style="margin:0" id="au-name">.wav, .mp3, .ogg, .m4a… até 100 MB</p></label>
+      <label class="check mt"><input type="checkbox" id="au-run" checked> Analisar com IA em seguida</label>`,
+    foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="au-ok" ${ready ? '' : 'disabled'}>${icon('audio')}Transcrever</button>`,
+    onMount: (m, close) => {
+      const drop = $('#au-drop', m);
+      const setFile = (f) => { file = f; $('#au-name', m).textContent = f ? `${f.name} · ${(f.size / 1048576).toFixed(1)} MB` : ''; };
+      $('#au-file', m).onchange = (x) => setFile(x.target.files[0]);
+      ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (x) => { x.preventDefault(); drop.classList.add('over'); }));
+      ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (x) => { x.preventDefault(); drop.classList.remove('over'); }));
+      drop.addEventListener('drop', (x) => setFile(x.dataTransfer.files[0]));
+      $('#au-ok', m).onclick = async (x) => {
+        const btnEl = x.currentTarget;
+        if (!file) { toast('Escolha o arquivo de áudio.', 'err'); return; }
+        if (file.size > 100 * 1048576) { toast('Arquivo maior que 100 MB.', 'err'); return; }
+        const analyze = $('#au-run', m).checked;
+        busy(btnEl, true, analyze ? 'Transcrevendo e analisando…' : 'Transcrevendo…');
+        try {
+          ev = await api.upload(`/evaluations/${ev.id}/audio-transcribe${qs({ name: file.name, analyze: analyze ? 1 : '' })}`, file);
+          close(); draft.clear(); toast(analyze ? 'Áudio transcrito e analisado.' : 'Áudio transcrito.');
+          tab = analyze ? 'analise' : 'transcricao'; draw(el, ctx);
+        } catch (ex) { toast(ex.message, 'err', 7000); busy(btnEl, false); }
       };
     },
   });

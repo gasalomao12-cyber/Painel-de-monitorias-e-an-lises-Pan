@@ -114,7 +114,9 @@ export async function render(el, _p, ctx) {
       </div>
     </div>
     <div id="im-prev" class="mt"></div>`);
-  $('#tpl').onclick = async (e) => { busy(e.currentTarget, true); try { await downloadTemplate(store.meta.criteria.filter((c) => c.active)); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
+  $('#tpl').onclick = async (e) => {
+    const btnEl = e.currentTarget;
+    busy(btnEl, true); try { await downloadTemplate(store.meta.criteria.filter((c) => c.active)); } catch (ex) { toast(ex.message, 'err'); } busy(btnEl, false); };
   const drop = $('#im-drop');
   const handle = async (f) => {
     if (!f) return;
@@ -161,14 +163,15 @@ function drawPreview(el, ctx) {
         <td class="small">${r.errors.map((x) => html`<div style="color:var(--bad-ink)">${x}</div>`)}${r.warnings.map((x) => html`<div class="muted">${x}</div>`)}</td></tr>`)}</tbody></table></div>
     </div></div>`);
   $('#im-go', box)?.addEventListener('click', async (e) => {
-    busy(e.currentTarget, true, 'Importando');
+    const btnEl = e.currentTarget;
+    busy(btnEl, true, 'Importando');
     try {
       const r = await api.post('/import/commit', { cycle_id: $('#im-cycle').value, rows: p.rows.filter((x) => !x.errors.length), filename: fileName });
       toast(`${r.created} monitoria(s) importada(s)${r.newOps ? ` · ${r.newOps} operador(es) cadastrado(s)` : ''}.`);
       await ctx.refreshMeta();
       if ($('#im-cycle').value) { ctx.store.cycle = $('#im-cycle').value; localStorage.setItem('px_cycle', ctx.store.cycle); }
       ctx.navigate('atendimentos');
-    } catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
+    } catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
   });
 }
 
