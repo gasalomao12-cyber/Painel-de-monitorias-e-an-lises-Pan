@@ -222,7 +222,7 @@ function secRanking(d, cyclesCols = null) {
 }
 
 function secDestaques(d) {
-  const tbl = (rows) => html`<table class="tbl"><thead><tr><th>Operador</th><th>Produto</th><th>Data</th><th class="right">Speech</th><th class="right">Final</th><th>Feedback</th></tr></thead><tbody>${rows.map((e) => html`<tr><td><b>${e.operator_name}</b></td><td>${productChip(e.product)}</td><td>${fmtDate(e.call_date)}</td><td class="right num">${fmtScore(e.speech_score)}</td><td class="right"><b class="num score-txt band-${band(e.final_score)}">${fmtScore(e.final_score)}</b></td><td>${e.status === 'feedback_aplicado' ? html`<span class="chip ok">aplicado</span>` : html`<span class="chip warn">pendente</span>`}</td></tr>`)}</tbody></table>`;
+  const tbl = (rows) => html`<table class="tbl"><thead><tr><th>Operador</th><th>Produto</th><th>Data</th><th class="right">Speech</th><th class="right">Final</th><th>Feedback</th></tr></thead><tbody>${rows.map((e) => html`<tr><td><b>${e.operator_name}</b></td><td>${productChip(e.product, e.segment)}</td><td>${fmtDate(e.call_date)}</td><td class="right num">${fmtScore(e.speech_score)}</td><td class="right"><b class="num score-txt band-${band(e.final_score)}">${fmtScore(e.final_score)}</b></td><td>${e.status === 'feedback_aplicado' ? html`<span class="chip ok">aplicado</span>` : html`<span class="chip warn">pendente</span>`}</td></tr>`)}</tbody></table>`;
   page('Destaques', 'Melhores atendimentos, pontos de atenção e feedbacks', html`
     <div class="grid g-2">
       <div class="card"><div class="card-head"><h3>${icon('award')} Melhores atendimentos</h3></div><div class="card-body">${tbl(d.highlights)}</div></div>

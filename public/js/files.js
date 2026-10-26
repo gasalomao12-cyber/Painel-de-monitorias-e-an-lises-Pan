@@ -56,7 +56,7 @@ function jsonTranscript(text) {
   } catch { return text; }
 }
 
-export async function readTranscriptFile(file) {
+export async function readTranscriptFile(file, { limit = 400000 } = {}) {
   const ext = extOf(file.name) || 'txt';
   let text;
   if (ext === 'docx') text = (await (await mammoth()).extractRawText({ arrayBuffer: await file.arrayBuffer() })).value;
@@ -64,7 +64,51 @@ export async function readTranscriptFile(file) {
   else if (ext === 'vtt' || ext === 'srt') text = cleanSubtitles(await decodeText(file));
   else if (ext === 'json') text = jsonTranscript(await decodeText(file));
   else throw new Error('Formato não suportado. Use .txt, .docx, .vtt, .srt ou .json.');
-  return { name: file.name.slice(0, 200), text: text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 400000) };
+  return { name: file.name.slice(0, 200), text: text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, limit) };
+}
+
+// Documento com uma ou várias transcrições, linha a linha. No .docx guarda quais linhas são títulos
+// (estilo de título ou parágrafo todo em negrito) e lê tabelas "hora | falante | fala" como diálogo.
+function docxLines(htmlText) {
+  const doc = new DOMParser().parseFromString(`<body>${htmlText}</body>`, 'text/html');
+  const out = [];
+  const push = (text, heading) => { for (const part of String(text).split('\n')) { const t = part.replace(/\s+/g, ' ').trim(); if (t) out.push({ text: t, heading }); } };
+  const textOf = (el) => { const c = el.cloneNode(true); c.querySelectorAll('br').forEach((br) => br.replaceWith('\n')); return c.textContent || ''; };
+  const walk = (el) => {
+    for (const node of el.children) {
+      const tag = node.tagName.toLowerCase();
+      if (/^h[1-6]$/.test(tag)) push(textOf(node), true);
+      else if (tag === 'p' || tag === 'li') {
+        const txt = textOf(node).trim();
+        const bold = [...node.querySelectorAll('strong, b')].map((b) => b.textContent).join('').replace(/\s+/g, '');
+        push(txt, !!txt && txt.length < 140 && bold.length >= txt.replace(/\s+/g, '').length * 0.9);
+      } else if (tag === 'table') {
+        for (const tr of node.querySelectorAll('tr')) {
+          const cells = [...tr.children].map((td) => textOf(td).replace(/\s+/g, ' ').trim()).filter(Boolean);
+          if (!cells.length) continue;
+          const ts = /^\[?\d{1,2}:\d{2}(:\d{2})?\]?$/.test(cells[0]);
+          if (ts && cells.length >= 3) push(`[${cells[0].replace(/[[\]]/g, '')}] ${cells[1]}: ${cells.slice(2).join(' ')}`, false);
+          else if (ts) push(`[${cells[0].replace(/[[\]]/g, '')}] ${cells.slice(1).join(' ')}`, false);
+          else if (cells.length === 2 && cells[0].length < 30) push(`${cells[0]}: ${cells[1]}`, false);
+          else push(cells.join(' — '), false);
+        }
+      } else if (['ul', 'ol', 'div', 'section'].includes(tag)) walk(node);
+      else push(textOf(node), false);
+    }
+  };
+  walk(doc.body);
+  return out;
+}
+
+export async function readTranscriptLines(file) {
+  const ext = extOf(file.name) || 'txt';
+  if (ext === 'docx') {
+    const m = await mammoth();
+    const { value } = await m.convertToHtml({ arrayBuffer: await file.arrayBuffer() });
+    return { name: file.name.slice(0, 200), lines: docxLines(value) };
+  }
+  const { text } = await readTranscriptFile(file, { limit: 5_000_000 });
+  return { name: file.name.slice(0, 200), lines: text.split('\n').map((t) => ({ text: t, heading: false })) };
 }
 
 // ---------- Planilhas ----------
