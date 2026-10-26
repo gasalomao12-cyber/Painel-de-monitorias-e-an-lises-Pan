@@ -9,6 +9,7 @@ import { analyzeTranscript, aiConfigured, splitWithClaude } from './ai.ts';
 import { seedDemo, clearDemo } from './seed.ts';
 import { normalizeRows } from './normalize.ts';
 import { importDashboard } from './dashboard.ts';
+import { importCalls } from './discador.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
 
@@ -1012,6 +1013,14 @@ router.post('/import/commit', QUALITY, h(async (req, res) => {
   }
   await audit(req.user.id, 'importacao', 'import', null, { created, newOps, ciclo: cycleId, arquivo: b.filename || null });
   res.json({ created, newOps });
+}));
+
+// Lista de ligações do discador (.csv): cria atendimentos pendentes ou completa os existentes
+router.post('/import/calls', QUALITY, h(async (req, res) => {
+  const b = req.body || {};
+  const out = await importCalls({ calls: b.calls, cycle_id: intOrNull(b.cycle_id) }, req.user.id);
+  if (out.created || out.updated || b.last) await audit(req.user.id, 'importacao_discador', 'import', null, { ...out, arquivo: b.filename ? String(b.filename).slice(0, 200) : null, lote: b.batch || null });
+  res.json(out);
 }));
 
 // Dashboards de monitoria PAN (HTML com JSON embutido): o navegador extrai o JSON e envia em lotes

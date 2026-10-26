@@ -2,6 +2,71 @@ import { api } from '../api.js';
 import { html, icon, $, toast, busy, fmtDate, fmtScore, fmtInt, PRODUCT, SEGMENT } from '../ui.js';
 import { parseSheetFile, downloadTemplate } from '../files.js';
 
+// ------------------------------------------------------------------ Lista de ligações do discador (.csv)
+// Colunas do relatório do discador → campos da plataforma (sem acento e sem diferenciar maiúsculas)
+const CALL_COLS = {
+  id: ['idcontato', 'id contato', 'id da ligacao', 'id ligacao', 'idligacao', 'callid'],
+  campaign: ['campanha'], operation: ['operacao', 'carteira'], login: ['login', 'usuario', 'agente'],
+  datetime: ['datahoraligacao', 'data hora ligacao', 'datahora', 'data/hora', 'data da ligacao'], duration: ['duracao', 'tempo'],
+  customer: ['cliente', 'nome do cliente'], tabulation: ['finalizacao', 'tabulacao'], contract: ['contrato'],
+  audio_file: ['nomedoarquivo', 'nome do arquivo', 'arquivo'], audio_original: ['nomeoriginaldoarquivo', 'nome original do arquivo'],
+  disconnect: ['tipo de desconexao', 'desconexao'],
+};
+const plain = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+function mapCalls(rows) {
+  if (!rows.length) return null;
+  const heads = Object.keys(rows[0]);
+  const col = Object.fromEntries(Object.entries(CALL_COLS).map(([k, al]) => [k, heads.find((h) => al.includes(plain(h)))]));
+  if (!col.id || !col.login || !col.datetime) return null;
+  return rows.map((r) => Object.fromEntries(Object.entries(col).filter(([, h]) => h).map(([k, h]) => [k, r[h] == null ? '' : String(r[h]).trim()])))
+    .filter((c) => c.id && c.login);
+}
+let calls = null;
+
+function drawCalls(el, ctx) {
+  const box = $('#calls-prev', el);
+  if (!calls) { box.innerHTML = ''; return; }
+  const { rows, name } = calls;
+  const by = (k) => Object.entries(rows.reduce((a, r) => { const v = r[k] || '—'; a[v] = (a[v] || 0) + 1; return a; }, {})).sort((a, b) => b[1] - a[1]);
+  const dates = rows.map((r) => r.datetime.slice(0, 10)).sort();
+  const known = new Set(ctx.store.meta.operators.map((o) => String(o.login || '').toLowerCase()).filter(Boolean));
+  const logins = [...new Set(rows.map((r) => r.login.toLowerCase()))];
+  const novos = logins.filter((l) => !known.has(l));
+  box.innerHTML = String(html`<div class="card mt"><div class="card-head"><div><h3>${fmtInt(rows.length)} ligações do discador</h3>
+      <div class="sub">${name} · ${fmtDate(dates[0])} a ${fmtDate(dates[dates.length - 1])}</div></div><div class="grow"></div>
+      <button class="btn ghost" id="calls-cancel">Cancelar</button><button class="btn primary lg" id="calls-go">${icon('upload')}Importar ${fmtInt(rows.length)} ligações</button></div>
+    <div class="card-body">
+      <div class="grid g-4">
+        <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('layers')}</span><div><b>Carteiras</b><div class="t2 small">${by('operation').map(([k, n]) => `${k}: ${n}`).join(' · ')}</div></div></div>
+        <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('users')}</span><div><b>${logins.length} operadores</b><div class="t2 small">${novos.length ? `${novos.length} login(s) novo(s) serão cadastrados: ${novos.slice(0, 6).join(', ')}${novos.length > 6 ? '…' : ''}` : 'todos já cadastrados'}</div></div></div>
+        <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('list')}</span><div><b>Tabulações</b><div class="t2 small">${by('tabulation').slice(0, 4).map(([k, n]) => `${k}: ${n}`).join(' · ')}${by('tabulation').length > 4 ? ' …' : ''}</div></div></div>
+        <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('audio')}</span><div><b>Áudios</b><div class="t2 small">${rows.filter((r) => r.audio_file).length} com nome do arquivo: ao enviar o áudio ou a transcrição, a ligação se vincula sozinha.</div></div></div>
+      </div>
+      <div class="grid g-2 mt">
+        <div class="field"><label for="calls-cycle">Quinzena de destino</label><select class="select" id="calls-cycle">
+          <option value="">Automática (pela data de cada ligação)</option>${ctx.store.meta.cycles.map((c) => html`<option value="${c.id}">${c.name}</option>`)}</select>
+          <span class="hint">Cada ligação vira um atendimento pendente de análise. Se ela já existir na plataforma (por exemplo, importada de um dashboard), só os dados que faltam são completados.</span></div>
+        <div id="calls-progress" class="small t2" style="align-self:end"></div>
+      </div>
+    </div></div>`);
+  $('#calls-cancel', box).onclick = () => { calls = null; $('#calls-name').textContent = '.csv exportado do discador'; drawCalls(el, ctx); };
+  $('#calls-go', box).onclick = async (e) => {
+    const btnEl = e.currentTarget; busy(btnEl, true, 'Importando');
+    const prog = $('#calls-progress', box);
+    const tot = { created: 0, updated: 0, skipped: 0, operators_created: 0 };
+    const size = 200;
+    try {
+      for (let i = 0; i < rows.length; i += size) {
+        prog.textContent = `Enviando ${Math.min(i + size, rows.length)} de ${rows.length}…`;
+        const r = await api.post('/import/calls', { calls: rows.slice(i, i + size), cycle_id: $('#calls-cycle', box).value || null, filename: name, batch: i / size + 1, last: i + size >= rows.length });
+        for (const k of Object.keys(tot)) tot[k] += r[k] || 0;
+      }
+      toast(`${tot.created} ligação(ões) nova(s)${tot.updated ? ` · ${tot.updated} completada(s)` : ''}${tot.skipped ? ` · ${tot.skipped} já estavam completas` : ''}${tot.operators_created ? ` · ${tot.operators_created} operador(es) cadastrado(s)` : ''}.`, 'ok', 6000);
+      calls = null; await ctx.refreshMeta(); ctx.navigate('atendimentos');
+    } catch (ex) { toast(ex.message, 'err', 7000); busy(btnEl, false); prog.textContent = ''; }
+  };
+}
+
 let preview = null, fileName = '', dash = null;
 
 // ------------------------------------------------------------------ Dashboards de monitoria PAN (.html)
@@ -90,10 +155,16 @@ function drawDash(el, ctx) {
 
 export async function render(el, _p, ctx) {
   const { store } = ctx;
-  preview = null; dash = null;
+  preview = null; dash = null; calls = null;
   const open = store.meta.cycles.find((c) => c.status === 'aberto');
   el.innerHTML = String(html`
     <div class="page-head"><div><h2>Importar monitorias</h2><p>Traga o dashboard de monitoria da quinzena (.html) ou a planilha de auditorias do speech (Excel ou CSV). Cada ligação vira um card de atendimento.</p></div></div>
+    <div class="card card-pad mb"><span class="chip brand">Discador</span><h3 style="margin:10px 0 6px">Lista de ligações do discador (.csv)</h3>
+      <p class="small t2" style="margin-top:0">O relatório de ligações exportado do discador (IdContato, Campanha, Operação, Login, Data, Duração, Finalização, Nome do arquivo…). Cada ligação entra como atendimento pendente, com o operador e a carteira certos; depois é só enviar o áudio ou a transcrição.</p>
+      <label class="drop" id="calls-drop" style="padding:20px"><input type="file" id="calls-file" accept=".csv,.txt,.xlsx" hidden>
+        <div class="ic">${icon('upload')}</div><h4>Arraste o .csv do discador ou clique</h4><p class="muted small" style="margin:0" id="calls-name">.csv exportado do discador</p></label>
+      <div id="calls-prev"></div>
+    </div>
     <div class="card card-pad mb"><span class="chip brand">Dashboard PAN</span><h3 style="margin:10px 0 6px">Dashboard de monitoria já trabalhado (.html)</h3>
       <p class="small t2" style="margin-top:0">Aceita o <b>Speech E.A. e Refin</b> (Veículos) e o <b>Roteiro Sem Garantia</b> (Cartões em Clean Curto/Longo e Consignado em Público/Privado). Vêm junto o roteiro item a item, os ajustes de coerência com o motivo, líder e gerência, tabulação, desfecho, aptidão a E.A./refin, alertas de sigilo e conduta, transcrição, resumo e feedback sugerido.</p>
       <label class="drop" id="dash-drop" style="padding:20px"><input type="file" id="dash-file" accept=".html,.htm" hidden>
@@ -132,6 +203,24 @@ export async function render(el, _p, ctx) {
   ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
   ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
   drop.addEventListener('drop', (e) => handle(e.dataTransfer.files[0]));
+
+  const cdrop = $('#calls-drop');
+  const handleCalls = async (f) => {
+    if (!f) return;
+    $('#calls-name').textContent = `${f.name} · lendo…`;
+    try {
+      const rows = mapCalls(await parseSheetFile(f));
+      if (!rows) throw new Error('Não reconheci as colunas do discador (precisa de IdContato, Login e DataHoraLigacao).');
+      if (!rows.length) throw new Error('O arquivo não tem ligações.');
+      calls = { name: f.name, rows };
+      $('#calls-name').textContent = `${f.name} · ${rows.length} ligações`;
+    } catch (ex) { calls = null; toast(ex.message, 'err', 7000); $('#calls-name').textContent = '.csv exportado do discador'; }
+    drawCalls(el, ctx);
+  };
+  $('#calls-file').onchange = (e) => handleCalls(e.target.files[0]);
+  ['dragenter', 'dragover'].forEach((t) => cdrop.addEventListener(t, (e) => { e.preventDefault(); cdrop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((t) => cdrop.addEventListener(t, (e) => { e.preventDefault(); cdrop.classList.remove('over'); }));
+  cdrop.addEventListener('drop', (e) => handleCalls(e.dataTransfer.files[0]));
 
   const ddrop = $('#dash-drop');
   const handleDash = async (f) => {
@@ -175,4 +264,4 @@ function drawPreview(el, ctx) {
   });
 }
 
-export const hasUnsavedChanges = () => !!preview || !!dash;
+export const hasUnsavedChanges = () => !!preview || !!dash || !!calls;
