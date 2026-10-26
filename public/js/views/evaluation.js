@@ -1,8 +1,9 @@
 import { api } from '../api.js';
 import {
   html, raw, icon, $, $$, esc, fmtScore, fmtDate, fmtDur, fmtRel, avatar, productChip, scoreRing, deltaTag, resChip, toast, modal, busy,
-  confirmDialog, readFileAsBase64, RESULT, ROLE, userName, emptyState, parseDate,
+  confirmDialog, RESULT, ROLE, userName, emptyState, parseDate,
 } from '../ui.js';
+import { readTranscriptFile } from '../files.js';
 
 const PARTIAL = 0.5;
 function previewScore(items, pick) {
@@ -330,7 +331,7 @@ function attachTranscript(el, ctx) {
         if (!file && !text.trim()) { toast('Escolha um arquivo ou cole o texto.', 'err'); return; }
         busy(x.currentTarget, true, 'Enviando');
         try {
-          const payload = file ? { name: file.name, base64: await readFileAsBase64(file) } : { name: 'texto-colado.txt', text };
+          const payload = file ? await readTranscriptFile(file) : { name: 'texto-colado.txt', text };
           ev = await api.post(`/evaluations/${ev.id}/transcript`, payload);
           close(); toast('Transcrição anexada.');
           tab = 'transcricao';
@@ -497,4 +498,11 @@ function drawHistory(body) {
     </div>`;
   })}</div></div>`);
   void raw; void userName;
+}
+
+// Evita que a atualização em tempo real descarte ajustes ou um feedback em edição
+export function hasUnsavedChanges() {
+  if (draft.size) return true;
+  const fb = document.querySelector('#fb-form');
+  return !!(fb && [...fb.querySelectorAll('textarea')].some((t) => t.value.trim() && t.value !== t.defaultValue));
 }

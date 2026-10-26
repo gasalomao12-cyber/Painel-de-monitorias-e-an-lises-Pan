@@ -1,4 +1,5 @@
-import { api, qs, download } from '../api.js';
+import { api, qs } from '../api.js';
+import { downloadEvaluations } from '../files.js';
 import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, scoreRing, deltaTag, emptyState, toast, modal, busy, debounce, STATUS, userName } from '../ui.js';
 import { filterBar, bindFilterBar } from './dashboard.js';
 import { palette } from '../charts.js';
@@ -88,7 +89,7 @@ export async function render(el, _p, ctx) {
     state.view = b.dataset.v; localStorage.setItem('px_eval_view', state.view);
     $$('#f-view button').forEach((x) => x.classList.toggle('on', x === b)); draw(el, ctx);
   }));
-  $('#exp').onclick = async (e) => { busy(e.currentTarget, true); try { await download(`/export/evaluations.xlsx${qs(params(store))}`, 'atendimentos-px.xlsx'); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
+  $('#exp').onclick = async (e) => { busy(e.currentTarget, true); try { await downloadEvaluations(await api.get(`/export/evaluations${qs(params(store))}`)); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
   $('#sel-mode')?.addEventListener('click', () => { state.selecting = !state.selecting; state.selected.clear(); drawBulk(el, ctx); draw(el, ctx); });
   await load(el, ctx);
 }

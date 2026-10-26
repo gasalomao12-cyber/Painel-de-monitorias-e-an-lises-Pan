@@ -86,6 +86,9 @@ export async function render(el, _p, ctx) {
     if (cfg.type === 'individual' && !cfg.operator_id) return toast('Selecione o operador.', 'err');
     localStorage.setItem('px_report_cfg', JSON.stringify({ ...cfg, title: '' }));
     const p = new URLSearchParams({ type: cfg.type, cycles: cfg.cycles.join(','), product: cfg.product, team: cfg.team, operator_id: cfg.operator_id, theme: cfg.theme, title: cfg.title, subtitle: cfg.subtitle, sections: cfg.sections.join(',') });
-    window.open(`/report.html?${p}`, '_blank', 'noopener');
+    window.open(`report.html?${p}`, '_blank', 'noopener');
   };
 }
+
+// Tela de configuração: não recarrega sozinha
+export const hasUnsavedChanges = () => true;

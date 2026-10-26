@@ -1,5 +1,6 @@
-import { api, download } from '../api.js';
-import { html, icon, $, toast, busy, readFileAsBase64, fmtDate, fmtScore, PRODUCT } from '../ui.js';
+import { api } from '../api.js';
+import { html, icon, $, toast, busy, fmtDate, fmtScore, PRODUCT } from '../ui.js';
+import { parseSheetFile, downloadTemplate } from '../files.js';
 
 let preview = null, fileName = '';
 
@@ -22,14 +23,14 @@ export async function render(el, _p, ctx) {
       </div>
     </div>
     <div id="im-prev" class="mt"></div>`);
-  $('#tpl').onclick = async (e) => { busy(e.currentTarget, true); try { await download('/import/template', 'modelo-importacao-px.xlsx'); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
+  $('#tpl').onclick = async (e) => { busy(e.currentTarget, true); try { await downloadTemplate(store.meta.criteria.filter((c) => c.active)); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
   const drop = $('#im-drop');
   const handle = async (f) => {
     if (!f) return;
     fileName = f.name;
     $('#im-name').textContent = `${f.name} · lendo…`;
     try {
-      preview = await api.post('/import/preview', { name: f.name, base64: await readFileAsBase64(f) });
+      preview = await api.post('/import/preview', { rows: await parseSheetFile(f) });
       $('#im-name').textContent = `${f.name} · ${preview.summary.total} linha(s)`;
       drawPreview(el, ctx);
     } catch (ex) { toast(ex.message, 'err'); $('#im-name').textContent = '.xlsx ou .csv'; }
@@ -67,3 +68,5 @@ function drawPreview(el, ctx) {
     } catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
   });
 }
+
+export const hasUnsavedChanges = () => !!preview;

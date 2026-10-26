@@ -1,5 +1,6 @@
 import { api, qs } from '../api.js';
-import { html, icon, $, $$, toast, busy, readFileAsBase64, fmtDate, fmtScore, avatar, productChip, emptyState } from '../ui.js';
+import { html, icon, $, $$, toast, busy, fmtDate, fmtScore, avatar, productChip, emptyState } from '../ui.js';
+import { readTranscriptFile } from '../files.js';
 
 let queue = [];
 let evals = [];
@@ -134,12 +135,12 @@ async function runQueue(btn, ctx) {
   for (const q of todo) {
     q.status = 'processando'; q.error = null; drawQueue(ctx);
     try {
-      const base64 = await readFileAsBase64(q.file);
+      const tr = await readTranscriptFile(q.file);
       if (q.link && q.match) {
-        await api.post(`/evaluations/${q.match.id}/transcript`, { name: q.file.name, base64 });
+        await api.post(`/evaluations/${q.match.id}/transcript`, tr);
         q.result = await api.post(`/evaluations/${q.match.id}/analyze`);
       } else {
-        q.result = await api.post('/analyses', { name: q.file.name, base64, operator_id: q.operator_id, product: q.product, cycle_id: q.cycle_id, call_date: q.call_date, protocol: q.protocol, origin: 'transcricao' });
+        q.result = await api.post('/analyses', { ...tr, operator_id: q.operator_id, product: q.product, cycle_id: q.cycle_id, call_date: q.call_date, protocol: q.protocol, origin: 'transcricao' });
         if (q.result.ai_error) throw new Error(q.result.ai_error);
       }
       q.status = 'ok';
@@ -153,3 +154,5 @@ async function runQueue(btn, ctx) {
   ctx.refreshMeta();
   void emptyState;
 }
+
+export const hasUnsavedChanges = () => queue.length > 0;

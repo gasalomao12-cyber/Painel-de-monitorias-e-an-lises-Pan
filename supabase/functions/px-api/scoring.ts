@@ -1,4 +1,4 @@
-'use strict';
+// @ts-nocheck — portado do servidor Node; tipagem frouxa de propósito
 // Regra de nota: Conforme = 100% do peso, Parcial = 50%, Não conforme = 0, N/A sai da base.
 // Critério marcado como crítico em "Não conforme" zera a nota (falha grave).
 
@@ -28,4 +28,4 @@ function band(score) {
   return 'critico';
 }
 
-module.exports = { computeScore, band, PARTIAL_FACTOR };
+export { computeScore, band, PARTIAL_FACTOR };

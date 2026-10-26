@@ -1,7 +1,8 @@
 import { api } from './api.js';
+import { sb } from './sb.js';
 import { html, raw, icon, pxLogo, $, $$, toast, modal, avatar, userName, ROLE, esc, busy, readFileAsBase64, fmtRel } from './ui.js';
 import { destroyAll } from './charts.js';
-import { renderLogin, renderChangePassword, renderWelcome, renderRecover } from './views/auth.js';
+import { renderLogin, renderChangePassword, renderWelcome } from './views/auth.js';
 
 const app = document.getElementById('app');
 export const store = { user: null, meta: null, company: 'Paschoalotto', cycle: localStorage.getItem('px_cycle') || '' };
@@ -83,9 +84,23 @@ function updateCounts() {
   if (dot) { const u = store.meta.counts.unread; dot.textContent = u > 9 ? '9+' : u; dot.hidden = !u; }
 }
 
+// Menu lateral: recolhe sozinho em telas estreitas; a escolha manual vale por tipo de tela
+const sidebarKey = () => `px_sidebar_${document.documentElement.dataset.narrow === '1' ? 'narrow' : 'wide'}`;
+function sidebarCollapsed() {
+  const p = localStorage.getItem(sidebarKey());
+  return p ? p === 'collapsed' : document.documentElement.dataset.narrow === '1';
+}
+// Posição de um elemento em coordenadas CSS da página (o zoom da interface muda a escala)
+function anchorRect(el) {
+  const z = window.PX_ZOOM?.get() || 1;
+  const r = el.getBoundingClientRect();
+  return { top: (r.top + window.scrollY) / z, bottom: (r.bottom + window.scrollY) / z, left: r.left / z, right: r.right / z, vw: window.innerWidth / z };
+}
+const zoomLabel = () => `${Math.round((window.PX_ZOOM?.get() || 1) * 100)}%`;
+
 function shell() {
   const u = store.user;
-  const collapsed = localStorage.getItem('px_sidebar') === 'collapsed';
+  const collapsed = sidebarCollapsed();
   const navHtml = NAV.filter((n) => !n.roles || n.roles.includes(u.role)).map((n) => n.sec
     ? html`<div class="sb-sec">${n.sec}</div>`
     : html`<a class="sb-link" href="#/${n.id}" data-nav="${n.id}" title="${n.id === 'bugs' && u.role !== 'admin' ? 'Meus reports' : n.label}">${icon(n.icon)}<span>${n.id === 'bugs' && u.role !== 'admin' ? 'Meus reports de bug' : n.label}</span>${n.count ? html`<b class="count ${n.hot ? 'hot' : ''}" data-count="${n.count}" hidden></b>` : ''}</a>`);
@@ -115,6 +130,8 @@ function shell() {
         <div style="min-width:0"><div class="crumb" id="page-crumb"></div><h1 id="page-title">PX</h1></div>
         <div class="grow"></div>
         <label class="search"><span class="sr-only">Buscar</span>${icon('search')}<input id="global-search" placeholder="Buscar operador, protocolo, página…" autocomplete="off"><kbd>Ctrl K</kbd></label>
+        <button class="btn-icon zoom-btn" id="zoom-btn" title="Tamanho da tela" aria-label="Tamanho da tela">${icon('zoom')}<span id="zoom-label">${zoomLabel()}</span></button>
+        <span class="live-dot" id="live-dot" data-on="0" title="Conectando…"><i></i><span>Ao vivo</span></span>
         <button class="btn-icon" id="notif-btn" aria-label="Notificações" title="Notificações">${icon('bell')}<b class="dot" id="notif-dot" hidden></b></button>
         <button class="btn sm ghost" id="bug-top" title="Reportar um problema">${icon('bug')}<span class="nowrap">Reportar bug</span></button>
       </header>
@@ -125,8 +142,10 @@ function shell() {
 
   $('#sb-toggle').onclick = () => {
     const s = $('#shell'); s.classList.toggle('collapsed');
-    localStorage.setItem('px_sidebar', s.classList.contains('collapsed') ? 'collapsed' : 'open');
+    localStorage.setItem(sidebarKey(), s.classList.contains('collapsed') ? 'collapsed' : 'open');
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 320);
   };
+  $('#zoom-btn').onclick = (e) => openZoom(e.currentTarget);
   $('#nav-open').onclick = () => $('#shell').classList.add('nav-open');
   $('#shell').addEventListener('click', (e) => {
     if (e.target.id === 'shell' || e.target.closest('.sb-link')) $('#shell').classList.remove('nav-open');
@@ -148,14 +167,15 @@ function shell() {
 }
 
 async function logout() {
-  await api.post('/auth/logout').catch(() => {});
   store.user = null; store.meta = null;
+  await sb.auth.signOut().catch(() => {});
   location.hash = '';
   start();
 }
 
 let routeToken = 0;
-export async function route() {
+let currentView = null;
+export async function route(opts = {}) {
   if (!store.user) return;
   const path = location.hash.replace(/^#\/?/, '') || 'painel';
   const found = ROUTES.find(([re]) => re.test(path));
@@ -168,8 +188,24 @@ export async function route() {
     a.classList.toggle('active', path === id || (path.startsWith(id + '/') && id !== 'feedbacks'));
   });
   const token = ++routeToken;
-  destroyAll();
   const view = $('#view');
+  const keepScroll = opts.silent ? window.scrollY : 0;
+  if (opts.silent) {
+    // Atualização em tempo real: renderiza fora da tela e troca sem piscar
+    try {
+      const mod = await loader();
+      if (token !== routeToken) return;
+      const tmp = document.createElement('main');
+      tmp.className = view.className; tmp.id = 'view'; tmp.style.animation = 'none';
+      destroyAll();
+      view.replaceWith(tmp);
+      await mod.render(tmp, params, { store, can, navigate, refreshMeta, setTitle, isCurrent: () => token === routeToken });
+      currentView = mod;
+      window.scrollTo({ top: keepScroll });
+    } catch (err) { console.error(err); }
+    return;
+  }
+  destroyAll();
   view.innerHTML = '<div class="grid g-4"><div class="skeleton" style="height:120px"></div><div class="skeleton" style="height:120px"></div><div class="skeleton" style="height:120px"></div><div class="skeleton" style="height:120px"></div></div><div class="skeleton mt" style="height:340px"></div>';
   setTitle(title);
   try {
@@ -177,6 +213,7 @@ export async function route() {
     if (token !== routeToken) return;
     view.style.animation = 'none'; void view.offsetWidth; view.style.animation = '';
     await mod.render(view, params, { store, can, navigate, refreshMeta, setTitle, isCurrent: () => token === routeToken });
+    currentView = mod;
     window.scrollTo({ top: 0 });
   } catch (err) {
     console.error(err);
@@ -233,9 +270,9 @@ async function openNotifications(anchor) {
   const list = await api.get('/notifications').catch(() => []);
   const pop = document.createElement('div');
   pop.className = 'popover notif';
-  const r = anchor.getBoundingClientRect();
-  pop.style.top = `${r.bottom + 8 + window.scrollY}px`;
-  pop.style.right = `${Math.max(12, window.innerWidth - r.right)}px`;
+  const r = anchorRect(anchor);
+  pop.style.top = `${r.bottom + 8}px`;
+  pop.style.right = `${Math.max(12, r.vw - r.right)}px`;
   pop.innerHTML = String(html`<div class="p-head"><span class="grow">Notificações</span>${list.some((n) => !n.read) ? html`<button class="btn sm ghost" id="n-read">Marcar como lidas</button>` : ''}</div>
     <div class="p-list">${list.length ? list.map((n) => html`<a class="p-item ${n.read ? '' : 'unread'}" href="${n.link || '#/painel'}"><b>${n.title}</b><div class="t2">${n.body || ''}</div><small>${fmtRel(n.created_at)}</small></a>`) : html`<div class="empty" style="padding:28px">Nada por aqui ainda.</div>`}</div>`);
   document.body.appendChild(pop);
@@ -244,6 +281,44 @@ async function openNotifications(anchor) {
   pop.addEventListener('click', (e) => { if (e.target.closest('a')) pop.remove(); });
   $('#n-read', pop)?.addEventListener('click', async () => { await api.post('/notifications/read'); pop.remove(); refreshMeta(); });
 }
+
+// ---------------- Tamanho da tela (zoom) ----------------
+const ZOOM_STEPS = [0.8, 0.9, 1, 1.1, 1.2, 1.3];
+function openZoom(anchor) {
+  const existing = $('.popover.zoom-pop');
+  if (existing) { existing.remove(); return; }
+  const pop = document.createElement('div');
+  pop.className = 'popover zoom-pop';
+  const r = anchorRect(anchor);
+  pop.style.top = `${r.bottom + 8}px`;
+  pop.style.right = `${Math.max(12, r.vw - r.right)}px`;
+  const paint = () => {
+    const pref = window.PX_ZOOM.pref();
+    const cur = window.PX_ZOOM.get();
+    pop.innerHTML = String(html`<div class="p-head"><span class="grow">Tamanho da tela</span></div>
+      <div class="p-body">
+        <div class="zrow"><button class="btn-icon" data-z="-" aria-label="Diminuir">${icon('minus')}</button><span class="zval">${Math.round(cur * 100)}%</span><button class="btn-icon" data-z="+" aria-label="Aumentar">${icon('plus')}</button></div>
+        <div class="zsteps">${ZOOM_STEPS.map((z) => html`<button data-zv="${z}" class="${pref !== 'auto' && Number(pref) === z ? 'on' : ''}">${Math.round(z * 100)}%</button>`)}</div>
+        <label class="switch"><input type="checkbox" id="z-auto" ${pref === 'auto' ? 'checked' : ''}> Ajustar automaticamente à tela</label>
+        <p class="tiny muted" style="margin:0">No automático, a plataforma se adapta à resolução (notebook, monitor Full HD ou telas grandes). A escolha fica salva neste computador.</p>
+      </div>`);
+    const set = (v) => { window.PX_ZOOM.set(v); paint(); };
+    $$('[data-zv]', pop).forEach((b) => b.addEventListener('click', () => set(b.dataset.zv)));
+    $('[data-z="-"]', pop).onclick = () => set(ZOOM_STEPS.slice().reverse().find((z) => z < cur - 0.001) ?? ZOOM_STEPS[0]);
+    $('[data-z="+"]', pop).onclick = () => set(ZOOM_STEPS.find((z) => z > cur + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1]);
+    $('#z-auto', pop).onchange = (e) => set(e.target.checked ? 'auto' : String(cur));
+  };
+  paint();
+  document.body.appendChild(pop);
+  const close = (e) => { if (!pop.contains(e.target) && !anchor.contains(e.target)) { pop.remove(); document.removeEventListener('mousedown', close); } };
+  setTimeout(() => document.addEventListener('mousedown', close), 0);
+}
+// Ao trocar a escala (ou redimensionar a janela), atualiza o rótulo e o menu automático
+window.addEventListener('px:zoom', () => {
+  const l = $('#zoom-label'); if (l) l.textContent = zoomLabel();
+  const s = $('#shell'); if (s) s.classList.toggle('collapsed', sidebarCollapsed());
+  $('.popover.notif')?.remove();
+});
 
 // ---------------- Paleta de comandos (Ctrl+K) ----------------
 function openPalette() {
@@ -282,24 +357,78 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && store.user && store.user.onboarded && !store.user.must_change_password) { e.preventDefault(); openPalette(); }
 });
 
+// ---------------- Tempo real ----------------
+// O banco avisa no canal "px-updates" quando algo muda; a tela atual recarrega sozinha
+// (sem atrapalhar quem está digitando ou com uma janela aberta).
+let rtChannel = null;
+let pendingRefresh = false;
+function setLive(on) {
+  const el = $('#live-dot');
+  if (el) { el.dataset.on = on ? '1' : '0'; el.title = on ? 'Conectado em tempo real' : 'Reconectando…'; }
+}
+function canRefreshNow() {
+  if (document.hidden || $('.overlay') || $('.popover')) return false;
+  const a = document.activeElement;
+  if (a && a.closest && a.closest('#view') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return false;
+  return !currentView?.hasUnsavedChanges?.();
+}
+const refreshSoon = (() => {
+  let t;
+  return () => { clearTimeout(t); t = setTimeout(applyRemoteChange, 900); };
+})();
+async function applyRemoteChange() {
+  if (!store.user || !store.meta) return;
+  await refreshMeta().catch(() => {});
+  if (canRefreshNow()) { pendingRefresh = false; $('#live-pill')?.remove(); route({ silent: true }); }
+  else showUpdatePill();
+}
+function showUpdatePill() {
+  pendingRefresh = true;
+  if ($('#live-pill')) return;
+  const b = document.createElement('button');
+  b.id = 'live-pill'; b.className = 'live-pill';
+  b.innerHTML = String(html`${icon('refresh')}Há atualizações · recarregar`);
+  b.onclick = () => { b.remove(); pendingRefresh = false; route({ silent: true }); };
+  document.body.appendChild(b);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && pendingRefresh && canRefreshNow()) { pendingRefresh = false; $('#live-pill')?.remove(); refreshMeta().catch(() => {}); route({ silent: true }); } });
+function subscribeRealtime() {
+  if (rtChannel) return;
+  rtChannel = sb.channel('px-updates')
+    .on('broadcast', { event: 'change' }, () => refreshSoon())
+    .subscribe((status) => setLive(status === 'SUBSCRIBED'));
+}
+function unsubscribeRealtime() {
+  if (rtChannel) { sb.removeChannel(rtChannel); rtChannel = null; }
+}
+
 // ---------------- Inicialização ----------------
-export async function start() {
+export async function start(opts = {}) {
   const boot = document.getElementById('boot');
-  if (location.pathname === '/redefinir-senha') { boot?.classList.add('hide'); renderRecover(app, { onDone: start }); return; }
-  try {
-    const me = await api.get('/auth/me');
-    store.company = me.company || store.company;
-    store.user = me.user;
-  } catch { store.user = null; }
+  const { data } = await sb.auth.getSession();
+  let loginError = '';
+  store.user = null;
+  if (data.session) {
+    try {
+      const me = await api.get(`/auth/me${opts.fresh ? '?login=1' : ''}`);
+      store.company = me.company || store.company;
+      store.user = me.user;
+    } catch (e) {
+      if (e.status === 403 || e.code === 'NO_PROFILE') { loginError = e.message; await sb.auth.signOut().catch(() => {}); }
+      else if (e.status !== 401) loginError = e.message;
+    }
+  }
   boot?.classList.add('hide');
-  if (!store.user) { renderLogin(app, { onLogin: start, store }); return; }
+  if (!store.user) { unsubscribeRealtime(); renderLogin(app, { onLogin: start, store, error: loginError }); return; }
   applyTheme(store.user.theme);
   if (store.user.must_change_password) { renderChangePassword(app, { store, onDone: start, onLogout: logout }); return; }
   if (!store.user.onboarded) { renderWelcome(app, { store, onDone: start }); return; }
   await refreshMeta();
   shell();
+  subscribeRealtime();
   route();
 }
+sb.auth.onAuthStateChange((event) => { if (event === 'SIGNED_OUT' && store.user) { store.user = null; start(); } });
 
 window.addEventListener('hashchange', route);
 window.addEventListener('px:unauthorized', () => { if (store.user) { store.user = null; toast('Sua sessão expirou. Entre novamente.', 'err'); start(); } });
@@ -307,7 +436,7 @@ window.addEventListener('px:must-change-password', () => start());
 setInterval(() => { if (store.user && store.meta && document.visibilityState === 'visible') refreshMeta().catch(() => {}); }, 60000);
 
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); store.installPrompt = e; });
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 
 start();
 void raw;

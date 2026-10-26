@@ -1,8 +1,8 @@
-'use strict';
-const { admin, must, fetchAll } = require('./supa');
-const { getSetting, setSetting } = require('./db');
-const { computeScore } = require('./scoring');
-const { findAuthUserByEmail, validatePassword } = require('./auth');
+// @ts-nocheck — portado do servidor Node; tipagem frouxa de propósito
+import { admin, must, fetchAll } from './supa.ts';
+import { getSetting, setSetting } from './db.ts';
+import { computeScore } from './scoring.ts';
+import { findAuthUserByEmail, tempPassword } from './auth.ts';
 
 const DEFAULT_CRITERIA = [
   // Comuns aos dois produtos
@@ -29,47 +29,6 @@ const DEFAULT_CRITERIA = [
   ['ENTREGA', 'EFO', 'Formalização da entrega', 'Confirmou o aceite e explicou a assinatura do termo de entrega.', 1.5, 0],
 ];
 
-
-async function seedBase() {
-  const sb = admin();
-  const hasCriteria = await must(sb.from('px_criteria').select('id').limit(1));
-  if (!hasCriteria.length) {
-    await must(sb.from('px_criteria').insert(DEFAULT_CRITERIA.map((c, i) => ({
-      product: c[0], code: c[1], name: c[2], description: c[3], weight: c[4], critical: !!c[5], sort: i + 1,
-    }))));
-  }
-  await ensureAdmin();
-  if (getSetting('company_name') == null) await setSetting('company_name', 'Paschoalotto');
-  if (getSetting('ai_model') == null) await setSetting('ai_model', 'claude-opus-5-5');
-  if (getSetting('ai_effort') == null) await setSetting('ai_effort', 'high');
-}
-
-// Garante o primeiro administrador a partir de ADMIN_EMAIL / ADMIN_PASSWORD
-async function ensureAdmin() {
-  const sb = admin();
-  const admins = await must(sb.from('px_profiles').select('id').eq('role', 'admin').limit(1));
-  if (admins.length) return;
-  const email = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
-  if (!email) {
-    console.warn('\n  ⚠ Nenhum administrador cadastrado. Defina ADMIN_EMAIL (e ADMIN_PASSWORD) e reinicie o servidor.\n');
-    return;
-  }
-  let user = await findAuthUserByEmail(email);
-  let mustChange = false;
-  if (!user) {
-    const password = process.env.ADMIN_PASSWORD;
-    const err = validatePassword(password);
-    if (err) { console.warn(`\n  ⚠ ADMIN_PASSWORD inválida para criar o administrador: ${err}\n`); return; }
-    const { data, error } = await sb.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name: 'Administrador' } });
-    if (error) throw error;
-    user = data.user;
-    mustChange = true;
-    console.log(`\n  ▸ Administrador criado no Supabase Auth: ${email} (troca de senha obrigatória no 1º acesso).\n`);
-  } else {
-    console.log(`\n  ▸ Administrador vinculado a um usuário já existente no Supabase Auth: ${email} (use a senha atual dele).\n`);
-  }
-  await must(sb.from('px_profiles').upsert({ id: user.id, email, name: user.user_metadata?.name || 'Administrador', role: 'admin', must_change_password: mustChange }));
-}
 
 function prng(seed) {
   let s = seed >>> 0;
@@ -139,18 +98,18 @@ async function demoUser(username, name, role) {
   const email = `${username}@${DEMO_DOMAIN}`;
   let user = await findAuthUserByEmail(email);
   if (!user) {
-    const { data, error } = await sb.auth.admin.createUser({ email, password: 'Px@2026demo', email_confirm: true, user_metadata: { name } });
+    // Usuários fictícios só aparecem como autores nos dados de exemplo: senha aleatória e conta bloqueada
+    const { data, error } = await sb.auth.admin.createUser({ email, password: tempPassword() + tempPassword(), email_confirm: true, ban_duration: '876000h', user_metadata: { name } });
     if (error) throw error;
     user = data.user;
   }
-  await must(sb.from('px_profiles').upsert({ id: user.id, email, name, role, must_change_password: true }));
+  await must(sb.from('px_profiles').upsert({ id: user.id, email, name, role, must_change_password: true, active: false }));
   return user.id;
 }
 
 async function seedDemo() {
-  if (getSetting('demo_seeded') === '1') return;
   const sb = admin();
-  if ((await must(sb.from('px_evaluations').select('id').limit(1))).length) { await setSetting('demo_seeded', '1'); return; }
+  if ((await must(sb.from('px_evaluations').select('id').eq('is_demo', true).limit(1))).length) return;
 
   const rnd = prng(20261024);
   const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
@@ -264,7 +223,7 @@ async function seedDemo() {
     if (fbs.length) await must(sb.from('px_feedbacks').insert(fbs));
   }
   await setSetting('demo_seeded', '1');
-  console.log(`  ▸ Dados de demonstração carregados (${plans.length} monitorias; usuários *@${DEMO_DOMAIN}, senha Px@2026demo).`);
+  console.log(`  ▸ Dados de demonstração carregados (${plans.length} monitorias; usuários fictícios *@${DEMO_DOMAIN}, sem acesso).`);
 }
 
 async function clearDemo() {
@@ -284,4 +243,4 @@ async function clearDemo() {
   }
 }
 
-module.exports = { seedBase, seedDemo, clearDemo, SAMPLE_TRANSCRIPT_REFIN, SAMPLE_TRANSCRIPT_ENTREGA, DEFAULT_CRITERIA };
+export { seedDemo, clearDemo, SAMPLE_TRANSCRIPT_REFIN, SAMPLE_TRANSCRIPT_ENTREGA, DEFAULT_CRITERIA };

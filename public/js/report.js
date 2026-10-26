@@ -336,7 +336,7 @@ function buildIndividual() {
 
 // --------------------------------------------------------------- Exportação
 async function downloadHtml() {
-  const cssText = (await Promise.all(['/css/app.css', '/css/report.css'].map((u) => fetch(u).then((r) => r.text())))).join('\n');
+  const cssText = (await Promise.all(['css/app.css', 'css/report.css'].map((u) => fetch(u).then((r) => r.text())))).join('\n');
   const clone = document.documentElement.cloneNode(true);
   $$('canvas', document).forEach((cv) => {
     const target = clone.querySelector(`#${cv.id}`);
@@ -346,7 +346,7 @@ async function downloadHtml() {
     img.style.width = '100%'; img.style.height = '100%'; img.style.objectFit = 'contain';
     target.replaceWith(img);
   });
-  clone.querySelectorAll('script, .r-toolbar, link[rel=stylesheet][href^="/"]').forEach((n) => n.remove());
+  clone.querySelectorAll('script, .r-toolbar, link[rel=stylesheet][href^="css/"]').forEach((n) => n.remove());
   const st = document.createElement('style'); st.textContent = cssText + '\nbody{padding-top:20px}';
   clone.querySelector('head').appendChild(st);
   const blob = new Blob(['<!doctype html>\n' + clone.outerHTML], { type: 'text/html' });

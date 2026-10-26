@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { sb, recoveryUrl } from '../sb.js';
 import { html, icon, pxLogo, $, $$, toast, busy, greeting, modal } from '../ui.js';
 import { applyTheme } from '../app.js';
 
@@ -10,7 +11,13 @@ function pwToggle(root) {
   }));
 }
 
-export function renderLogin(app, { onLogin, store }) {
+const authMessage = (m = '') => (/banned/i.test(m) ? 'Seu acesso está desativado. Fale com o administrador.'
+  : /confirm/i.test(m) ? 'Confirme seu e-mail antes de entrar.'
+  : /rate limit|too many/i.test(m) ? 'Muitas tentativas. Aguarde alguns minutos e tente de novo.'
+  : /fetch|network/i.test(m) ? 'Sem conexão com o servidor. Verifique sua internet.'
+  : 'E-mail ou senha inválidos.');
+
+export function renderLogin(app, { onLogin, store, error = '' }) {
   document.title = 'Entrar · PX Monitorias';
   const remembered = localStorage.getItem('px_last_email') || '';
   app.innerHTML = String(html`
@@ -39,7 +46,7 @@ export function renderLogin(app, { onLogin, store }) {
           <div class="field"><label for="l-user">E-mail corporativo</label><input class="input lg" id="l-user" name="email" type="email" autocomplete="username" required value="${remembered}" placeholder="nome.sobrenome@paschoalotto.com.br"></div>
           <div class="field"><label for="l-pass">Senha</label><div class="pw-wrap"><input class="input lg" id="l-pass" name="password" type="password" autocomplete="current-password" required placeholder="••••••••"><button type="button" class="btn-icon" data-pw aria-label="Mostrar senha">${icon('eye')}</button></div></div>
           <div class="row between mb"><label class="check"><input type="checkbox" id="l-remember" ${remembered ? 'checked' : ''}> Lembrar meu e-mail</label><button type="button" class="btn sm ghost" id="l-forgot">Esqueci minha senha</button></div>
-          <div id="l-err" class="banner warn" hidden></div>
+          <div id="l-err" class="banner warn" ${error ? '' : 'hidden'}>${error ? html`${icon('alert')}<span>${error}</span>` : ''}</div>
           <button class="btn primary lg block" id="l-btn">Entrar ${icon('arrowRight')}</button>
         </form>
         <p class="tiny muted center mt">Ainda não tem acesso? Peça ao administrador da plataforma.</p>
@@ -56,9 +63,10 @@ export function renderLogin(app, { onLogin, store }) {
     err.hidden = true;
     busy(btn, true, 'Entrando');
     try {
-      await api.post('/auth/login', { email: form.email.value.trim(), password: form.password.value });
+      const { error: e } = await sb.auth.signInWithPassword({ email: form.email.value.trim().toLowerCase(), password: form.password.value });
+      if (e) throw new Error(authMessage(e.message));
       if ($('#l-remember').checked) localStorage.setItem('px_last_email', form.email.value.trim()); else localStorage.removeItem('px_last_email');
-      onLogin();
+      onLogin({ fresh: true });
     } catch (ex) {
       err.innerHTML = String(html`${icon('alert')}<span>${ex.message}</span>`); err.hidden = false;
       busy(btn, false);
@@ -162,44 +170,14 @@ function forgotPassword(prefill) {
     onMount: (m, close) => {
       $('#fg-ok', m).onclick = async (e) => {
         busy(e.currentTarget, true, 'Enviando');
-        try { await api.post('/auth/forgot', { email: $('#fg-email', m).value.trim() }); close(); toast('Se o e-mail tiver acesso, o link de recuperação chega em instantes. Confira também o spam.', 'ok', 7000); }
+        const email = $('#fg-email', m).value.trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Informe um e-mail válido.', 'err'); busy(e.currentTarget, false); return; }
+        try {
+          const { error: er } = await sb.auth.resetPasswordForEmail(email, { redirectTo: recoveryUrl() });
+          if (er && /rate limit|too many/i.test(er.message)) throw new Error('Muitas solicitações. Aguarde alguns minutos e tente de novo.');
+          close(); toast('Se o e-mail tiver acesso, o link de recuperação chega em instantes. Confira também o spam.', 'ok', 7000); }
         catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
       };
     },
-  });
-}
-
-// Página aberta pelo link do e-mail de recuperação do Supabase (/redefinir-senha#access_token=...&type=recovery)
-export function renderRecover(app, { onDone }) {
-  document.title = 'Nova senha · PX Monitorias';
-  const hp = new URLSearchParams(location.hash.replace(/^#/, ''));
-  const at = hp.get('access_token'), rt = hp.get('refresh_token');
-  const err = hp.get('error_description');
-  history.replaceState(null, '', '/redefinir-senha');
-  const back = () => { history.replaceState(null, '', '/'); onDone(); };
-  app.innerHTML = String(html`
-  <div class="welcome"><div class="mesh"></div>
-    <div class="welcome-card" style="max-width:480px">
-      ${pxLogo(52)}
-      <h1>Criar nova senha</h1>
-      ${!at ? html`<div class="banner warn mt">${icon('alert')}<div>${err || 'Link de recuperação inválido ou expirado.'} Solicite um novo link na tela de login.</div></div>
-        <button class="btn primary lg block mt" id="rc-back">Voltar ao login</button>`
-      : html`<p class="t2">Defina a senha que você vai usar para entrar. Mínimo de 8 caracteres, com letras e números.</p>
-      <form id="rc-form" class="mt">
-        <div class="field"><label for="rc-new">Nova senha</label><div class="pw-wrap"><input class="input lg" id="rc-new" type="password" autocomplete="new-password" required minlength="8"><button type="button" class="btn-icon" data-pw aria-label="Mostrar senha">${icon('eye')}</button></div></div>
-        <div class="field"><label for="rc-conf">Confirme a nova senha</label><input class="input lg" id="rc-conf" type="password" autocomplete="new-password" required></div>
-        <div id="rc-err" class="banner warn" hidden></div>
-        <button class="btn primary lg block" id="rc-btn">${icon('lock')}Salvar e entrar</button>
-      </form>`}
-    </div></div>`);
-  pwToggle(app);
-  $('#rc-back')?.addEventListener('click', back);
-  $('#rc-form')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const box = $('#rc-err'); box.hidden = true;
-    if ($('#rc-new').value !== $('#rc-conf').value) { box.innerHTML = String(html`${icon('alert')}<span>As senhas não conferem.</span>`); box.hidden = false; return; }
-    busy($('#rc-btn'), true, 'Salvando');
-    try { await api.post('/auth/recover', { access_token: at, refresh_token: rt, password: $('#rc-new').value }); toast('Senha criada! Bem-vindo(a).'); back(); }
-    catch (ex) { box.innerHTML = String(html`${icon('alert')}<span>${ex.message}</span>`); box.hidden = false; busy($('#rc-btn'), false); }
   });
 }

@@ -1,0 +1,40 @@
+# Publica a Edge Function px-api (e, se configurado, as migrações do banco) no Supabase
+# a cada mudança na pasta supabase/ da main.
+#
+# Segredos do repositório (Settings › Secrets and variables › Actions):
+#   SUPABASE_ACCESS_TOKEN  – obrigatório (supabase.com › Account › Access Tokens)
+#   SUPABASE_DB_PASSWORD   – opcional; se existir, as migrações novas são aplicadas sozinhas
+name: Publicar API (Supabase)
+
+on:
+  push:
+    branches: [main]
+    paths: ['supabase/**', '.github/workflows/supabase.yml']
+  workflow_dispatch:
+
+env:
+  SUPABASE_PROJECT_REF: avhlvnuspaaacuitvjdd
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - name: Verificar segredo
+        if: ${{ env.SUPABASE_ACCESS_TOKEN == '' }}
+        run: |
+          echo "::error::Cadastre o segredo SUPABASE_ACCESS_TOKEN no repositório (veja o README)."
+          exit 1
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Aplicar migrações do banco
+        if: ${{ env.SUPABASE_DB_PASSWORD != '' }}
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+          supabase db push --password "$SUPABASE_DB_PASSWORD"
+      - name: Publicar Edge Function px-api
+        run: supabase functions deploy px-api --project-ref "$SUPABASE_PROJECT_REF" --use-api

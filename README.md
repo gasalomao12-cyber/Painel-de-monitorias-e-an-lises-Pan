@@ -25,74 +25,79 @@ Plataforma web (servidor na nuvem) para publicar os reports quinzenais de qualid
 ### Regra de nota
 Conforme = 100% do peso · Parcial = 50% · Não conforme = 0 · N/A sai da base. Critério **crítico** em “Não conforme” zera a nota.
 
-## Banco de dados e login: Supabase
+## Como funciona (sem servidor próprio)
 
-Os dados ficam no **Postgres do Supabase** e o login usa o **Supabase Auth** (e-mail corporativo + senha).
-O navegador nunca fala direto com o banco: o servidor Node acessa as tabelas `px_*` com a chave secreta,
-e cada requisição tem o JWT do usuário verificado com `@supabase/server` (JWKS do projeto).
-As tabelas ficam com RLS ligado e sem policies para `anon`/`authenticated`, então a chave publicável não lê nada.
-O prefixo `px_` permite que a plataforma conviva no mesmo projeto com o simulador de negociação.
-
-### 1. Criar as tabelas
-No Supabase: **SQL Editor › New query**, cole o conteúdo de `supabase/migrations/20261024150000_px_monitorias.sql` e clique em **Run**.
-(Com a CLI: `supabase link --project-ref avhlvnuspaaacuitvjdd` e `supabase db push`.) O script pode ser executado mais de uma vez.
-
-### 2. Configurar o Auth
-Em **Authentication › URL Configuration**:
-- **Site URL**: o endereço público da plataforma (ex.: `https://px-monitorias.onrender.com`).
-- **Redirect URLs**: adicione `https://SEU-ENDERECO/redefinir-senha` — sem isso o link de “Esqueci minha senha” não volta para a plataforma.
-
-Recomendado: configure um **SMTP próprio** em *Authentication › Emails › SMTP Settings* (o envio padrão do Supabase tem limite baixo de e-mails por hora).
-Se o projeto for usado só por esta plataforma, desative *Allow new users to sign up* — os acessos são criados pelo administrador.
-
-### 3. Variáveis de ambiente
-Copie `.env.example` para `.env` (ou cadastre no serviço de hospedagem):
-
-| Variável | Para quê |
+| Parte | Onde roda |
 |---|---|
-| `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_JWKS_URL` | Projeto Supabase (já preenchidos no exemplo) |
-| `SUPABASE_SECRET_KEY` | Chave secreta (*Project Settings › API Keys*). **Somente no servidor.** |
-| `PUBLIC_URL` | Endereço público, usado no link de recuperação de senha |
-| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Primeiro administrador (criado só se não houver nenhum) |
-| `ANTHROPIC_API_KEY` | IA de análise de transcrições (opcional) |
-| `SEED_DEMO` | `true` carrega dados fictícios de demonstração |
+| **Telas** (HTML/CSS/JS da pasta `public/`) | **GitHub Pages** — grátis, sempre online, atualiza sozinho a cada mudança na `main` |
+| **Banco de dados** (tabelas `px_*`) | **Supabase Postgres** |
+| **Login** (e-mail corporativo + senha, “esqueci minha senha”) | **Supabase Auth** |
+| **Regras, permissões e IA** (API) | **Supabase Edge Function `px-api`** (`supabase/functions/px-api`) |
+| **Tempo real** | **Supabase Realtime** — quando alguém ajusta uma análise, aplica um feedback ou importa monitorias, as telas abertas se atualizam sozinhas em ~1 s |
 
-### 4. Rodar
-Requisitos: **Node.js 20+**.
+Segurança: o navegador só tem a chave **publicável** (pública por definição). As tabelas `px_*` têm RLS ligado e nenhuma
+policy para `anon`/`authenticated`, então nada pode ser lido ou gravado direto pelo navegador. Tudo passa pela Edge Function,
+que valida o JWT do usuário com `@supabase/server` e aplica as permissões de cada perfil. O prefixo `px_` permite que a plataforma
+conviva no mesmo projeto com o simulador de negociação.
 
+## Publicar (passo a passo)
+
+**1. Banco** — no Supabase, abra *SQL Editor › New query* e rode, em ordem, os arquivos de `supabase/migrations/`
+(`20261024150000_px_monitorias.sql` e `20261026120000_px_realtime_seed.sql`). Os dois podem ser rodados mais de uma vez.
+Se o Chrome mostrar erro de “extensão de navegador”, desative a tradução automática para supabase.com.
+
+**2. Primeiro administrador**
+- Se seu e-mail ainda não tem conta no projeto: *Authentication › Users › Add user › Create new user*, com e-mail e senha, marcando *Auto Confirm User*.
+- Depois, no SQL Editor: `select public.px_bootstrap_admin('seu.email@paschoalotto.com.br', 'Seu Nome');`
+  (se o e-mail já for usado no simulador, rode só este comando — a senha continua a mesma).
+
+**3. Login** — em *Authentication › URL Configuration*:
+- **Site URL**: `https://gasalomao12-cyber.github.io/Painel-de-monitorias-e-an-lises-Pan/`
+- **Redirect URLs**: adicione `https://gasalomao12-cyber.github.io/**` (cobre a página `redefinir-senha.html` do “esqueci minha senha”)
+
+Recomendado: SMTP próprio em *Authentication › Emails › SMTP Settings* (o envio padrão do Supabase tem limite baixo por hora).
+
+**4. API (Edge Function)** — publicada automaticamente pelo GitHub Actions:
+- Gere um token em supabase.com › *Account › Access Tokens*.
+- No GitHub: *Settings › Secrets and variables › Actions › New repository secret* → `SUPABASE_ACCESS_TOKEN`.
+- (Opcional) `SUPABASE_DB_PASSWORD` para que as migrações novas também sejam aplicadas sozinhas.
+- Em *Actions › Publicar API (Supabase) › Run workflow* para a primeira publicação. Depois, toda mudança em `supabase/` na `main` publica sozinha.
+- Sem GitHub Actions: `npx supabase functions deploy px-api --project-ref avhlvnuspaaacuitvjdd`.
+
+**5. Telas (GitHub Pages)** — com o repositório público: *Settings › Pages › Build and deployment › Source: GitHub Actions*.
+Rode *Actions › Publicar telas (GitHub Pages) › Run workflow*. Endereço final:
+`https://gasalomao12-cyber.github.io/Painel-de-monitorias-e-an-lises-Pan/`
+
+**6. IA (opcional)** — cadastre a chave da Anthropic em *Configurações › Inteligência artificial* na própria plataforma,
+ou como segredo da Edge Function (*Edge Functions › Secrets* › `ANTHROPIC_API_KEY`). Sem chave, a análise usa uma heurística local apenas como sugestão.
+
+**7. Atalho PX** — em *Meu perfil › Atalho na área de trabalho*, cada pessoa baixa o instalador do atalho com o ícone PX (Windows)
+ou instala como aplicativo (Chrome/Edge).
+
+## Tela em qualquer resolução
+- **Escala automática**: a interface inteira cresce ou encolhe conforme a resolução, mantendo o mesmo layout
+  (notebook 1366×768 ≈ 89%, Full HD ≈ 110–126%, monitores grandes até 135%).
+- **Botão de zoom** na barra superior: 80% a 130% ou automático; a escolha fica salva no computador.
+- **Menu lateral** recolhe sozinho em ícones em notebooks (janela com menos de 1600 px); a escolha manual é lembrada por tipo de tela.
+- Em celular e tablet o layout responsivo assume (menu em gaveta).
+
+## Desenvolvimento local
 ```bash
-npm install
-npm start          # http://localhost:3000
+npm install && npm run vendor          # copia as bibliotecas do navegador para public/vendor
+npx supabase start                     # banco, Auth, Realtime e Edge Functions locais (Docker)
+npx serve public -l 4173               # telas em http://127.0.0.1:4173
 ```
-
-No primeiro start a plataforma cria os critérios padrão e o administrador de `ADMIN_EMAIL`
-(troca de senha obrigatória no 1º acesso). Se esse e-mail já tiver conta no projeto (ex.: no simulador),
-a conta é reaproveitada e a pessoa entra com a senha que já usa.
-
-### Acessos
-- O admin cria os acessos em **Usuários & acessos** informando nome, **e-mail corporativo** e perfil; a plataforma gera uma senha temporária.
-- “Esqueci minha senha” envia o link de recuperação pelo Supabase; o admin também pode gerar nova senha temporária.
-- Desativar um acesso bloqueia o login no Supabase Auth e derruba a sessão na hora.
-
-### Publicar na nuvem
-- **Render**: crie um *Blueprint* com este repositório (`render.yaml`) e preencha `SUPABASE_SECRET_KEY`, `PUBLIC_URL`, `ADMIN_EMAIL` e `ADMIN_PASSWORD`. Não precisa de disco: os dados ficam no Supabase.
-- **Docker** (Railway, Fly.io, Azure, VM): `docker build -t px-monitorias . && docker run -p 3000:3000 --env-file .env px-monitorias`.
-- Use HTTPS (necessário para instalar como app e para os cookies seguros de sessão).
-
-### Ativar a IA
-Crie uma chave em console.anthropic.com e defina `ANTHROPIC_API_KEY` no servidor (ou cadastre em *Configurações › Inteligência artificial*). Modelo padrão: Claude Opus 5.5, com fallback automático do servidor em caso de recusa.
-
-### Atalho na área de trabalho
-- Pela plataforma: *Meu perfil › Atalho para Windows* baixa um `.bat` que já sabe o endereço do servidor.
-- Pela pasta `desktop/`: `Criar atalho PX Monitorias.bat` pede o endereço e cria o atalho com `px.ico`.
+Para apontar as telas para o Supabase local, no console do navegador:
+`localStorage.setItem('px_dev_config', JSON.stringify({ supabaseUrl: 'http://127.0.0.1:54321', publishableKey: '<chave publicável local>' }))`.
+Dados fictícios para conhecer a plataforma: *Configurações › Dados › Carregar demonstração* (cria usuários fictícios **sem acesso**).
 
 ## Importação da planilha do speech
 *Importar monitorias › Modelo .xlsx*: uma linha por atendimento (operador, matrícula, equipe, supervisor, produto, data, protocolo, contrato, cliente, duração, nota speech, link áudio, resumo) e uma coluna por critério pelo **código** (ex.: `IDT`, `RCE`, `ESD`) com C/P/NC/NA — também aceita Sim/Não/Parcial. Colunas `OBS <código>` viram a observação do speech. Operadores novos são cadastrados automaticamente.
 
 ## Estrutura
 ```
-server/   index.js (HTTP), routes.js (API), supa.js (clientes Supabase), auth.js (Supabase Auth), db.js (config/auditoria), ai.js (Claude + heurística), io.js (planilhas/transcrições), scoring.js, seed.js
-supabase/ migrations/ (tabelas px_*, views e segurança)
-public/   index.html (SPA), report.html (dashboards), css/, js/ (app, views, charts), icons/ (PX)
-desktop/  atalho do Windows e ícone PX
+supabase/ migrations/ (tabelas px_*, views, segurança, tempo real) · functions/px-api/ (API: rotas, IA, permissões)
+.github/  workflows/ (publicação automática das telas e da API)
+public/   index.html (SPA), report.html (dashboards), redefinir-senha.html, config.js, css/, js/, vendor/, icons/ (PX)
+desktop/  atalho do Windows (alternativo) e ícone PX
 ```
