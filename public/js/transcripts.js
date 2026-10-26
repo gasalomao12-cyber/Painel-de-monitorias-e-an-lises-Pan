@@ -131,7 +131,8 @@ export function metaOf(seg) {
   if (audio) {
     meta.audioFile = audio;
     const stem = audio.replace(/\.[a-z0-9]+$/i, '');
-    const id = stem.match(/^(\d{6,})[_\-.]/);
+    // ID no começo (padrão do discador) ou no fim (nome original no speech: asp-t2-epro…_43501102.wav)
+    const id = stem.match(/^(\d{6,})[_\-.]/) || stem.match(/[_-](\d{6,})$/);
     if (id) meta.callId = id[1];
     // ..._LOGIN_DDMMAA_HHMM.wav (padrão do discador)
     const lg = stem.match(/_([a-z][a-z0-9.]{2,30})_(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})$/i);

@@ -140,6 +140,17 @@ Para ativar:
 
 O áudio vai do servidor direto para o recurso da empresa e não é guardado na plataforma, só o texto. Limite de 100 MB por arquivo. A Azure cobra por hora de áudio transcrito.
 
+## Lista de ligações do discador (.csv)
+*Importar monitorias › Lista de ligações do discador*: o relatório exportado do discador (IdContato, Campanha, Operacao, Login, DataHoraLigacao, Duracao, CLIENTE, FINALIZACAO, Contrato, NomeDoArquivo, NomeOriginalDoArquivo, TIPO DE DESCONEXÃO). Também aceita .xlsx com as mesmas colunas.
+
+- **Cada ligação vira um atendimento pendente,** com:
+  - O operador pelo login (logins novos são cadastrados e o nome é completado depois).
+  - A carteira pela operação: PAN VEICULOS → Veículos, PAN CARTÕES → Cartões.
+  - O segmento, em Cartões e Consignado, igual ao da última monitoria do operador.
+  - Tabulação, campanha, canal (AGV), duração e o nome do áudio.
+- **Ligação que já existe** (por exemplo, vinda de um dashboard) só tem os campos vazios completados. Reimportar não duplica.
+- **Vínculo automático depois:** o áudio ou a transcrição enviados em seguida se vinculam sozinhos à ligação, pelo ID no nome do arquivo. Vale tanto o padrão do discador (`43501102_…wav`) quanto o nome original do speech (`asp-t2-epro…_43501102.wav`).
+
 ## Importação dos dashboards de monitoria PAN (.html)
 *Importar monitorias › Dashboard de monitoria já trabalhado*: arraste o arquivo .html do dashboard da quinzena. São reconhecidos:
 - **Speech E.A. e Refin (Veículos)**: 13 itens do roteiro (postura fora da nota), ajustes de coerência com o motivo, aptidão a E.A./refin, oferta Nelson, gerência, líder, campanha, canal (AGV/convencional), tabulação, desfecho e nome do áudio.
