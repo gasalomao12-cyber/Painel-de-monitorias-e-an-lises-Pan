@@ -15,6 +15,8 @@ const sb = () => admin();
 const { requireAuth, requireRole } = auth;
 const ADMIN = requireRole('admin');
 const QUALITY = requireRole('admin', 'qualidade');
+// Contestação de monitoria: pedida pela supervisão (o admin também pode abrir)
+const CONTESTER = requireRole('admin', 'supervisor');
 const RESULTS = ['C', 'P', 'NC', 'NA'];
 // Carteiras PAN importadas dos dashboards + Refinanciamento/Entrega Amigável lançados à mão
 const PRODUCTS = ['VEICULOS', 'CARTOES', 'CONSIGNADO', 'REFIN', 'ENTREGA'];
@@ -152,6 +154,7 @@ router.get('/meta', h(async (req, res) => {
     // Tolerante: antes da migração de carteiras a coluna "segment" ainda não existe
     fetchAll(() => scoped(sb().from('px_v_eval_cards').select('product, segment'), req).order('id')).catch(() => []),
   ]);
+  const openContests = await count(contestQuery(req, { status: 'aberta' }, { head: true })).catch(() => 0);
   // Quantas monitorias existem por produto e segmento (os filtros só mostram o que tem dado)
   const products = PRODUCTS.map((p) => {
     const rows = mix.filter((r) => r.product === p);
@@ -164,7 +167,7 @@ router.get('/meta', h(async (req, res) => {
     teams: [...new Set(ops.map((o) => o.team).filter(Boolean))].sort(),
     ai: { configured: aiConfigured(), model: getSetting('ai_model', 'claude-opus-5-5'), auto_apply: getSetting('ai_auto_apply', '1') === '1' },
     company: getSetting('company_name', 'Paschoalotto'),
-    counts: { pending_feedback: pendingFeedback, pending_review: pendingReview, open_bugs: openBugs, unread },
+    counts: { pending_feedback: pendingFeedback, pending_review: pendingReview, open_bugs: openBugs, unread, open_contests: openContests },
   });
 }));
 
@@ -180,13 +183,30 @@ function sorted(query, key) {
 router.get('/evaluations', h(async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 500, 2000);
   const rows = await fetchAll(() => sorted(applyFilters(sb().from('px_v_eval_cards').select('*'), req, req.query), req.query.sort).order('id', { ascending: false }));
-  res.json(rows.slice(0, limit));
+  res.json(rows.slice(0, limit).map(cardForUser(req)));
 }));
+
+// A análise por IA é exclusiva do administrador: os demais perfis não recebem sugestões,
+// parecer nem histórico da IA (o parecer importado dos dashboards continua visível)
+const AI_ITEM_FIELDS = ['ai_result', 'ai_evidence', 'ai_reason', 'ai_confidence'];
+function stripAi(row) {
+  const out = { ...row };
+  for (const f of AI_ITEM_FIELDS) delete out[f];
+  return out;
+}
+function forUser(req, e) {
+  if (!e || req.user.role === 'admin') return e;
+  const out = { ...e, items: (e.items || []).map(stripAi), ai_divergences: 0, ai_model: null, ai_ran_at: null };
+  if (out.ai_summary?.engine !== 'dashboard') { out.ai_summary = null; out.ai = null; out.ai_status = 'nao_executada'; }
+  out.history = (e.history || []).filter((x) => !String(x.action).startsWith('ia_'));
+  return out;
+}
+const cardForUser = (req) => (r) => (req.user.role === 'admin' ? r : { ...r, ai_status: r.ai_status === 'concluida' ? 'nao_executada' : r.ai_status, ai_divergences: 0 });
 
 async function loadEvaluation(id) {
   const e = await must(sb().from('px_v_eval_cards').select('*').eq('id', id).maybeSingle());
   if (!e) return null;
-  const [full, items, feedbacks, history] = await Promise.all([
+  const [full, items, feedbacks, history, contests] = await Promise.all([
     must(sb().from('px_evaluations').select('*').eq('id', id).single()).then((r) => ({
       transcript: r.transcript, transcript_name: r.transcript_name, ai_summary: r.ai_summary, ai_model: r.ai_model, ai_ran_at: r.ai_ran_at,
       speech_summary: r.speech_summary, reviewed_by: r.reviewed_by, details: r.details || null,
@@ -194,12 +214,15 @@ async function loadEvaluation(id) {
     must(sb().from('px_v_eval_items').select('*').eq('evaluation_id', id).order('sort').order('criterion_id')),
     must(sb().from('px_v_feedbacks').select('*').eq('evaluation_id', id).order('applied_at', { ascending: false })),
     must(sb().from('px_v_audit').select('*').eq('entity', 'evaluation').eq('entity_id', id).order('id', { ascending: false }).limit(100)),
+    // Antes da migração de contestações a view ainda não existe
+    must(sb().from('px_v_contests').select('*').eq('evaluation_id', id).order('created_at', { ascending: false })).catch(() => []),
   ]);
   Object.assign(e, full);
   e.ai = e.ai_summary || null;
   e.items = items;
   e.feedbacks = feedbacks;
   e.history = history;
+  e.contests = contests;
   e.reviewer = e.reviewed_by ? await must(sb().from('px_profiles').select('name, display_name').eq('id', e.reviewed_by).maybeSingle()) : null;
   return e;
 }
@@ -207,7 +230,7 @@ async function loadEvaluation(id) {
 router.get('/evaluations/:id', h(async (req, res) => {
   const id = Number(req.params.id);
   await assertEvalAccess(req, id);
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
 }));
 
 async function recompute(evalId) {
@@ -261,7 +284,7 @@ router.post('/evaluations', QUALITY, h(async (req, res) => {
   if (b.audio_url && req.user.role !== 'admin') delete b.audio_url;
   const id = await createEvaluation(b, req.user.id);
   await audit(req.user.id, 'atendimento_criado', 'evaluation', id, { origem: b.origin || 'manual' });
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
 }));
 
 router.patch('/evaluations/:id', QUALITY, h(async (req, res) => {
@@ -281,7 +304,7 @@ router.patch('/evaluations/:id', QUALITY, h(async (req, res) => {
     await must(sb().from('px_evaluations').update({ ...changes, updated_at: nowIso() }).eq('id', id));
     await audit(req.user.id, 'dados_editados', 'evaluation', id, changes);
   }
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
 }));
 
 // Ajuste de análise: corrige o resultado de cada critério
@@ -312,7 +335,7 @@ router.put('/evaluations/:id/items', QUALITY, h(async (req, res) => {
   }
   if (updates.length) await audit(req.user.id, 'analise_ajustada', 'evaluation', id, { alteracoes: updates.map((u) => u.log), nota_final: score });
   else if (markReviewed) await audit(req.user.id, 'analise_validada', 'evaluation', id, { nota_final: score });
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
 }));
 
 router.post('/evaluations/:id/revert', QUALITY, h(async (req, res) => {
@@ -323,7 +346,7 @@ router.post('/evaluations/:id/revert', QUALITY, h(async (req, res) => {
   }
   await recompute(id);
   await audit(req.user.id, 'ajustes_revertidos', 'evaluation', id);
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
 }));
 
 // Link do áudio — somente admin
@@ -335,7 +358,7 @@ router.put('/evaluations/:id/audio', ADMIN, h(async (req, res) => {
   if (!prev) return res.status(404).json({ error: 'Atendimento não encontrado.' });
   await must(sb().from('px_evaluations').update({ audio_url: url || null, updated_at: nowIso() }).eq('id', id));
   await audit(req.user.id, 'link_audio_alterado', 'evaluation', id, { de: prev.audio_url, para: url || null });
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
 }));
 
 router.post('/evaluations/bulk-audio', ADMIN, h(async (req, res) => {
@@ -376,7 +399,7 @@ router.post('/evaluations/:id/transcript', QUALITY, h(async (req, res) => {
   if (!text.trim()) return res.status(400).json({ error: 'A transcrição está vazia.' });
   await must(sb().from('px_evaluations').update({ transcript: text, transcript_name: name, ai_status: 'nao_executada', updated_at: nowIso() }).eq('id', id));
   await audit(req.user.id, 'transcricao_anexada', 'evaluation', id, { arquivo: name, caracteres: text.length });
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
 }));
 
 function friendlyAiError(e) {
@@ -425,10 +448,10 @@ async function runAnalysis(id, user) {
   return loadEvaluation(id);
 }
 
-router.post('/evaluations/:id/analyze', QUALITY, h(async (req, res) => res.json(await runAnalysis(Number(req.params.id), req.user))));
+router.post('/evaluations/:id/analyze', ADMIN, h(async (req, res) => res.json(await runAnalysis(Number(req.params.id), req.user))));
 
 // Aplica sugestões da IA manualmente (heurística ou baixa confiança)
-router.post('/evaluations/:id/ai/apply', QUALITY, h(async (req, res) => {
+router.post('/evaluations/:id/ai/apply', ADMIN, h(async (req, res) => {
   const id = Number(req.params.id);
   const codes = Array.isArray(req.body?.codes) ? req.body.codes : null;
   const items = await must(sb().from('px_v_eval_items').select('*').eq('evaluation_id', id).not('ai_result', 'is', null));
@@ -445,11 +468,11 @@ router.post('/evaluations/:id/ai/apply', QUALITY, h(async (req, res) => {
   }
   await recompute(id);
   if (applied.length) await audit(req.user.id, 'ia_sugestoes_aplicadas', 'evaluation', id, { alteracoes: applied });
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
 }));
 
 // Nova análise a partir de uma transcrição (sem speech prévio)
-router.post('/analyses', QUALITY, h(async (req, res) => {
+router.post('/analyses', ADMIN, h(async (req, res) => {
   const b = req.body || {};
   const { text, name } = readTranscript(b);
   if (!text.trim()) return res.status(400).json({ error: 'A transcrição está vazia.' });
@@ -472,7 +495,69 @@ router.post('/analyses', QUALITY, h(async (req, res) => {
     ai_summary: { ...(ev.ai_summary || {}), applied: [], origin: 'transcricao' },
   }).eq('id', id));
   await recompute(id);
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
+}));
+
+// --------------------------------------------------------------- Contestações
+const CONTEST_STATUS = ['aberta', 'aceita', 'recusada', 'cancelada'];
+function contestQuery(req, q = {}, { head = false } = {}) {
+  let x = scoped(sb().from('px_v_contests').select(head ? 'id' : '*', head ? { count: 'exact', head: true } : undefined), req);
+  if (q.status) x = x.eq('status', q.status);
+  if (q.cycle_id) x = x.eq('cycle_id', Number(q.cycle_id));
+  if (q.evaluation_id) x = x.eq('evaluation_id', Number(q.evaluation_id));
+  return head ? x : x.order('created_at', { ascending: false });
+}
+
+router.get('/contests', h(async (req, res) => {
+  const q = { ...req.query };
+  if (q.status && !CONTEST_STATUS.includes(q.status)) delete q.status;
+  res.json(await must(contestQuery(req, q).limit(500)));
+}));
+
+router.post('/evaluations/:id/contests', CONTESTER, h(async (req, res) => {
+  const id = Number(req.params.id);
+  await assertEvalAccess(req, id);
+  const b = req.body || {};
+  const reason = String(b.reason || '').trim().slice(0, 3000);
+  if (reason.length < 15) return res.status(400).json({ error: 'Explique o motivo da contestação (mínimo 15 caracteres).' });
+  const open = await must(sb().from('px_contests').select('id').eq('evaluation_id', id).eq('status', 'aberta').limit(1));
+  if (open.length) return res.status(409).json({ error: 'Esta monitoria já tem uma contestação aberta. Aguarde a resposta da Qualidade.' });
+  const ids = (Array.isArray(b.criteria) ? b.criteria : []).map(Number).filter(Boolean);
+  const items = ids.length ? await must(sb().from('px_v_eval_items').select('criterion_id, code, name').eq('evaluation_id', id).in('criterion_id', ids)) : [];
+  const ct = await must(sb().from('px_contests').insert({
+    evaluation_id: id, requested_by: req.user.id, reason, criteria: items.map((i) => ({ criterion_id: i.criterion_id, code: i.code, name: i.name })),
+  }).select('id').single());
+  await audit(req.user.id, 'contestacao_aberta', 'evaluation', id, { contestacao: ct.id, itens: items.map((i) => i.code), motivo: reason });
+  const ev = await must(sb().from('px_v_eval_cards').select('operator_name').eq('id', id).single());
+  const quality = await must(sb().from('px_profiles').select('id').in('role', ['admin', 'qualidade']).eq('active', true));
+  const who = req.user.display_name || req.user.name;
+  await notify(quality.map((u) => u.id).filter((u) => u !== req.user.id), 'Nova contestação de monitoria', `${who} contestou a monitoria de ${ev.operator_name}.`, `#/atendimentos/${id}`);
+  res.json(forUser(req, await loadEvaluation(id)));
+}));
+
+// Qualidade responde: aceita (e ajusta a análise no card) ou recusa, sempre com resposta
+router.put('/contests/:id', h(async (req, res) => {
+  const cid = Number(req.params.id);
+  const ct = await must(sb().from('px_contests').select('*').eq('id', cid).maybeSingle());
+  if (!ct) return res.status(404).json({ error: 'Contestação não encontrada.' });
+  await assertEvalAccess(req, ct.evaluation_id);
+  if (ct.status !== 'aberta') return res.status(409).json({ error: 'Esta contestação já foi encerrada.' });
+  const b = req.body || {};
+  if (b.status === 'cancelada') {
+    if (ct.requested_by !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Só quem abriu a contestação pode cancelá-la.' });
+    await must(sb().from('px_contests').update({ status: 'cancelada', responded_by: req.user.id, responded_at: nowIso() }).eq('id', cid));
+    await audit(req.user.id, 'contestacao_cancelada', 'evaluation', ct.evaluation_id, { contestacao: cid });
+    return res.json(forUser(req, await loadEvaluation(ct.evaluation_id)));
+  }
+  if (!['admin', 'qualidade'].includes(req.user.role)) return res.status(403).json({ error: 'Só a Qualidade responde contestações.' });
+  if (!['aceita', 'recusada'].includes(b.status)) return res.status(400).json({ error: 'Informe se a contestação foi aceita ou recusada.' });
+  const response = String(b.response || '').trim().slice(0, 3000);
+  if (response.length < 10) return res.status(400).json({ error: 'Escreva a resposta para a supervisão (mínimo 10 caracteres).' });
+  await must(sb().from('px_contests').update({ status: b.status, response, responded_by: req.user.id, responded_at: nowIso() }).eq('id', cid));
+  await audit(req.user.id, 'contestacao_respondida', 'evaluation', ct.evaluation_id, { contestacao: cid, decisao: b.status, resposta: response });
+  const who = req.user.display_name || req.user.name;
+  await notify([ct.requested_by].filter((u) => u && u !== req.user.id), `Contestação ${b.status === 'aceita' ? 'aceita' : 'recusada'}`, `${who} respondeu: ${response.slice(0, 140)}`, `#/atendimentos/${ct.evaluation_id}`);
+  res.json(forUser(req, await loadEvaluation(ct.evaluation_id)));
 }));
 
 // --------------------------------------------------------------- Feedbacks
@@ -501,21 +586,21 @@ async function saveFeedback(req, evalId, fbId) {
   await must(sb().from('px_evaluations').update({ status: 'feedback_aplicado', updated_at: nowIso() }).eq('id', evalId));
 }
 
-router.post('/evaluations/:id/feedback', h(async (req, res) => {
+router.post('/evaluations/:id/feedback', QUALITY, h(async (req, res) => {
   const id = Number(req.params.id);
   await assertEvalAccess(req, id);
   await saveFeedback(req, id);
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
 }));
 
-router.put('/evaluations/:id/feedback/:fid', h(async (req, res) => {
+router.put('/evaluations/:id/feedback/:fid', QUALITY, h(async (req, res) => {
   const id = Number(req.params.id);
   await assertEvalAccess(req, id);
   await saveFeedback(req, id, Number(req.params.fid));
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
 }));
 
-router.delete('/evaluations/:id/feedback/:fid', h(async (req, res) => {
+router.delete('/evaluations/:id/feedback/:fid', QUALITY, h(async (req, res) => {
   const id = Number(req.params.id), fid = Number(req.params.fid);
   const f = await must(sb().from('px_feedbacks').select('*').eq('id', fid).eq('evaluation_id', id).maybeSingle());
   if (!f) return res.status(404).json({ error: 'Feedback não encontrado.' });
@@ -527,7 +612,7 @@ router.delete('/evaluations/:id/feedback/:fid', h(async (req, res) => {
     await must(sb().from('px_evaluations').update({ status: ev.reviewed_at ? 'revisada' : 'pendente' }).eq('id', id));
   }
   await audit(req.user.id, 'feedback_removido', 'evaluation', id, { feedback_id: fid });
-  res.json(await loadEvaluation(id));
+  res.json(forUser(req, await loadEvaluation(id)));
 }));
 
 function feedbackQuery(req, q) {
@@ -705,7 +790,7 @@ router.get('/stats/operator/:id', h(async (req, res) => {
   const [mine, team, evaluations, feedbacks] = await Promise.all([
     loadStatsRows(req, { ...req.query, operator_id: id }),
     loadStatsRows(req, { cycle_id: req.query.cycle_id, team: op.team || undefined }),
-    must(sb().from('px_v_eval_cards').select('*').eq('operator_id', id).order('call_date', { ascending: false })),
+    must(sb().from('px_v_eval_cards').select('*').eq('operator_id', id).order('call_date', { ascending: false })).then((r) => r.map(cardForUser(req))),
     must(sb().from('px_v_feedbacks').select('*').eq('operator_id', id).order('applied_at', { ascending: false })),
   ]);
   const teamStats = computeStats(team.evals, team.items);

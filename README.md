@@ -11,7 +11,7 @@ Plataforma web (servidor na nuvem) para publicar os reports quinzenais de qualid
 | **Atendimentos** | Um card por monitoria com nota, speech × final, status, falha crítica, ajustes e link do áudio. **Card verde = feedback aplicado.** Filtros, busca, lista/grade, exportação Excel. |
 | **Card detalhado** | **Ajuste de análise** por critério (Conforme / Parcial / Não conforme / N/A) com motivo obrigatório e recálculo da nota ao vivo; parecer da IA com evidências; transcrição com busca; **aplicação de feedback** (o que foi passado, pontos fortes, melhorias, plano de ação, ciência do operador, reavaliação); histórico completo. |
 | **Análise com IA** | Anexe transcrições (.txt, .docx, .vtt, .srt, .json), em lote. A IA (Claude) avalia cada critério com o trecho da fala, **corrige sozinha o que o speech interpretou errado** (confiança alta) e sugere o feedback. Ajustes manuais nunca são sobrescritos. Sem chave, roda uma heurística local apenas como sugestão. |
-| **Feedbacks** | Abas de **pendentes** (por operador ou prioridade) e **aplicados** (histórico com filtros e exportação). |
+| **Feedbacks** | Abas de **pendentes** (por operador ou prioridade) e **aplicados** (histórico com filtros e exportação). **Contestações** da supervisão com resposta da Qualidade. |
 | **Carteiras PAN** | **Veículos**, **Cartões** (apartado em *Clean Curto* e *Clean Longo*) e **Consignado** (apartado em *Público* e *Privado*), cada um com seu roteiro. Painel com tabela por produto e segmento, aderência ao roteiro (mesma conta dos dashboards PAN) e alertas de qualidade (sigilo, conduta, oferta de E.A./refin perdida, postura, sem proposta). |
 | **Dashboards & reports** | Visão geral, comparativo entre quinzenas, comparativo por produto (ou pelos segmentos de um produto) e individual do operador — **com capa**, páginas A4 paisagem, impressão em PDF e download em HTML. |
 | **Admin** | Quinzenas e **links das pastas de áudio do OneDrive** (por quinzena, por atendimento ou em lote, editáveis a qualquer momento), critérios e pesos, usuários e perfis, bugs reportados, auditoria, configurações da IA, backup em JSON. |
@@ -19,9 +19,12 @@ Plataforma web (servidor na nuvem) para publicar os reports quinzenais de qualid
 | **Atalho PX** | Em *Meu perfil › Atalho na área de trabalho*: gera o instalador do atalho **PX Monitorias** com o ícone PX (Windows) ou instala como aplicativo (PWA). |
 
 ### Perfis de acesso
-- **Administrador** — tudo, inclusive links de áudio, quinzenas, critérios, usuários e configurações.
-- **Qualidade** — importa monitorias, ajusta análises, usa a IA, aplica feedbacks, gera reports.
-- **Supervisão** — consulta atendimentos e gráficos, aplica e registra feedbacks (pode ser restrita à própria equipe).
+- **Administrador** — tudo, inclusive links de áudio, quinzenas, critérios, usuários e configurações. **É o único com acesso à análise por IA** (rodar, ver sugestões e o parecer da IA).
+- **Qualidade** — altera análises, aplica feedbacks, responde contestações, importa monitorias e gera reports. Não vê nem usa a IA.
+- **Supervisão** — visualiza indicadores, atendimentos e análises (pode ser restrita à própria equipe) e **solicita contestação** de uma monitoria. Não aplica feedback nem altera análises.
+
+### Contestação de monitoria
+No card do atendimento, a supervisão clica em **Contestar monitoria**, explica o motivo e marca (se quiser) os itens contestados. A Qualidade é notificada, revisa e **aceita** (ajustando os itens na aba Análise) ou **recusa**, sempre com resposta — que volta como notificação para quem contestou. Uma contestação aberta por monitoria; tudo fica no histórico do card e na tela **Contestações**.
 
 ### Regra de nota
 Conforme = 100% do peso · Parcial = 50% · Não conforme = 0 · N/A sai da base. Critério **crítico** em “Não conforme” zera a nota.
