@@ -111,7 +111,7 @@ export const PRODUCT = { VEICULOS: 'Veículos', CARTOES: 'Cartões', CONSIGNADO:
 export const PRODUCT_SHORT = { VEICULOS: 'Veículos', CARTOES: 'Cartões', CONSIGNADO: 'Consignado', REFIN: 'Refin', ENTREGA: 'Entrega' };
 export const SEGMENT = { CLEAN_CURTO: 'Clean Curto', CLEAN_LONGO: 'Clean Longo', PUBLICO: 'Público', PRIVADO: 'Privado', none: 'Segmento a definir' };
 export const SEGMENTS_OF = { CARTOES: ['CLEAN_CURTO', 'CLEAN_LONGO'], CONSIGNADO: ['PUBLICO', 'PRIVADO'] };
-export const CRITERIA_GROUP = { VEICULOS: 'Veículos', SEM_GARANTIA: 'Sem Garantia (Cartões e Consignado)', CARTOES: 'Só Cartões', CONSIGNADO: 'Só Consignado', AMBOS: 'Refin e Entrega', REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável' };
+export const CRITERIA_GROUP = { VEICULOS: 'Veículos', SEM_GARANTIA: 'Sem Garantia (Cartões e Consignado)', CARTOES: 'Só Cartões', CONSIGNADO: 'Só Consignado', AMBOS: 'Refin e Entrega', REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável', AGV: 'AGV (campanhas com assistente virtual)' };
 // No roteiro Sem Garantia a "nota original" é a 1ª leitura da transcrição, não o speech
 export const origLabel = (e) => (e?.source === 'dash_sem_garantia' ? '1ª leitura' : 'Speech');
 export const productLabel = (p, seg) => `${PRODUCT[p] || p}${SEGMENTS_OF[p] ? ` · ${SEGMENT[seg || 'none']}` : ''}`;

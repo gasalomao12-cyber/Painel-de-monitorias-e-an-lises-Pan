@@ -31,7 +31,7 @@ function cycleName(from) {
   return `${d.getDate() <= 15 ? '1ª' : '2ª'} quinzena · ${mes}/${d.getFullYear()}`;
 }
 
-async function cycleFor(date, cache) {
+export async function cycleFor(date, cache) {
   if (cache.has(date)) return cache.get(date);
   const hit = await must(sb().from('px_cycles').select('id').lte('start_date', date).gte('end_date', date).order('start_date', { ascending: false }).limit(1));
   let id = hit[0]?.id;
@@ -119,11 +119,12 @@ export async function importCalls({ calls, cycle_id }, userId) {
   }
   let created = 0;
   if (fresh.length) {
-    const inserted = await must(sb().from('px_evaluations').insert(fresh).select('id, product'));
+    const inserted = await must(sb().from('px_evaluations').insert(fresh).select('id, product, channel'));
     created = inserted.length;
-    // Roteiro da carteira em branco: será preenchido pelo speech, pela análise com IA ou pela Qualidade
+    // Roteiro em branco (o AGV nas campanhas AGV, o da carteira nas demais): será preenchido pelo speech,
+    // pela análise com IA ou pela Qualidade
     const crit = await must(sb().from('px_criteria').select('id, product').eq('active', true));
-    const items = inserted.flatMap((e) => crit.filter((c) => (CRITERIA_FOR[e.product] || []).includes(c.product)).map((c) => ({ evaluation_id: e.id, criterion_id: c.id })));
+    const items = inserted.flatMap((e) => crit.filter((c) => (e.channel === 'AGV' ? ['AGV'] : CRITERIA_FOR[e.product] || []).includes(c.product)).map((c) => ({ evaluation_id: e.id, criterion_id: c.id })));
     try { for (let i = 0; i < items.length; i += 1000) await must(sb().from('px_evaluation_items').insert(items.slice(i, i + 1000))); }
     catch (e) { await sb().from('px_evaluations').delete().in('id', inserted.map((x) => x.id)); throw e; }
   }

@@ -210,7 +210,7 @@ function answerContest(el, ctx, id, decision) {
 }
 
 // Dados que vieram do dashboard (tabulação, desfecho, aptidão, conduta, sigilo...)
-const HL_ICON = { bad: 'alert', warn: 'alert', ok: 'checkCircle', info: 'info' };
+const HL_ICON = { bad: 'alert', warn: 'alert', ok: 'checkCircle', info: 'info', speech_agv: 'zap' };
 function callDetails(e) {
   const d = e.details;
   if (!d || (!d.facts?.length && !d.highlights?.length)) return '';
@@ -345,7 +345,7 @@ function critRow(it, value, editor) {
         <div><b>${it.ai_result === it.speech_result ? 'IA confirma o speech' : `IA sugere ${RESULT[it.ai_result]}`}</b> <span class="conf" title="Confiança ${Math.round((it.ai_confidence || 0) * 100)}%">${[1, 2, 3, 4, 5].map((k) => html`<i class="${k <= conf ? 'on' : ''}"></i>`)}</span>
           <div class="t2">${it.ai_reason || ''}</div>${it.ai_evidence ? html`<q>${it.ai_evidence}</q>` : ''}</div>
         ${editor && aiDiff ? html`<button class="btn sm" data-ai-apply>Usar sugestão</button>` : ''}</div>` : ''}
-      ${it.adjusted && !changed ? html`<div class="adj-note">${icon('edit')}<span>Ajustado ${it.adjust_source === 'ia' ? 'automaticamente pela IA' : it.adjust_source === 'dashboard' ? 'na análise do dashboard' : `por ${it.adjusted_by_display || it.adjusted_by_name || 'analista'}`} ${it.adjusted_at ? fmtRel(it.adjusted_at) : ''} · de <b>${RESULT[it.speech_result] || '—'}</b> para <b>${RESULT[it.final_result]}</b>${it.adjust_reason ? html` — “${it.adjust_reason}”` : ''}</span></div>` : ''}
+      ${it.adjusted && !changed ? html`<div class="adj-note">${icon('edit')}<span>Ajustado ${it.adjust_source === 'ia' ? 'automaticamente pela IA' : it.adjust_source === 'dashboard' ? 'na análise do dashboard' : it.adjust_source === 'regra' ? 'pela regra de coerência do roteiro' : `por ${it.adjusted_by_display || it.adjusted_by_name || 'analista'}`} ${it.adjusted_at ? fmtRel(it.adjusted_at) : ''} · de <b>${RESULT[it.speech_result] || '—'}</b> para <b>${RESULT[it.final_result]}</b>${it.adjust_reason ? html` — “${it.adjust_reason}”` : ''}</span></div>` : ''}
       <div class="reason" ${needsReason && editor ? '' : 'hidden'}><input class="input sm" placeholder="Motivo do ajuste (obrigatório) — ex.: speech não reconheceu a confirmação de CPF" value="${reason}" maxlength="500"></div>
     </div>
   </div>`;

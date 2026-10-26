@@ -73,8 +73,12 @@ function buildUserPrompt(evaluation, items) {
   const productName = { REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável', VEICULOS: 'PAN Veículos (cobrança, com oferta de E.A. e refin)', CARTOES: 'PAN Cartões (cobrança sem garantia)', CONSIGNADO: 'PAN Consignado (cobrança sem garantia)' }[evaluation.product] || evaluation.product;
   const lines = items.map((i) =>
     `- ${i.code} | ${i.name}${i.critical ? ' [CRÍTICO]' : ''} | peso ${i.weight}\n  Definição: ${i.description || '-'}\n  Speech apontou: ${i.speech_result || 'sem apontamento'}${i.speech_note ? ` (${i.speech_note})` : ''}`).join('\n');
+  // Campanhas AGV: a ligação começa com a assistente virtual; só conta o que o operador fez depois da transferência
+  const agv = evaluation.channel === 'AGV'
+    ? `Canal: AGV${evaluation.campaign ? ` (campanha ${evaluation.campaign})` : ''}. A ligação começa com a assistente virtual e é transferida para o operador: avalie somente o operador, a partir da transferência. Se a assistente virtual já informou a dívida, o critério de informar o atraso não se aplica (NA).\n`
+    : '';
   return `Produto: ${productName}
-Operador: ${evaluation.operator_name}
+${agv}Operador: ${evaluation.operator_name}
 Data da ligação: ${evaluation.call_date || 'não informada'}
 ${evaluation.speech_summary ? `Resumo do speech: ${evaluation.speech_summary}\n` : ''}
 Critérios do formulário:
