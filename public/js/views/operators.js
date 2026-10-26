@@ -76,12 +76,13 @@ export function editOperator(op, ctx, done) {
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="op-save">Salvar</button>`,
     onMount: (m, close) => {
       $('#op-save', m).onclick = async (e) => {
+        const btnEl = e.currentTarget;
         const f = $('#op-form', m);
         if (!f.reportValidity()) return;
         const body = { name: f.name.value, registration: f.registration.value, team: f.team.value, supervisor_user_id: f.supervisor_user_id.value || null, active: op ? f.active.checked : true };
-        busy(e.currentTarget, true);
+        busy(btnEl, true);
         try { op ? await api.put(`/operators/${op.id}`, body) : await api.post('/operators', body); toast('Operador salvo.'); close(); await ctx.refreshMeta(); done?.(); }
-        catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
+        catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
   });

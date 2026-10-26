@@ -169,14 +169,15 @@ function forgotPassword(prefill) {
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="fg-ok">${icon('arrowRight')}Enviar link</button>`,
     onMount: (m, close) => {
       $('#fg-ok', m).onclick = async (e) => {
-        busy(e.currentTarget, true, 'Enviando');
+        const btnEl = e.currentTarget;
+        busy(btnEl, true, 'Enviando');
         const email = $('#fg-email', m).value.trim().toLowerCase();
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Informe um e-mail válido.', 'err'); busy(e.currentTarget, false); return; }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Informe um e-mail válido.', 'err'); busy(btnEl, false); return; }
         try {
           const { error: er } = await sb.auth.resetPasswordForEmail(email, { redirectTo: recoveryUrl() });
           if (er && /rate limit|too many/i.test(er.message)) throw new Error('Muitas solicitações. Aguarde alguns minutos e tente de novo.');
           close(); toast('Se o e-mail tiver acesso, o link de recuperação chega em instantes. Confira também o spam.', 'ok', 7000); }
-        catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
+        catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
   });

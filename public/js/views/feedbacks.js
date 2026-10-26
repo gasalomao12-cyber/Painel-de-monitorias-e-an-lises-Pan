@@ -90,6 +90,8 @@ async function renderApplied(el, ctx) {
   $('#fa-from').onchange = (e) => { st.from = e.target.value; load(); };
   $('#fa-to').onchange = (e) => { st.to = e.target.value; load(); };
   $('#fa-q').addEventListener('input', debounce((e) => { state.q = e.target.value; load(); }, 300));
-  $('#fb-exp').onclick = async (e) => { busy(e.currentTarget, true); try { await downloadFeedbacks(await api.get('/export/feedbacks')); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
+  $('#fb-exp').onclick = async (e) => {
+    const btnEl = e.currentTarget;
+    busy(btnEl, true); try { await downloadFeedbacks(await api.get('/export/feedbacks')); } catch (ex) { toast(ex.message, 'err'); } busy(btnEl, false); };
   await load();
 }

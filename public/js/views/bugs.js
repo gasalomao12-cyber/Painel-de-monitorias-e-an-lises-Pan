@@ -48,9 +48,10 @@ function treat(b, done) {
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="bt-ok">Salvar e notificar</button>`,
     onMount: (m, close) => {
       $('#bt-ok', m).onclick = async (e) => {
-        busy(e.currentTarget, true);
+        const btnEl = e.currentTarget;
+        busy(btnEl, true);
         try { await api.put(`/bugs/${b.id}`, { status: $('#bt-st', m).value, admin_notes: $('#bt-n', m).value }); toast('Bug atualizado. O usuário foi notificado.'); close(); done(); }
-        catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
+        catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
   });

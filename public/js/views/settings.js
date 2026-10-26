@@ -27,6 +27,24 @@ export async function render(el, _p, ctx) {
         <p class="tiny muted">Ajustes feitos manualmente por analistas nunca são sobrescritos pela IA. Tudo fica registrado no histórico.</p>
       </div>
       <div class="stack" style="gap:18px">
+        <div class="card card-pad"><h3 style="margin:0 0 14px;font-size:15px">${icon('audio')} Transcrição de áudio (Azure Speech)</h3>
+          <div class="banner ${s.azure_speech_key_set && s.azure_speech_endpoint ? 'ok' : 'info'}">${icon(s.azure_speech_key_set && s.azure_speech_endpoint ? 'checkCircle' : 'info')}<div>${s.azure_speech_key_set && s.azure_speech_endpoint
+            ? html`Ativa · o admin envia o áudio da ligação e a plataforma transcreve (separando operador e cliente) antes da análise com IA.`
+            : 'Com uma chave do Azure Speech, o admin envia o .wav da ligação e a plataforma transcreve sozinha antes da análise com IA.'}</div></div>
+          <div class="grid g-2">
+            <div class="field"><label for="st-az-ep">Região ou endpoint do recurso</label><input class="input" id="st-az-ep" name="azure_speech_endpoint" value="${s.azure_speech_endpoint || ''}" placeholder="brazilsouth" ${s.azure_speech_endpoint_env ? 'disabled' : ''}>
+              <span class="hint">A região do recurso (ex.: <code>brazilsouth</code>, <code>eastus</code>) ou o endpoint completo (<code>https://….cognitiveservices.azure.com</code>).</span></div>
+            <div class="field"><label for="st-az-mode">Separação das vozes</label><select class="select" id="st-az-mode" name="azure_speech_mode">
+              <option value="diarizacao" ${s.azure_speech_mode !== 'canais' ? 'selected' : ''}>Pela voz (gravação mono ou estéreo misturado)</option>
+              <option value="canais" ${s.azure_speech_mode === 'canais' ? 'selected' : ''}>Por canal (operador e cliente em canais separados)</option></select>
+              <span class="hint">Na dúvida, “pela voz”. Se a gravação for mono, o modo “por canal” volta para “pela voz” sozinho.</span></div>
+          </div>
+          <div class="field"><label for="st-az-key">Chave do recurso de Speech</label><input class="input" id="st-az-key" type="password" autocomplete="off" placeholder="${s.azure_speech_key_hint ? 'Deixe em branco para manter a atual' : 'Chave 1 ou 2 do recurso no portal da Azure'}" ${s.azure_speech_key_source === 'variavel_ambiente' ? 'disabled' : ''}>
+            <span class="hint">${s.azure_speech_key_source === 'variavel_ambiente' ? 'Definida na variável de ambiente AZURE_SPEECH_KEY do servidor.' : s.azure_speech_key_hint ? html`Cadastrada (<code>${s.azure_speech_key_hint}</code>). Fica só no servidor.` : 'Portal da Azure › recurso de Speech › Chaves e Ponto de Extremidade. Fica só no servidor.'}</span></div>
+          ${s.azure_speech_key_source === 'banco' ? html`<label class="check small mb"><input type="checkbox" id="st-az-rm"> Remover a chave cadastrada</label>` : ''}
+          <div class="row"><button type="button" class="btn" id="st-az-test">${icon('zap')}Testar conexão</button><span class="small t2" id="st-az-st"></span></div>
+          <p class="tiny muted" style="margin-bottom:0">O áudio vai do servidor direto para o recurso de Speech da empresa e não fica guardado na plataforma, só o texto. Confirme com a TI o uso das gravações nesse serviço.</p>
+        </div>
         <div class="card card-pad"><h3 style="margin:0 0 14px;font-size:15px">${icon('settings')} Geral</h3>
           <div class="field"><label for="st-co">Nome da empresa (capa dos reports)</label><input class="input" id="st-co" name="company_name" value="${s.company_name || ''}"></div>
           <div class="field"><label for="st-ft">Rodapé dos reports (opcional)</label><input class="input" id="st-ft" name="report_footer" value="${s.report_footer || ''}" placeholder="Uso interno · Confidencial"></div>
@@ -48,16 +66,33 @@ export async function render(el, _p, ctx) {
     const key = $('#st-key').value.trim();
     if (key) body.anthropic_api_key = key;
     if ($('#st-key-rm')?.checked) body.anthropic_api_key = '';
+    if (!f.azure_speech_endpoint.disabled) body.azure_speech_endpoint = f.azure_speech_endpoint.value.trim();
+    body.azure_speech_mode = f.azure_speech_mode.value;
+    const azKey = $('#st-az-key').value.trim();
+    if (azKey) body.azure_speech_key = azKey;
+    if ($('#st-az-rm')?.checked) body.azure_speech_key = '';
     busy($('#st-save'), true, 'Salvando');
     try { await api.put('/settings', body); toast('Configurações salvas.'); await ctx.refreshMeta(); ctx.store.company = body.company_name || ctx.store.company; render(el, _p, ctx); }
     catch (ex) { toast(ex.message, 'err'); busy($('#st-save'), false); }
   });
-  $('#st-bk').onclick = async (e) => { busy(e.currentTarget, true); try { const data = await api.get('/admin/backup'); saveBlob(new Blob([JSON.stringify(data)], { type: 'application/json' }), `px-monitorias-backup-${new Date().toISOString().slice(0, 10)}.json`); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
+  $('#st-az-test').onclick = async (e) => {
+    const btnEl = e.currentTarget;
+    const st = $('#st-az-st');
+    st.textContent = 'Salve as configurações antes de testar uma chave nova.';
+    busy(btnEl, true, 'Testando');
+    try { const r = await api.post('/settings/speech-test'); st.textContent = `Conexão ok · ${r.endpoint}`; st.style.color = 'var(--ok-ink)'; }
+    catch (ex) { st.textContent = ex.message; st.style.color = 'var(--bad-ink)'; }
+    busy(btnEl, false);
+  };
+  $('#st-bk').onclick = async (e) => {
+    const btnEl = e.currentTarget;
+    busy(btnEl, true); try { const data = await api.get('/admin/backup'); saveBlob(new Blob([JSON.stringify(data)], { type: 'application/json' }), `px-monitorias-backup-${new Date().toISOString().slice(0, 10)}.json`); } catch (ex) { toast(ex.message, 'err'); } busy(btnEl, false); };
   $('#st-seed').onclick = async (e) => {
+    const btnEl = e.currentTarget;
     if (!(await confirmDialog('Carregar dados de demonstração', 'Cria 14 operadores, 7 quinzenas e cerca de 240 monitorias fictícias, além de 3 usuários fictícios sem acesso (@px-demo.local). Use só para conhecer a plataforma — dá para remover depois.', { ok: 'Carregar' }))) return;
-    busy(e.currentTarget, true, 'Carregando');
+    busy(btnEl, true, 'Carregando');
     try { await api.post('/admin/seed-demo'); toast('Demonstração carregada.'); await ctx.refreshMeta(); } catch (ex) { toast(ex.message, 'err'); }
-    busy(e.currentTarget, false);
+    busy(btnEl, false);
   };
   $('#st-demo').onclick = async () => {
     if (!(await confirmDialog('Remover dados de demonstração', 'Monitorias, operadores e usuários de exemplo (que nunca fizeram login) serão removidos. Dados reais não são afetados.', { ok: 'Remover', danger: true }))) return;

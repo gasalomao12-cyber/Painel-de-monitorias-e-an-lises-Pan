@@ -35,11 +35,12 @@ function edit(c, done) {
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="cr-ok">Salvar</button>`,
     onMount: (m, close) => {
       $('#cr-ok', m).onclick = async (e) => {
+        const btnEl = e.currentTarget;
         const f = $('#cr-form', m); if (!f.reportValidity()) return;
         const body = { product: f.product.value, code: f.code.value, weight: Number(f.weight.value), stage: f.stage.value, name: f.name.value, description: f.description.value, critical: f.critical.checked, active: c ? f.active.checked : true };
-        busy(e.currentTarget, true);
+        busy(btnEl, true);
         try { c ? await api.put(`/criteria/${c.id}`, body) : await api.post('/criteria', body); toast('Critério salvo.'); close(); done(); }
-        catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
+        catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
   });

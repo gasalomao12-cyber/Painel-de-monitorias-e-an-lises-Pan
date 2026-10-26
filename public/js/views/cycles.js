@@ -74,11 +74,12 @@ function editCycle(c, done) {
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="cy-ok">Salvar</button>`,
     onMount: (m, close) => {
       $('#cy-ok', m).onclick = async (e) => {
+        const btnEl = e.currentTarget;
         const f = $('#cy-form', m); if (!f.reportValidity()) return;
         const body = { name: f.name.value, start_date: f.start_date.value, end_date: f.end_date.value, audio_folder_url: f.audio_folder_url.value.trim(), status: f.status.value };
-        busy(e.currentTarget, true);
+        busy(btnEl, true);
         try { c ? await api.put(`/cycles/${c.id}`, body) : await api.post('/cycles', body); toast('Quinzena salva.'); close(); done(); }
-        catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
+        catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
   });
@@ -93,9 +94,10 @@ function editFolder(c, done) {
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="fd-ok">Salvar link</button>`,
     onMount: (m, close) => {
       $('#fd-ok', m).onclick = async (e) => {
-        busy(e.currentTarget, true);
+        const btnEl = e.currentTarget;
+        busy(btnEl, true);
         try { await api.put(`/cycles/${c.id}`, { audio_folder_url: $('#fd-url', m).value.trim() }); toast('Pasta de áudios atualizada.'); close(); done(); }
-        catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
+        catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
   });
