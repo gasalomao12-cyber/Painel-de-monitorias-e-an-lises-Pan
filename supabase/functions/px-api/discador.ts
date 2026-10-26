@@ -31,7 +31,7 @@ function cycleName(from) {
   return `${d.getDate() <= 15 ? '1ª' : '2ª'} quinzena · ${mes}/${d.getFullYear()}`;
 }
 
-async function cycleFor(date, cache) {
+export async function cycleFor(date, cache) {
   if (cache.has(date)) return cache.get(date);
   const hit = await must(sb().from('px_cycles').select('id').lte('start_date', date).gte('end_date', date).order('start_date', { ascending: false }).limit(1));
   let id = hit[0]?.id;

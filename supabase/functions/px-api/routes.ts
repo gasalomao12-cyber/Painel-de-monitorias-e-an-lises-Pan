@@ -10,7 +10,7 @@ import { seedDemo, clearDemo } from './seed.ts';
 import { normalizeRows } from './normalize.ts';
 import { importDashboard } from './dashboard.ts';
 import { importCalls } from './discador.ts';
-import { importSpeechAgv, AGV_CODES } from './agv.ts';
+import { importSpeechAgv, importAgvDashboard, AGV_CODES } from './agv.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
 
@@ -1086,6 +1086,14 @@ router.post('/import/speech-agv', QUALITY, h(async (req, res) => {
   const b = req.body || {};
   const out = await importSpeechAgv({ rows: b.rows }, req.user.id);
   if (out.updated || b.last) await audit(req.user.id, 'importacao_speech_agv', 'import', null, { atualizadas: out.updated, sem_ligacao: out.unmatched.length, ignoradas: out.skipped.length, corrigidos: out.corrected, arquivo: b.filename ? String(b.filename).slice(0, 200) : null, lote: b.batch || null });
+  res.json(out);
+}));
+
+// Dashboards AGV (gerência e comparativo): completam as ligações AGV já cadastradas ou criam as que faltam
+router.post('/import/agv-dashboard', QUALITY, h(async (req, res) => {
+  const b = req.body || {};
+  const out = await importAgvDashboard({ kind: b.kind, calls: b.calls, meta: b.meta || null, cycle_id: intOrNull(b.cycle_id), filename: b.filename }, req.user.id);
+  if (out.created || out.updated || b.last) await audit(req.user.id, 'importacao_dashboard_agv', 'import', null, { tipo: b.kind, novas: out.created, completadas: out.updated, ignoradas: out.skipped.length, arquivo: b.filename ? String(b.filename).slice(0, 200) : null, lote: b.batch || null });
   res.json(out);
 }));
 

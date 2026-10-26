@@ -1,6 +1,7 @@
 import { api } from '../api.js';
 import { html, icon, $, toast, busy, fmtDate, fmtScore, fmtInt, PRODUCT, SEGMENT } from '../ui.js';
 import { parseSheetFile, downloadTemplate } from '../files.js';
+import { sendAgvDashboard, AGV_DASH_KIND } from './agv.js';
 
 // ------------------------------------------------------------------ Lista de ligações do discador (.csv)
 // Colunas do relatório do discador → campos da plataforma (sem acento e sem diferenciar maiúsculas)
@@ -88,21 +89,40 @@ function productOf(kind, c) {
   if (c.prod === 'CON') return ['CONSIGNADO', /privad/.test(seg) ? 'PRIVADO' : /consign|public/.test(seg) ? 'PUBLICO' : 'none'];
   return ['CARTOES', /longo/.test(seg) ? 'CLEAN_LONGO' : /curto/.test(seg) ? 'CLEAN_CURTO' : 'none'];
 }
-async function readDashboard(file) {
+// Dashboards AGV: "Teste do speech AGV" por gerência (resposta do speech + revisada) e o comparativo entre dois dias
+function detectAgvKind(calls) {
+  const c = (calls || []).find((x) => x && ((x.sp && x.fin) || (x.q && Object.keys(x.q).length))) || (calls || [])[0];
+  if (!c) return null;
+  if (c.sp && c.fin && 'ident' in c.sp) return 'dash_agv';
+  if (c.day && c.q && ('sv' in c.q || 'conv' in c.q)) return 'dash_agv_cmp';
+  return null;
+}
+const ddmm = (d) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : '');
+export async function readDashboard(file) {
   const text = await file.text();
   const doc = new DOMParser().parseFromString(text, 'text/html');
   const node = doc.querySelector('script#dados[type="application/json"]');
   if (!node) throw new Error('Este arquivo não tem os dados do dashboard (bloco "dados" não encontrado).');
   let data;
   try { data = JSON.parse(node.textContent); } catch { throw new Error('Não foi possível ler os dados do dashboard.'); }
+  const ger = data.ger || null;
+  if (ger && Array.isArray(data.calls) && !data.calls.length) throw new Error(`O dashboard AGV da gerência ${ger.nome || ''} (${ger.curto || ger.escopo || ''}) veio sem nenhuma ligação. Gere o arquivo de novo com as ligações do período.`);
+  const agvKind = detectAgvKind(data.calls);
+  if (agvKind) {
+    const first = (d) => data.calls.filter((c) => c.day === d).map((c) => String(c.dt).slice(0, 10)).sort()[0];
+    const meta = agvKind === 'dash_agv' ? { nome: ger?.nome || null, curto: ger?.curto || null, escopo: ger?.escopo || null }
+      : { title: (doc.title || '').trim() || null, periods: { A: ddmm(first('A')), B: ddmm(first('B')) } };
+    return { kind: agvKind, calls: data.calls, meta, name: file.name, title: (doc.title || '').trim() };
+  }
   const kind = detectKind(data.calls);
-  if (!kind) throw new Error('Formato de dashboard não reconhecido. São aceitos o "Speech E.A. e Refin" (Veículos) e o "Roteiro Sem Garantia".');
+  if (!kind) throw new Error('Formato de dashboard não reconhecido. São aceitos o "Speech E.A. e Refin" (Veículos), o "Roteiro Sem Garantia" e os dashboards AGV.');
   return { kind, calls: data.calls, period: data.periodo || '', name: file.name };
 }
 
 function drawDash(el, ctx) {
   const box = $('#dash-prev', el);
   if (!dash) { box.innerHTML = ''; return; }
+  if (AGV_DASH_KIND[dash.kind]) { drawAgvDash(el, ctx, box); return; }
   const { kind, calls } = dash;
   const groups = {};
   for (const c of calls) { const [p, s] = productOf(kind, c); const k = `${p}|${s || ''}`; groups[k] = (groups[k] || 0) + 1; }
@@ -166,7 +186,7 @@ export async function render(el, _p, ctx) {
       <div id="calls-prev"></div>
     </div>
     <div class="card card-pad mb"><span class="chip brand">Dashboard PAN</span><h3 style="margin:10px 0 6px">Dashboard de monitoria já trabalhado (.html)</h3>
-      <p class="small t2" style="margin-top:0">Aceita o <b>Speech E.A. e Refin</b> (Veículos) e o <b>Roteiro Sem Garantia</b> (Cartões em Clean Curto/Longo e Consignado em Público/Privado). Vêm junto o roteiro item a item, os ajustes de coerência com o motivo, líder e gerência, tabulação, desfecho, aptidão a E.A./refin, alertas de sigilo e conduta, transcrição, resumo e feedback sugerido.</p>
+      <p class="small t2" style="margin-top:0">Aceita o <b>Speech E.A. e Refin</b> (Veículos), o <b>Roteiro Sem Garantia</b> (Cartões em Clean Curto/Longo e Consignado em Público/Privado) e os <b>dashboards AGV</b> (teste do speech por gerência e comparativo), que vão para a divisão Análises AGV. Vêm junto o roteiro item a item, os ajustes de coerência com o motivo, líder e gerência, tabulação, desfecho, aptidão a E.A./refin, alertas de sigilo e conduta, transcrição, resumo e feedback sugerido.</p>
       <label class="drop" id="dash-drop" style="padding:20px"><input type="file" id="dash-file" accept=".html,.htm" hidden>
         <div class="ic">${icon('upload')}</div><h4>Arraste o arquivo do dashboard ou clique</h4><p class="muted small" style="margin:0" id="dash-name">.html exportado do dashboard</p></label>
       <div id="dash-prev"></div>
@@ -233,6 +253,31 @@ export async function render(el, _p, ctx) {
   ['dragenter', 'dragover'].forEach((t) => ddrop.addEventListener(t, (e) => { e.preventDefault(); ddrop.classList.add('over'); }));
   ['dragleave', 'drop'].forEach((t) => ddrop.addEventListener(t, (e) => { e.preventDefault(); ddrop.classList.remove('over'); }));
   ddrop.addEventListener('drop', (e) => handleDash(e.dataTransfer.files[0]));
+}
+
+// Dashboard AGV: as ligações vão para a divisão AGV (completando as que já vieram do discador ou do speech)
+function drawAgvDash(el, ctx, box) {
+  const { calls, meta, name, title, kind } = dash;
+  const dates = calls.map((c) => String(c.dt || '').slice(0, 10)).filter(Boolean).sort();
+  const ops = new Set(calls.map((c) => c.login || c.log || c.op).filter(Boolean));
+  box.innerHTML = String(html`<div class="card mt"><div class="card-head"><div><span class="chip brand">${icon('zap')}AGV</span><h3 style="margin-top:8px">${title || AGV_DASH_KIND[kind]}</h3>
+      <div class="sub">${name} · ${dates.length ? `${fmtDate(dates[0])} a ${fmtDate(dates[dates.length - 1])}` : 'sem datas'}</div></div><div class="grow"></div>
+      <button class="btn ghost" id="dash-cancel">Cancelar</button><button class="btn primary lg" id="dash-go">${icon('upload')}Importar ${fmtInt(calls.length)} ligações</button></div>
+    <div class="card-body"><div class="grid g-3">
+      <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('headset')}</span><div><b>${fmtInt(calls.length)} ligações AGV</b><div class="t2 small">${AGV_DASH_KIND[kind]}${meta?.nome ? ` · gerência ${meta.nome}` : ''}${meta?.periods ? ` · A ${meta.periods.A} × B ${meta.periods.B}` : ''}</div></div></div>
+      <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('users')}</span><div><b>${fmtInt(ops.size)} operadores</b><div class="t2 small">cadastro completado pelo login</div></div></div>
+      <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('link')}</span><div><b>Sem duplicar</b><div class="t2 small">Ligação que já veio do discador ou do relatório do speech é completada com a leitura revisada.</div></div></div>
+    </div><div id="dash-progress" class="small t2 mt"></div></div></div>`);
+  $('#dash-cancel', box).onclick = () => { dash = null; $('#dash-name').textContent = '.html exportado do dashboard'; drawDash(el, ctx); };
+  $('#dash-go', box).onclick = async (e) => {
+    const btnEl = e.currentTarget; busy(btnEl, true, 'Importando');
+    const prog = $('#dash-progress', box);
+    try {
+      const t = await sendAgvDashboard(dash, (msg) => { prog.textContent = msg; });
+      toast(`${t.created} ligação(ões) nova(s) · ${t.updated} completada(s)${t.skipped.length ? ` · ${t.skipped.length} ignorada(s)` : ''}.`, 'ok', 6000);
+      dash = null; await ctx.refreshMeta(); ctx.navigate('agv');
+    } catch (ex) { toast(ex.message, 'err', 8000); busy(btnEl, false); prog.textContent = ''; }
+  };
 }
 
 function drawPreview(el, ctx) {

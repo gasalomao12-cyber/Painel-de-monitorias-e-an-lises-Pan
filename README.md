@@ -162,6 +162,12 @@ fica no campo desfecho da ligação.
   juntos ou separados. O discador cria as ligações (operador pelo login, carteira pela operação). O relatório preenche as
   respostas, ligando cada uma pelo ID no nome do áudio. Quando a mesma ligação foi avaliada mais de uma vez, vale a
   avaliação mais recente.
+- **Dashboards AGV (.html)**: entram pelo mesmo botão (ou em "Importar monitorias"). Há dois tipos:
+  - "Teste do speech AGV" por gerência: traz a resposta do speech, a resposta revisada e o porquê de cada correção.
+  - Comparativo AGV entre dois dias: traz a leitura da transcrição.
+
+  Uma ligação que já veio do discador ou do relatório do speech é completada com a leitura revisada, nunca duplicada,
+  e o relatório do speech não sobrescreve depois o que foi revisado no dashboard.
 - **Regras de coerência na entrada**:
   - Sem negociação com o titular (ou quem atendeu não era o titular), as perguntas da negociação viram N/A.
   - Confirmar valor e data só cabe quando houve acordo com boleto.

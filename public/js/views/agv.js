@@ -2,7 +2,7 @@ import { api, qs } from '../api.js';
 import { html, raw, icon, $, $$, toast, modal, busy, fmtScore, fmtPct, fmtInt, fmtDate, deltaTag, band, emptyState, PRODUCT, PRODUCT_SHORT, ALERT } from '../ui.js';
 import { lineChart, barChart, radarChart, palette, legendHtml } from '../charts.js';
 import { parseSheetFile } from '../files.js';
-import { mapCalls } from './import.js';
+import { mapCalls, readDashboard } from './import.js';
 
 // Divisão AGV: ligações das campanhas em que a assistente virtual (AGV) transfere para o operador,
 // avaliadas no roteiro AGV. Os dados vêm enxutos da API e os recortes são montados aqui, na hora.
@@ -391,13 +391,25 @@ export function mapSpeechReport(rows) {
   return { rows: [...latest.values()], evaluations: rows.length, questions: Object.keys(q) };
 }
 
+export const AGV_DASH_KIND = { dash_agv: 'Teste do speech AGV (por gerência)', dash_agv_cmp: 'Comparativo AGV' };
+// Envia um dashboard AGV em lotes; devolve o total de novas, completadas e ignoradas
+export async function sendAgvDashboard(d, onProgress) {
+  const t = { created: 0, updated: 0, skipped: [], operators_created: 0 };
+  for (let i = 0; i < d.calls.length; i += 100) {
+    onProgress?.(`${d.name}: ${Math.min(i + 100, d.calls.length)} de ${d.calls.length}…`);
+    const r = await api.post('/import/agv-dashboard', { kind: d.kind, calls: d.calls.slice(i, i + 100), meta: d.meta, filename: d.name, batch: i / 100 + 1, last: i + 100 >= d.calls.length });
+    t.created += r.created; t.updated += r.updated; t.operators_created += r.operators_created; t.skipped.push(...r.skipped);
+  }
+  return t;
+}
+
 function openImport(el, ctx) {
-  const files = { calls: null, speech: null };
+  const files = { calls: null, speech: null, dash: [] };
   const m = modal({
     title: 'Importar ligações AGV e o relatório do speech', wide: true,
-    body: html`<p class="small t2" style="margin-top:0">Envie os dois arquivos juntos ou um de cada vez: a <b>lista de ligações do discador</b> (.csv, com IdContato, Campanha, Login…) cria as ligações com operador e carteira; o <b>relatório do speech</b> (.xlsx “PAN TESTE DE PERGUNTAS AGV”) preenche as respostas de cada pergunta. As campanhas com AGV no nome entram no roteiro AGV.</p>
-      <label class="drop" id="agv-drop" style="padding:22px"><input type="file" id="agv-files" accept=".csv,.txt,.xlsx" multiple hidden>
-        <div class="ic">${icon('upload')}</div><h4>Arraste os arquivos ou clique</h4><p class="muted small" style="margin:0">.csv do discador e/ou .xlsx do speech</p></label>
+    body: html`<p class="small t2" style="margin-top:0">Envie tudo junto ou um de cada vez: a <b>lista de ligações do discador</b> (.csv, com IdContato, Campanha, Login…) cria as ligações com operador e carteira; o <b>relatório do speech</b> (.xlsx “PAN TESTE DE PERGUNTAS AGV”) preenche as respostas de cada pergunta; os <b>dashboards AGV</b> (.html por gerência ou comparativo) trazem a leitura já revisada, que vale mais que a resposta crua do speech. As campanhas com AGV no nome entram no roteiro AGV.</p>
+      <label class="drop" id="agv-drop" style="padding:22px"><input type="file" id="agv-files" accept=".csv,.txt,.xlsx,.html,.htm" multiple hidden>
+        <div class="ic">${icon('upload')}</div><h4>Arraste os arquivos ou clique</h4><p class="muted small" style="margin:0">.csv do discador, .xlsx do speech e .html dos dashboards AGV</p></label>
       <div id="agv-files-list" class="stack mt"></div>
       <div class="hl info mt">${icon('info')}<div><b>Regras de coerência aplicadas na entrada</b><div class="t2 small">Sem negociação com o titular → perguntas da negociação viram N/A · confirmação de valor e data só com acordo com boleto · consequências não cabem quando houve acordo · outra condição só depois de uma proposta · acordo com boleto conta como proposta feita. A resposta original do speech fica guardada e cada correção aparece no card com o motivo.</div></div></div>
       <div id="agv-result" class="mt"></div>`,
@@ -409,12 +421,19 @@ function openImport(el, ctx) {
   const drawList = () => {
     list.innerHTML = String(html`
       ${files.calls ? html`<div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('list')}</span><div><b>${files.calls.name}</b><div class="t2 small">${fmtInt(files.calls.rows.length)} ligações do discador · ${fmtInt(files.calls.rows.filter((r) => /AGV/i.test(r.campaign || '')).length)} de campanhas AGV</div></div></div>` : ''}
+      ${files.dash.map((d) => html`<div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('report')}</span><div><b>${d.name}</b><div class="t2 small">${AGV_DASH_KIND[d.kind]}${d.meta?.nome ? ` · gerência ${d.meta.nome}` : ''} · ${fmtInt(d.calls.length)} ligações</div></div></div>`)}
       ${files.speech ? html`<div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('sparkles')}</span><div><b>${files.speech.name}</b><div class="t2 small">${fmtInt(files.speech.evaluations)} avaliações do speech de ${fmtInt(files.speech.rows.length)} ligações (vale a mais recente de cada) · ${files.speech.questions.length} perguntas reconhecidas</div></div></div>` : ''}`);
-    go.disabled = !files.calls && !files.speech;
+    go.disabled = !files.calls && !files.speech && !files.dash.length;
   };
   const add = async (fl) => {
     for (const f of fl) {
       try {
+        if (/\.html?$/i.test(f.name)) {
+          const d = await readDashboard(f);
+          if (!AGV_DASH_KIND[d.kind]) throw new Error('é um dashboard de monitoria, não AGV. Importe-o em "Importar monitorias".');
+          files.dash = [...files.dash.filter((x) => x.name !== d.name), d];
+          continue;
+        }
         const rows = await parseSheetFile(f);
         const calls = mapCalls(rows);
         if (calls) { files.calls = { name: f.name, rows: calls }; continue; }
@@ -447,6 +466,11 @@ function openImport(el, ctx) {
         lines.push(html`<div class="insight"><span class="ic" style="background:var(--ok-soft);color:var(--ok-ink)">${icon('checkCircle')}</span><div><b>Discador</b><div class="t2 small">${t.created} ligação(ões) nova(s) · ${t.updated} completada(s) · ${t.skipped} já existiam${t.operators_created ? ` · ${t.operators_created} operador(es) cadastrado(s)` : ''}</div></div></div>`);
         files.calls = null;
       }
+      for (const d of files.dash) {
+        const t = await sendAgvDashboard(d, (msg) => { res.textContent = msg; });
+        lines.push(html`<div class="insight"><span class="ic" style="background:var(--ok-soft);color:var(--ok-ink)">${icon('checkCircle')}</span><div><b>${d.name}</b><div class="t2 small">${t.created} ligação(ões) nova(s) · ${t.updated} completada(s) com a leitura revisada${t.operators_created ? ` · ${t.operators_created} operador(es) cadastrado(s)` : ''}${t.skipped.length ? ` · ${t.skipped.length} ignorada(s): ${t.skipped.slice(0, 4).map((x) => `${x.id} (${x.reason})`).join(', ')}` : ''}</div></div></div>`);
+      }
+      files.dash = [];
       if (files.speech) {
         const t = { updated: 0, unchanged: 0, corrected: 0, unmatched: [], skipped: [], rules: {} };
         const rows = files.speech.rows;
@@ -459,7 +483,8 @@ function openImport(el, ctx) {
         lines.push(html`<div class="insight"><span class="ic" style="background:var(--ok-soft);color:var(--ok-ink)">${icon('checkCircle')}</span><div><b>Speech AGV</b><div class="t2 small">${t.updated} ligação(ões) avaliada(s)${t.unchanged ? ` · ${t.unchanged} já tinham avaliação mais nova` : ''} · ${t.corrected} resposta(s) corrigida(s) pelas regras de coerência</div>
           ${Object.keys(t.rules).length ? html`<ul class="small t2" style="margin:6px 0 0;padding-left:18px">${Object.entries(t.rules).sort((a, b) => b[1] - a[1]).map(([k, v]) => html`<li>${v} × ${k}</li>`)}</ul>` : ''}</div></div>`);
         if (t.unmatched.length) lines.push(html`<div class="insight"><span class="ic" style="background:var(--warn-soft);color:var(--warn-ink)">${icon('alert')}</span><div><b>${t.unmatched.length} ligação(ões) sem cadastro</b><div class="t2 small">Não estão na lista do discador importada. Importe o .csv do discador do mesmo período e envie o relatório de novo. IDs: ${t.unmatched.slice(0, 12).join(', ')}${t.unmatched.length > 12 ? '…' : ''}</div></div></div>`);
-        if (t.skipped.length) lines.push(html`<div class="insight"><span class="ic" style="background:var(--warn-soft);color:var(--warn-ink)">${icon('info')}</span><div><b>${t.skipped.length} ignorada(s)</b><div class="t2 small">${t.skipped.slice(0, 6).map((x) => `${x.id} (${x.reason})`).join(' · ')}</div></div></div>`);
+        const why = Object.entries(t.skipped.reduce((a, x) => { a[x.reason] = (a[x.reason] || 0) + 1; return a; }, {}));
+        if (why.length) lines.push(html`<div class="insight"><span class="ic" style="background:var(--info-soft);color:var(--info-ink)">${icon('info')}</span><div><b>${t.skipped.length} não alterada(s)</b><div class="t2 small">${why.map(([k, v]) => `${v} ${k}`).join(' · ')}</div></div></div>`);
         files.speech = null;
       }
       res.innerHTML = String(html`<div class="stack">${lines}</div>`);
@@ -472,6 +497,6 @@ function openImport(el, ctx) {
       res.innerHTML = String(html`<div class="stack">${lines}</div>`);
     }
     busy(btnEl, false);
-    go.disabled = !files.calls && !files.speech;
+    go.disabled = !files.calls && !files.speech && !files.dash.length;
   };
 }
