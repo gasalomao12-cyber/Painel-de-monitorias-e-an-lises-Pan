@@ -3,6 +3,24 @@
 const Chart = window.Chart;
 const live = new Map();
 
+// Com a escala da interface (CSS zoom), a posição do mouse precisa ser recalculada
+// a partir do retângulo real do gráfico; sem isso o tooltip pega o ponto vizinho.
+if (Chart && !Chart.registry.plugins.get('pxZoomFix')) {
+  Chart.register({
+    id: 'pxZoomFix',
+    beforeEvent(chart, args) {
+      const n = args.event?.native;
+      if (!n || n.clientX == null) return;
+      const r = chart.canvas.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      args.event.x = ((n.clientX - r.left) / r.width) * chart.width;
+      args.event.y = ((n.clientY - r.top) / r.height) * chart.height;
+      const a = chart.chartArea;
+      args.inChartArea = !!a && args.event.x >= a.left && args.event.x <= a.right && args.event.y >= a.top && args.event.y <= a.bottom;
+    },
+  });
+}
+
 export function cssVar(name, el = document.documentElement) {
   return getComputedStyle(el).getPropertyValue(name).trim();
 }

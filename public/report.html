@@ -3,18 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co http://127.0.0.1:54321 ws://127.0.0.1:54321 http://localhost:8000; worker-src 'self' blob:; base-uri 'self'; form-action 'self'">
   <title>Report de Qualidade · PX</title>
-  <link rel="icon" href="/icons/px.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/px.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
-  <link rel="stylesheet" href="/css/app.css">
-  <link rel="stylesheet" href="/css/report.css">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/report.css">
 </head>
 <body>
-  <div id="report"><div class="boot"><img class="px-logo" src="/icons/px.svg" alt="PX" style="width:72px;height:72px;background:none;box-shadow:none"></div></div>
-  <script src="/js/report-flag.js"></script>
-  <script src="/vendor/chart.umd.min.js"></script>
-  <script type="module" src="/js/report.js"></script>
+  <div id="report"><div class="boot"><img class="px-logo" src="icons/px.svg" alt="PX" style="width:72px;height:72px;background:none;box-shadow:none"></div></div>
+  <script src="js/report-flag.js"></script>
+  <script src="config.js"></script>
+  <script src="vendor/supabase.js"></script>
+  <script src="vendor/chart.umd.min.js"></script>
+  <script type="module" src="js/report.js"></script>
 </body>
 </html>

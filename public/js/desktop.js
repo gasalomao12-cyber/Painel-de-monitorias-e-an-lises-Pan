@@ -30,7 +30,7 @@ function encodeUtf16Base64(str) {
   return btoa(bin);
 }
 
-export function downloadWindowsShortcut(url = location.origin) {
+export function downloadWindowsShortcut(url = location.href.split('#')[0].replace(/\/(index\.html)?$/, '')) {
   const bat = `@echo off\r\ntitle PX Monitorias - criando atalho\r\necho Criando o atalho PX Monitorias na area de trabalho...\r\npowershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encodeUtf16Base64(psScript(url))}\r\n`;
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([bat], { type: 'application/bat' }));

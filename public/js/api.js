@@ -1,18 +1,23 @@
-// Cliente HTTP da API
+// Cliente HTTP da API (Edge Function px-api no Supabase)
+import { API_URL, accessToken } from './sb.js';
+
 export class ApiError extends Error {
-  constructor(message, status) { super(message); this.status = status; }
+  constructor(message, status, code) { super(message); this.status = status; this.code = code; }
 }
 
-async function request(method, url, body) {
-  const opts = { method, headers: {}, credentials: 'same-origin' };
-  if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+async function request(method, url, body, { raw = false } = {}) {
+  const token = await accessToken();
+  const headers = { apikey: window.PX_CONFIG.publishableKey };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
   let res;
-  try { res = await fetch(`/api${url}`, opts); }
+  try { res = await fetch(`${API_URL}${url}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined }); }
   catch { throw new ApiError('Sem conexão com o servidor. Verifique sua internet.', 0); }
+  if (raw && res.ok) return res;
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('application/json') ? await res.json().catch(() => ({})) : null;
   if (!res.ok) {
-    const err = new ApiError(data?.error || `Erro ${res.status}`, res.status);
+    const err = new ApiError(data?.error || data?.message || `Erro ${res.status}`, res.status, data?.code);
     if (res.status === 401 && !url.startsWith('/auth/')) window.dispatchEvent(new CustomEvent('px:unauthorized'));
     if (res.status === 428) window.dispatchEvent(new CustomEvent('px:must-change-password'));
     throw err;
@@ -26,6 +31,7 @@ export const api = {
   put: (u, b = {}) => request('PUT', u, b),
   patch: (u, b = {}) => request('PATCH', u, b),
   del: (u) => request('DELETE', u),
+  blob: async (u) => (await request('GET', u, undefined, { raw: true })).blob(),
 };
 
 export function qs(obj) {
@@ -35,10 +41,7 @@ export function qs(obj) {
   return s ? `?${s}` : '';
 }
 
-export async function download(url, filename) {
-  const res = await fetch(`/api${url}`, { credentials: 'same-origin' });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new ApiError(d.error || 'Falha no download', res.status); }
-  const blob = await res.blob();
+export function saveBlob(blob, filename) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = filename;

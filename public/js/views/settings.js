@@ -1,4 +1,4 @@
-import { api, download } from '../api.js';
+import { api, saveBlob } from '../api.js';
 import { html, icon, $, toast, busy, confirmDialog } from '../ui.js';
 
 const MODELS = [
@@ -35,7 +35,7 @@ export async function render(el, _p, ctx) {
         </div>
         <div class="card card-pad"><h3 style="margin:0 0 14px;font-size:15px">${icon('database')} Dados</h3>
           <p class="small t2" style="margin-top:0">Dados e logins guardados no <b>Supabase</b>. O backup baixa todas as tabelas da plataforma em JSON (sem a chave da IA).</p>
-          <div class="row"><button type="button" class="btn" id="st-bk">${icon('download')}Baixar backup</button><button type="button" class="btn danger" id="st-demo">${icon('trash')}Remover dados de demonstração</button></div>
+          <div class="row"><button type="button" class="btn" id="st-bk">${icon('download')}Baixar backup</button><button type="button" class="btn" id="st-seed">${icon('layers')}Carregar demonstração</button><button type="button" class="btn danger" id="st-demo">${icon('trash')}Remover dados de demonstração</button></div>
         </div>
       </div>
       <div class="span-2 row"><div style="flex:1"></div><button class="btn primary lg" id="st-save">${icon('check')}Salvar configurações</button></div>
@@ -52,9 +52,17 @@ export async function render(el, _p, ctx) {
     try { await api.put('/settings', body); toast('Configurações salvas.'); await ctx.refreshMeta(); ctx.store.company = body.company_name || ctx.store.company; render(el, _p, ctx); }
     catch (ex) { toast(ex.message, 'err'); busy($('#st-save'), false); }
   });
-  $('#st-bk').onclick = async (e) => { busy(e.currentTarget, true); try { await download('/admin/backup', `px-monitorias-backup-${new Date().toISOString().slice(0, 10)}.json`); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
+  $('#st-bk').onclick = async (e) => { busy(e.currentTarget, true); try { const data = await api.get('/admin/backup'); saveBlob(new Blob([JSON.stringify(data)], { type: 'application/json' }), `px-monitorias-backup-${new Date().toISOString().slice(0, 10)}.json`); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
+  $('#st-seed').onclick = async (e) => {
+    if (!(await confirmDialog('Carregar dados de demonstração', 'Cria 14 operadores, 7 quinzenas e cerca de 240 monitorias fictícias, além de 3 usuários fictícios sem acesso (@px-demo.local). Use só para conhecer a plataforma — dá para remover depois.', { ok: 'Carregar' }))) return;
+    busy(e.currentTarget, true, 'Carregando');
+    try { await api.post('/admin/seed-demo'); toast('Demonstração carregada.'); await ctx.refreshMeta(); } catch (ex) { toast(ex.message, 'err'); }
+    busy(e.currentTarget, false);
+  };
   $('#st-demo').onclick = async () => {
     if (!(await confirmDialog('Remover dados de demonstração', 'Monitorias, operadores e usuários de exemplo (que nunca fizeram login) serão removidos. Dados reais não são afetados.', { ok: 'Remover', danger: true }))) return;
     await api.post('/admin/clear-demo'); toast('Dados de demonstração removidos.'); await ctx.refreshMeta(); ctx.store.cycle = ''; localStorage.removeItem('px_cycle');
   };
 }
+
+export const hasUnsavedChanges = () => true;

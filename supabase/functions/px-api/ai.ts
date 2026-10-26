@@ -1,9 +1,9 @@
-'use strict';
+// @ts-nocheck — portado do servidor Node; tipagem frouxa de propósito
 // Análise automática de transcrições.
 // Com chave da Anthropic configurada usa o Claude; sem chave, cai numa análise heurística por palavras-chave
 // (marcada como tal e sem aplicar correções automaticamente).
-const Anthropic = require('@anthropic-ai/sdk');
-const { getSetting } = require('./db');
+import Anthropic from 'npm:@anthropic-ai/sdk@1.3.0';
+import { getSetting } from './db.ts';
 
 const RESULT_ENUM = ['C', 'P', 'NC', 'NA'];
 
@@ -64,7 +64,7 @@ Regras:
 - Escreva em português do Brasil, de forma objetiva e respeitosa, pensando que o texto pode embasar um feedback ao operador.`;
 
 function getApiKey() {
-  return process.env.ANTHROPIC_API_KEY || getSetting('anthropic_api_key') || null;
+  return Deno.env.get('ANTHROPIC_API_KEY') || getSetting('anthropic_api_key') || null;
 }
 
 function aiConfigured() { return !!getApiKey(); }
@@ -216,4 +216,4 @@ async function analyzeTranscript(evaluation, items) {
   return analyzeHeuristic(evaluation, items);
 }
 
-module.exports = { analyzeTranscript, aiConfigured, analyzeHeuristic };
+export { analyzeTranscript, aiConfigured, analyzeHeuristic };

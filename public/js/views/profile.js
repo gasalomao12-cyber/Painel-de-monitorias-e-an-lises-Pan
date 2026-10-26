@@ -25,7 +25,7 @@ export async function render(el, _p, ctx) {
       </form>
       <div class="card card-pad span-2" id="desk">
         <div class="row" style="align-items:flex-start;gap:18px">
-          <img src="/icons/px-128.png" alt="Ícone PX" width="72" height="72" style="border-radius:18px;box-shadow:0 12px 30px -10px rgba(124,108,255,.7)">
+          <img src="icons/px-128.png" alt="Ícone PX" width="72" height="72" style="border-radius:18px;box-shadow:0 12px 30px -10px rgba(124,108,255,.7)">
           <div style="flex:1;min-width:260px"><h3 style="margin:0 0 4px;font-size:16px">Atalho na área de trabalho</h3>
             <p class="small t2" style="margin:0 0 12px">Abra a plataforma com um clique, em janela própria e com o ícone <b>PX</b> — igual ao simulador de negociação.</p>
             <div class="row"><button class="btn primary" id="dk-win">${icon('download')}Atalho para Windows</button>
@@ -57,3 +57,5 @@ export async function render(el, _p, ctx) {
     busy($('#pw-save'), false);
   });
 }
+
+export const hasUnsavedChanges = () => true;

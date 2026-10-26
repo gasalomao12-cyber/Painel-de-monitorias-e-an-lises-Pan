@@ -25,10 +25,14 @@ export async function render(el, _p, ctx) {
             <p class="small" style="white-space:pre-wrap;margin:10px 0 0">${b.description}</p>
             ${b.admin_notes ? html`<div class="banner info mt" style="margin-bottom:0">${icon('info')}<div><b>Retorno do administrador:</b> ${b.admin_notes}</div></div>` : ''}
             ${admin ? html`<div class="tiny muted mt">${b.user_agent || ''}</div>` : ''}</div>
-          <div class="row">${b.has_screenshot ? html`<a class="btn sm" href="/api/bugs/${b.id}/screenshot" target="_blank" rel="noopener">${icon('image')}Ver print</a>` : ''}
+          <div class="row">${b.has_screenshot ? html`<button class="btn sm" data-shot="${b.id}">${icon('image')}Ver print</button>` : ''}
             ${admin ? html`<button class="btn sm primary" data-b="${b.id}">${icon('edit')}Tratar</button>` : ''}</div>
         </div></div>`)}</div>` : emptyState('bug', 'Nada por aqui', admin ? 'Nenhum bug neste filtro. 🎉' : 'Você ainda não reportou problemas.')}`);
     $('#bg-new').onclick = () => openBugReport();
+    $$('[data-shot]').forEach((x) => x.addEventListener('click', async () => {
+      try { const url = URL.createObjectURL(await api.blob(`/bugs/${x.dataset.shot}/screenshot`)); window.open(url, '_blank', 'noopener'); setTimeout(() => URL.revokeObjectURL(url), 60000); }
+      catch (ex) { toast(ex.message, 'err'); }
+    }));
     $$('#bg-f button').forEach((x) => x.addEventListener('click', () => { filter = x.dataset.v; draw(); }));
     $$('[data-b]').forEach((x) => x.addEventListener('click', () => treat(bugs.find((b) => b.id === Number(x.dataset.b)), async () => { await ctx.refreshMeta(); render(el, _p, ctx); })));
   };

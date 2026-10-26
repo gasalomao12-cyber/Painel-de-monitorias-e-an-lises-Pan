@@ -1,13 +1,20 @@
-'use strict';
+// @ts-nocheck — portado do servidor Node; tipagem frouxa de propósito
 // Configurações, auditoria e notificações sobre as tabelas px_* do Supabase.
-const { admin, must } = require('./supa');
+import { admin, must } from './supa.ts';
 
 const settings = new Map();
+let loadedAt = 0;
+
+// Cada instância da função guarda as configurações por alguns segundos
+async function ensureSettings(maxAgeMs = 15000) {
+  if (Date.now() - loadedAt > maxAgeMs) await loadSettings();
+}
 
 async function loadSettings() {
   const rows = await must(admin().from('px_settings').select('key, value'));
   settings.clear();
   for (const r of rows) settings.set(r.key, r.value);
+  loadedAt = Date.now();
 }
 
 function getSetting(key, fallback = null) {
@@ -34,4 +41,4 @@ async function notify(userIds, title, body, link) {
   if (error) console.error('Falha ao notificar:', error.message);
 }
 
-module.exports = { loadSettings, getSetting, setSetting, audit, notify };
+export { ensureSettings, loadSettings, getSetting, setSetting, audit, notify };

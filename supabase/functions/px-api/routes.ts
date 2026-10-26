@@ -1,15 +1,15 @@
-'use strict';
-const express = require('express');
-const Anthropic = require('@anthropic-ai/sdk');
-const { admin, authClient, must, count, fetchAll } = require('./supa');
-const { getSetting, setSetting, audit, notify, loadSettings } = require('./db');
-const auth = require('./auth');
-const { computeScore } = require('./scoring');
-const { analyzeTranscript, aiConfigured } = require('./ai');
-const { clearDemo } = require('./seed');
-const io = require('./io');
+// @ts-nocheck — rotas da API (portadas do servidor Node; mesma forma req/res/next)
+import Anthropic from 'npm:@anthropic-ai/sdk@1.3.0';
+import { Router } from './router.ts';
+import { admin, authClient, must, count, fetchAll } from './supa.ts';
+import { getSetting, setSetting, audit, notify, loadSettings, ensureSettings } from './db.ts';
+import * as auth from './auth.ts';
+import { computeScore } from './scoring.ts';
+import { analyzeTranscript, aiConfigured } from './ai.ts';
+import { seedDemo, clearDemo } from './seed.ts';
+import { normalizeRows } from './normalize.ts';
 
-const router = express.Router();
+const router = new Router();
 const sb = () => admin();
 const { requireAuth, requireRole } = auth;
 const ADMIN = requireRole('admin');
@@ -25,70 +25,24 @@ const isUrl = (s) => { try { const u = new URL(s); return u.protocol === 'https:
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || ''));
 const likeSafe = (s) => String(s || '').replace(/[,()*%\\:"']/g, ' ').trim().slice(0, 80);
-const origin = (req) => (process.env.PUBLIC_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+// As transcrições chegam já como texto (o navegador lê .txt/.docx/.vtt/.srt/.json)
+const readTranscript = (b) => ({ text: String(b.text || '').replace(/\r\n/g, '\n').slice(0, 400000), name: String(b.name || 'transcricao.txt').slice(0, 200) });
+
+router.use(h(async (_req, _res, next) => { await ensureSettings(); next(); }));
 
 // --------------------------------------------------------------- Autenticação
-router.post('/auth/login', h(async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  const password = String(req.body?.password || '');
-  const key = `${req.ip}|${email}`;
-  const wait = auth.loginThrottle(key);
-  if (wait) return res.status(429).json({ error: `Muitas tentativas. Aguarde ${Math.ceil(wait / 60)} min e tente de novo.` });
-  if (!isEmail(email) || !password) return res.status(400).json({ error: 'Informe e-mail e senha.' });
-  const { data, error } = await authClient().auth.signInWithPassword({ email, password });
-  if (error || !data?.session) {
-    auth.loginFailed(key);
-    const m = error?.message || '';
-    const msg = /banned/i.test(m) ? 'Seu acesso está desativado. Fale com o administrador.' : /confirm/i.test(m) ? 'Confirme seu e-mail antes de entrar.' : 'E-mail ou senha inválidos.';
-    return res.status(401).json({ error: msg });
+// Login, "esqueci minha senha" e logout acontecem no navegador com o Supabase Auth.
+// Aqui ficam o perfil da plataforma e as ações que exigem a chave secreta.
+router.get('/auth/me', h(async (req, res) => {
+  const company = getSetting('company_name', 'Paschoalotto');
+  if (!req.authUserId) return res.json({ user: null, company });
+  if (!req.user) return res.status(403).json({ error: 'Este e-mail não tem acesso à plataforma de monitorias (ou o acesso está desativado). Fale com o administrador.', code: 'NO_PROFILE', company });
+  let u = req.user;
+  if (req.query.login === '1') {
+    u = await must(sb().from('px_profiles').update({ last_login: nowIso() }).eq('id', u.id).select().single());
+    await audit(u.id, 'login', 'user', null);
   }
-  const profile = await auth.loadProfile(data.user.id);
-  if (!profile) return res.status(403).json({ error: 'Este e-mail não tem acesso à plataforma de monitorias. Fale com o administrador.' });
-  if (!profile.active) return res.status(403).json({ error: 'Seu acesso está desativado. Fale com o administrador.' });
-  auth.loginOk(key);
-  auth.setSessionCookies(req, res, data.session);
-  const updated = await must(sb().from('px_profiles').update({ last_login: nowIso() }).eq('id', profile.id).select().single());
-  await audit(profile.id, 'login', 'user', null);
-  res.json({ user: auth.publicUser(updated) });
-}));
-
-router.post('/auth/logout', h(async (req, res) => {
-  if (req.accessToken) await sb().auth.admin.signOut(req.accessToken).catch(() => {});
-  auth.clearSessionCookies(req, res);
-  res.json({ ok: true });
-}));
-
-router.get('/auth/me', (req, res) => {
-  res.json({ user: auth.publicUser(req.user), company: getSetting('company_name', 'Paschoalotto') });
-});
-
-// "Esqueci minha senha": o Supabase envia o e-mail com link para /redefinir-senha
-router.post('/auth/forgot', h(async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  if (!isEmail(email)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
-  const key = `forgot|${req.ip}`;
-  if (auth.loginThrottle(key)) return res.status(429).json({ error: 'Muitas solicitações. Aguarde alguns minutos.' });
-  auth.loginFailed(key);
-  const { error } = await authClient().auth.resetPasswordForEmail(email, { redirectTo: `${origin(req)}/redefinir-senha` });
-  if (error) console.warn('resetPasswordForEmail:', error.message);
-  // Resposta igual com ou sem cadastro, para não revelar quais e-mails existem
-  res.json({ ok: true });
-}));
-
-router.post('/auth/recover', h(async (req, res) => {
-  const { access_token: at, refresh_token: rt, password } = req.body || {};
-  const uid = await auth.verifyToken(at);
-  if (!uid) return res.status(400).json({ error: 'Link de recuperação inválido ou expirado. Solicite um novo.' });
-  const err = auth.validatePassword(password);
-  if (err) return res.status(400).json({ error: err });
-  const profile = await auth.loadProfile(uid);
-  if (!profile || !profile.active) return res.status(403).json({ error: 'Este e-mail não tem acesso à plataforma de monitorias.' });
-  const { error } = await sb().auth.admin.updateUserById(uid, { password });
-  if (error) return res.status(400).json({ error: error.message });
-  await must(sb().from('px_profiles').update({ must_change_password: false }).eq('id', uid));
-  if (rt) auth.setSessionCookies(req, res, { access_token: at, refresh_token: rt });
-  await audit(uid, 'senha_redefinida', 'user', null);
-  res.json({ user: auth.publicUser(await auth.loadProfile(uid)) });
+  res.json({ user: auth.publicUser(u), company });
 }));
 
 router.post('/auth/onboarding', requireAuth, h(async (req, res) => {
@@ -109,10 +63,19 @@ router.post('/auth/password', requireAuth, h(async (req, res) => {
   const { error } = await sb().auth.admin.updateUserById(req.user.id, { password: next });
   if (error) return res.status(400).json({ error: error.message });
   const u = await must(sb().from('px_profiles').update({ must_change_password: false }).eq('id', req.user.id).select().single());
-  // nova sessão com a senha nova
-  const fresh = await authClient().auth.signInWithPassword({ email: req.user.email, password: next });
-  if (fresh.data?.session) auth.setSessionCookies(req, res, fresh.data.session);
   await audit(req.user.id, 'senha_alterada', 'user', null);
+  res.json({ user: auth.publicUser(u) });
+}));
+
+// Chamado pela página de recuperação (sessão aberta pelo link do e-mail)
+router.post('/auth/recover', requireAuth, h(async (req, res) => {
+  const password = req.body?.password;
+  const err = auth.validatePassword(password);
+  if (err) return res.status(400).json({ error: err });
+  const { error } = await sb().auth.admin.updateUserById(req.user.id, { password });
+  if (error) return res.status(400).json({ error: error.message });
+  const u = await must(sb().from('px_profiles').update({ must_change_password: false }).eq('id', req.user.id).select().single());
+  await audit(req.user.id, 'senha_redefinida', 'user', null);
   res.json({ user: auth.publicUser(u) });
 }));
 
@@ -384,14 +347,12 @@ router.post('/evaluations/:id/transcript', QUALITY, h(async (req, res) => {
   const id = Number(req.params.id);
   const ex = await must(sb().from('px_evaluations').select('id').eq('id', id).maybeSingle());
   if (!ex) return res.status(404).json({ error: 'Atendimento não encontrado.' });
-  const { text, name } = await io.readTranscript(req.body || {});
+  const { text, name } = readTranscript(req.body || {});
   if (!text.trim()) return res.status(400).json({ error: 'A transcrição está vazia.' });
   await must(sb().from('px_evaluations').update({ transcript: text, transcript_name: name, ai_status: 'nao_executada', updated_at: nowIso() }).eq('id', id));
   await audit(req.user.id, 'transcricao_anexada', 'evaluation', id, { arquivo: name, caracteres: text.length });
   res.json(await loadEvaluation(id));
 }));
-
-router.post('/transcripts/parse', QUALITY, h(async (req, res) => res.json(await io.readTranscript(req.body || {}))));
 
 function friendlyAiError(e) {
   if (e instanceof Anthropic.AuthenticationError) return 'Chave da API da Anthropic inválida. Revise em Configurações.';
@@ -465,7 +426,7 @@ router.post('/evaluations/:id/ai/apply', QUALITY, h(async (req, res) => {
 // Nova análise a partir de uma transcrição (sem speech prévio)
 router.post('/analyses', QUALITY, h(async (req, res) => {
   const b = req.body || {};
-  const { text, name } = await io.readTranscript(b);
+  const { text, name } = readTranscript(b);
   if (!text.trim()) return res.status(400).json({ error: 'A transcrição está vazia.' });
   const id = await createEvaluation({ ...b, transcript: text, transcript_name: name, audio_url: req.user.role === 'admin' ? b.audio_url : null }, req.user.id);
   await audit(req.user.id, 'atendimento_criado', 'evaluation', id, { origem: 'transcricao', arquivo: name });
@@ -706,20 +667,13 @@ router.get('/reports/data', h(async (req, res) => {
 }));
 
 // --------------------------------------------------------------- Importação
-router.get('/import/template', QUALITY, h(async (req, res) => {
-  const buf = await io.buildTemplate(await must(sb().from('px_criteria').select('*').eq('active', true).order('sort')));
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', 'attachment; filename="modelo-importacao-px-monitorias.xlsx"');
-  res.send(Buffer.from(buf));
-}));
-
 router.post('/import/preview', QUALITY, h(async (req, res) => {
-  const rows = await io.parseSheet(req.body || {});
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 5000) : [];
   const [criteria, operators] = await Promise.all([
     must(sb().from('px_criteria').select('*').eq('active', true).order('sort')),
     must(sb().from('px_operators').select('id, name, registration')),
   ]);
-  res.json(io.normalizeRows(rows, criteria, operators));
+  res.json(normalizeRows(rows, criteria, operators));
 }));
 
 router.post('/import/commit', QUALITY, h(async (req, res) => {
@@ -775,7 +729,7 @@ router.get('/bugs/:id/screenshot', h(async (req, res) => {
   if (!b || !b.screenshot || (req.user.role !== 'admin' && b.user_id !== req.user.id)) return res.status(404).end();
   const [meta, data] = b.screenshot.split(',');
   res.setHeader('Content-Type', meta.slice(5, meta.indexOf(';')));
-  res.send(Buffer.from(data, 'base64'));
+  res.send(Uint8Array.from(atob(data), (ch) => ch.charCodeAt(0)));
 }));
 
 router.put('/bugs/:id', ADMIN, h(async (req, res) => {
@@ -963,8 +917,8 @@ router.get('/settings', ADMIN, h(async (req, res) => {
   await loadSettings();
   const out = Object.fromEntries(SETTING_KEYS.map((k) => [k, getSetting(k)]));
   const key = getSetting('anthropic_api_key');
-  out.anthropic_api_key_set = !!key || !!process.env.ANTHROPIC_API_KEY;
-  out.anthropic_api_key_source = process.env.ANTHROPIC_API_KEY ? 'variavel_ambiente' : key ? 'banco' : null;
+  out.anthropic_api_key_set = !!key || !!Deno.env.get('ANTHROPIC_API_KEY');
+  out.anthropic_api_key_source = Deno.env.get('ANTHROPIC_API_KEY') ? 'variavel_ambiente' : key ? 'banco' : null;
   out.anthropic_api_key_hint = key ? `${key.slice(0, 7)}…${key.slice(-4)}` : null;
   out.storage = 'Supabase';
   res.json(out);
@@ -983,6 +937,12 @@ router.get('/audit', ADMIN, h(async (req, res) => {
   let q = sb().from('px_v_audit').select('*').order('id', { ascending: false }).limit(limit);
   if (req.query.action) q = q.eq('action', req.query.action);
   res.json(await must(q));
+}));
+
+router.post('/admin/seed-demo', ADMIN, h(async (req, res) => {
+  await seedDemo();
+  await audit(req.user.id, 'demo_carregada', 'settings', null);
+  res.json({ ok: true });
 }));
 
 router.post('/admin/clear-demo', ADMIN, h(async (req, res) => {
@@ -1005,27 +965,19 @@ router.get('/admin/backup', ADMIN, h(async (req, res) => {
   res.send(JSON.stringify(out));
 }));
 
-router.get('/export/evaluations.xlsx', h(async (req, res) => {
-  const rows = await fetchAll(() => sorted(applyFilters(sb().from('px_v_eval_cards').select('*'), req, req.query), 'recentes').order('id'));
-  const buf = await io.exportEvaluations(rows);
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', 'attachment; filename="atendimentos-px-monitorias.xlsx"');
-  res.send(Buffer.from(buf));
+router.get('/export/evaluations', h(async (req, res) => {
+  res.json(await fetchAll(() => sorted(applyFilters(sb().from('px_v_eval_cards').select('*'), req, req.query), 'recentes').order('id')));
 }));
 
-router.get('/export/feedbacks.xlsx', h(async (req, res) => {
-  const rows = await fetchAll(() => scoped(sb().from('px_v_feedbacks').select('*'), req).order('applied_at', { ascending: false }).order('id'));
-  const buf = await io.exportFeedbacks(rows);
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', 'attachment; filename="feedbacks-px-monitorias.xlsx"');
-  res.send(Buffer.from(buf));
+router.get('/export/feedbacks', h(async (req, res) => {
+  res.json(await fetchAll(() => scoped(sb().from('px_v_feedbacks').select('*'), req).order('applied_at', { ascending: false }).order('id')));
 }));
 
 // --------------------------------------------------------------- Erros
 router.use((err, req, res, _next) => {
   const status = err.status || (err.type === 'entity.too.large' ? 413 : 500);
-  if (status >= 500 && !err.status) console.error(err);
+  if (status >= 500 && !err.status) console.error(err?.stack || err);
   res.status(status).json({ error: status === 413 ? 'Arquivo grande demais (limite de 15 MB).' : status >= 500 && !err.status ? 'Erro interno. Tente novamente ou reporte o bug.' : err.message });
 });
 
-module.exports = router;
+export { router };

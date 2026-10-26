@@ -1,4 +1,5 @@
-import { api, qs, download } from '../api.js';
+import { api, qs } from '../api.js';
+import { downloadFeedbacks } from '../files.js';
 import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, emptyState, toast, busy, debounce, band, ROLE } from '../ui.js';
 import { filterBar, bindFilterBar } from './dashboard.js';
 import { evalCard, bindEvalCards } from './evaluations.js';
@@ -89,6 +90,6 @@ async function renderApplied(el, ctx) {
   $('#fa-from').onchange = (e) => { st.from = e.target.value; load(); };
   $('#fa-to').onchange = (e) => { st.to = e.target.value; load(); };
   $('#fa-q').addEventListener('input', debounce((e) => { state.q = e.target.value; load(); }, 300));
-  $('#fb-exp').onclick = async (e) => { busy(e.currentTarget, true); try { await download('/export/feedbacks.xlsx', 'feedbacks-px.xlsx'); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
+  $('#fb-exp').onclick = async (e) => { busy(e.currentTarget, true); try { await downloadFeedbacks(await api.get('/export/feedbacks')); } catch (ex) { toast(ex.message, 'err'); } busy(e.currentTarget, false); };
   await load();
 }
