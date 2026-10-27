@@ -113,7 +113,7 @@ export const SEGMENT = { CLEAN_CURTO: 'Clean Curto', CLEAN_LONGO: 'Clean Longo',
 export const SEGMENTS_OF = { CARTOES: ['CLEAN_CURTO', 'CLEAN_LONGO'], CONSIGNADO: ['PUBLICO', 'PRIVADO'] };
 export const CRITERIA_GROUP = { VEICULOS: 'Veículos', SEM_GARANTIA: 'Sem Garantia (Cartões e Consignado)', CARTOES: 'Só Cartões', CONSIGNADO: 'Só Consignado', AMBOS: 'Refin e Entrega', REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável', AGV: 'AGV (campanhas com assistente virtual)' };
 // No roteiro Sem Garantia a "nota original" é a 1ª leitura da transcrição, não o speech
-export const origLabel = (e) => (e?.source === 'dash_sem_garantia' ? '1ª leitura' : 'Speech');
+export const origLabel = (e) => (e?.source === 'dash_sem_garantia' ? '1ª leitura' : e?.details?.agv_source?.kind === 'dash_agv_esf' || e?.source === 'dash_agv_esf' ? 'Leitura' : 'Speech');
 export const productLabel = (p, seg) => `${PRODUCT[p] || p}${SEGMENTS_OF[p] ? ` · ${SEGMENT[seg || 'none']}` : ''}`;
 export const ALERT = {
   sigilo: ['Sigilo', 'Dados passados a outra pessoa'], conduta: ['Conduta', 'Conduta inadequada com o cliente'], oferta_perdida: ['Oferta perdida', 'Cliente apto a E.A./refin sem a oferta'],

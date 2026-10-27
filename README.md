@@ -213,6 +213,35 @@ Menu **Esforço negocial**. É o mesmo painel dos dashboards "Esforço negocial 
 - Dispersão das ligações: duração × esforço.
 - Evolução entre as análises importadas, por item, liderança e operador.
 
+## Dashboards "Esforço negocial AGV" por carteira (leitura da transcrição)
+
+Os arquivos `Esforco_Negocial_AGV_PAN_<carteira>_<período>.html` entram pelo botão "Importar ligações e speech" da tela Análises AGV ou em "Importar monitorias". Rode antes `supabase/migrations/20261030120000_px_agv_esforco.sql`.
+
+**Roteiro novo** (criado pela migração):
+- 5 critérios de esforço negocial: sondagem, valor da dívida, escada de ofertas, após o primeiro não e consequências.
+- 6 itens do roteiro AGV dos primeiros segundos: nome do cliente, cita a Paschoalotto, aviso de gravação, sem revalidar dados, ouviu antes de ofertar e saldo com saída.
+- Cada item recebe 0, ½ ou 1 e traz a evidência da ligação.
+
+**Como as ligações entram**:
+- A ligação é encontrada pelo IdContato. Se já existe (discador, speech ou outro dashboard), é completada com esta leitura, que passa a valer; senão, é criada.
+- Ligações de datas anteriores do mesmo arquivo (ex.: 19/10 e 21/10) entram só com as notas, para a evolução.
+- O que a Qualidade ajustou à mão nunca é sobrescrito.
+
+**Material para o feedback** no card do atendimento e na janela da ligação:
+- O que fez bem e as oportunidades.
+- O que poderia ter tentado, com frases prontas.
+- O que o cliente disse e a postura.
+- O texto pronto para o e-mail.
+
+"Preencher com sugestão" e o botão "Aplicar feedback" do painel levam esse material para o formulário de feedback.
+
+**Painel de esforço negocial**:
+- Usa este roteiro quando há ligações nele (dá para trocar para o roteiro antigo).
+- O esforço é a média das ligações. A gerência é a registrada no dashboard para cada ligação.
+- "Para tratativa": esforço abaixo de 60%, sem tentativa após o não ou postura.
+- Mostra o roteiro dos primeiros segundos.
+- A evolução compara as análises do arquivo.
+
 ## Importação dos dashboards de monitoria PAN (.html)
 *Importar monitorias › Dashboard de monitoria já trabalhado*: arraste o arquivo .html do dashboard da quinzena. São reconhecidos:
 - **Speech E.A. e Refin (Veículos)**: 13 itens do roteiro (postura fora da nota), ajustes de coerência com o motivo, aptidão a E.A./refin, oferta Nelson, gerência, líder, campanha, canal (AGV/convencional), tabulação, desfecho e nome do áudio.

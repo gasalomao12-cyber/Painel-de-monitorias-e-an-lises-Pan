@@ -386,3 +386,14 @@
   .esf * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 @media (prefers-reduced-motion: reduce) { .esf *, .esf-modal * { animation: none !important; transition: none !important; } }
+
+/* material de feedback no modal (roteiro de esforço) */
+.esf-modal .ck small.ev { display: block; font-size: 11.5px; color: var(--ink2); font-weight: 500; margin-top: 3px; line-height: 1.4; max-width: 420px; }
+.esf-modal .kl { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.5; color: var(--ink); } .esf-modal .kl li + li { margin-top: 4px; }
+.esf-modal .fala { font-size: 13px; line-height: 1.5; padding: 8px 10px; border-radius: 10px; background: var(--soft); border-left: 3px solid var(--pan2); margin-top: 6px; }
+.esf-modal .fala.cli { border-left-color: var(--mut); font-style: italic; }
+.esf-modal .kp { font-size: 13px; line-height: 1.55; color: var(--ink2); margin: 6px 0 0; }
+.esf-modal .box.bad { border-color: var(--badf); background: var(--badbg); }
+.esf-modal .mh { display: flex; align-items: center; justify-content: space-between; gap: 10px; } .esf-modal .mh h4 { margin: 0; }
+.esf-modal .box.apply { display: flex; align-items: center; justify-content: space-between; gap: 14px; background: var(--panbg); border-color: var(--panbd); }
+.esf-modal .box.apply b { display: block; font-size: 13.5px; } .esf-modal .box.apply span { font-size: 12.5px; color: var(--ink2); }

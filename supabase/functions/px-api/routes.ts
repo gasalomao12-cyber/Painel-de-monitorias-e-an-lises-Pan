@@ -10,7 +10,7 @@ import { seedDemo, clearDemo } from './seed.ts';
 import { normalizeRows } from './normalize.ts';
 import { importDashboard } from './dashboard.ts';
 import { importCalls } from './discador.ts';
-import { importSpeechAgv, importAgvDashboard, AGV_CODES } from './agv.ts';
+import { importSpeechAgv, importAgvDashboard, importAgvEsforco } from './agv.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
 
@@ -972,14 +972,27 @@ router.get('/stats/operator/:id', h(async (req, res) => {
 const isDeal = (o) => /^acordo/i.test(String(o || ''));
 router.get('/agv/data', h(async (req, res) => {
   const q = { ...req.query };
-  delete q.channel;
+  delete q.channel; delete q.roteiro;
   const { evals, items } = await loadStatsRows(req, q);
-  // Entram na divisão as ligações AGV avaliadas no roteiro AGV; as que vieram de dashboards antigos
-  // (roteiro de Veículos) ficam só no confronto AGV x Convencional
-  const agvItems = items.filter((i) => i.criterion_product === 'AGV');
+  // Dois roteiros AGV: o de esforço negocial (AGV2, dashboards por carteira) e o das 9 perguntas do speech (AGV).
+  // Sem escolha, vale o de esforço quando houver ligações nele. As ligações de dashboards antigos
+  // (roteiro de Veículos) ficam só no confronto AGV x Convencional.
+  const count = (p) => new Set(items.filter((i) => i.criterion_product === p).map((i) => i.evaluation_id)).size;
+  const roteiros = [{ key: 'AGV2', label: 'Esforço negocial', total: count('AGV2') }, { key: 'AGV', label: 'Perguntas do speech', total: count('AGV') }];
+  const roteiro = ['AGV', 'AGV2'].includes(req.query.roteiro) ? req.query.roteiro : roteiros[0].total ? 'AGV2' : 'AGV';
+  const agvItems = items.filter((i) => i.criterion_product === roteiro);
   const agvIds = new Set(agvItems.map((i) => i.evaluation_id));
   const agv = evals.filter((e) => e.channel === 'AGV' && agvIds.has(e.id));
-  const criteria = await must(sb().from('px_criteria').select('id, code, name, description, stage, sort').eq('product', 'AGV').eq('active', true).order('sort'));
+  const anyAgv = new Set(items.filter((i) => i.criterion_product === 'AGV' || i.criterion_product === 'AGV2').map((i) => i.evaluation_id));
+  const criteria = await must(sb().from('px_criteria').select('id, code, name, description, stage, sort').eq('product', roteiro).eq('active', true).order('sort'));
+  // Roteiro de esforço: a análise de origem (ex.: "19/10", "23 a 26/10") separa as leituras na evolução
+  const analysis = new Map();
+  if (roteiro === 'AGV2') {
+    const ids = agv.map((e) => e.id);
+    for (let i = 0; i < ids.length; i += 300) {
+      for (const r of await must(sb().from('px_evaluations').select('id, esforco:details->esforco').in('id', ids.slice(i, i + 300)))) analysis.set(r.id, r.esforco || {});
+    }
+  }
   const pick = (e) => ({
     id: e.id, cycle_id: e.cycle_id, cycle: e.cycle_name, cycle_start: e.cycle_start, product: e.product, segment: e.segment, campaign: e.campaign,
     team: e.team, supervisor: e.supervisor_name, operator_id: e.operator_id, operator: e.operator_name, login: e.login, date: e.call_date, time: e.call_time,
@@ -987,6 +1000,7 @@ router.get('/agv/data', h(async (req, res) => {
     status: e.status, alerts: e.alerts || [], duration: e.duration_sec, contest: e.contest_status || null,
     // Usados pelo painel de esforço negocial (gerência, ID da ligação e arquivo para localizar o áudio)
     manager: e.manager_name || null, call_id: e.protocol || e.external_id || String(e.id), audio_file: e.audio_file || null, customer: e.customer || null,
+    source: e.source || null, analysis: analysis.get(e.id)?.periodo || null, analysis_manager: analysis.get(e.id)?.gerencia || null,
   });
   const byEval = new Map();
   for (const i of items) { if (!byEval.has(i.evaluation_id)) byEval.set(i.evaluation_id, []); byEval.get(i.evaluation_id).push(i); }
@@ -1007,12 +1021,12 @@ router.get('/agv/data', h(async (req, res) => {
     return a.length && c.length ? { product: p, agv: group(a), conv: group(c) } : null;
   }).filter(Boolean);
   res.json({
-    criteria, codes: AGV_CODES,
+    roteiro, roteiros, criteria, codes: criteria.map((c) => c.code),
     evals: agv.map(pick),
     // [atendimento, código, resultado final, resultado do speech, corrigido (1/0)]
     items: agvItems.map((i) => [i.evaluation_id, i.code, i.final_result, i.speech_result, i.adjusted ? 1 : 0]),
     channels,
-    other_roteiro: evals.filter((e) => e.channel === 'AGV' && !agvIds.has(e.id)).length,
+    other_roteiro: evals.filter((e) => e.channel === 'AGV' && !anyAgv.has(e.id)).length,
   });
 }));
 
@@ -1094,7 +1108,9 @@ router.post('/import/speech-agv', QUALITY, h(async (req, res) => {
 // Dashboards AGV (gerência e comparativo): completam as ligações AGV já cadastradas ou criam as que faltam
 router.post('/import/agv-dashboard', QUALITY, h(async (req, res) => {
   const b = req.body || {};
-  const out = await importAgvDashboard({ kind: b.kind, calls: b.calls, meta: b.meta || null, cycle_id: intOrNull(b.cycle_id), filename: b.filename }, req.user.id);
+  const out = b.kind === 'dash_agv_esf'
+    ? await importAgvEsforco({ calls: b.calls, meta: b.meta || null, filename: b.filename }, req.user.id)
+    : await importAgvDashboard({ kind: b.kind, calls: b.calls, meta: b.meta || null, cycle_id: intOrNull(b.cycle_id), filename: b.filename }, req.user.id);
   if (out.created || out.updated || b.last) await audit(req.user.id, 'importacao_dashboard_agv', 'import', null, { tipo: b.kind, novas: out.created, completadas: out.updated, ignoradas: out.skipped.length, arquivo: b.filename ? String(b.filename).slice(0, 200) : null, lote: b.batch || null });
   res.json(out);
 }));

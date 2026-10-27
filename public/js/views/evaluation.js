@@ -72,11 +72,14 @@ function draw(el, ctx) {
             <span>Cliente <b>${e.customer || '—'}</b></span><span>Duração <b>${fmtDur(e.duration_sec)}</b></span>
           </div>
         </div>
-        <div class="score-compare">
+        ${e.details?.feedback_kit || e.details?.esforco
+          // Leitura de esforço negocial: uma análise só, sem comparar com a leitura bruta
+          ? html`<div class="score-compare"><div class="center">${scoreRing(e.final_score, 'lg', 'nota')}<div class="tiny muted mt-0" style="margin-top:6px">${e.details?.esforco?.esforco != null ? `esforço ${Math.round(e.details.esforco.esforco)}%` : 'nota da monitoria'}</div></div></div>`
+          : html`<div class="score-compare">
           <div class="center">${scoreRing(e.speech_score, '', '')}<div class="tiny muted mt-0" style="margin-top:6px">${origLabel(e)}</div></div>
           <span class="arrow">${icon('arrowRight')}</span>
           <div class="center">${scoreRing(e.final_score, 'lg', 'final')}<div class="tiny mt-0" style="margin-top:6px">${delta && Math.abs(delta) >= 0.1 ? deltaTag(delta) : html`<span class="muted">sem ajuste de nota</span>`}</div></div>
-        </div>
+        </div>`}
       </div>
       <div style="padding:0 22px 20px">
         <div class="steps">${steps.map(([l, d]) => html`<div class="step ${d ? 'done' : ''}"><i>${d ? icon('check') : ''}</i>${l}</div>`)}</div>
@@ -209,6 +212,40 @@ function answerContest(el, ctx, id, decision) {
   });
 }
 
+// Material de feedback que veio do dashboard de esforço negocial AGV: o que fez bem, o que poderia ter tentado,
+// frases para a próxima ligação, o que o cliente disse e o texto pronto para o e-mail
+const POSTURE = { ABRUPTO: 'tom abrupto', SEM_EMPATIA: 'faltou empatia', PRESSAO: 'pressão', IRONICO: 'tom irônico', RISPIDO: 'tom ríspido', IMPACIENTE: 'impaciência' };
+const cleanQuote = (t) => String(t).replace(/^["“]|["”]$/g, '');
+function feedbackKit(e, { compact = false } = {}) {
+  const k = e.details?.feedback_kit;
+  if (!k) return '';
+  const es = e.details?.esforco || {};
+  const list = (arr) => html`<ul class="kit-list">${arr.map((x) => html`<li>${x}</li>`)}</ul>`;
+  return html`<div class="card card-pad kit ${compact ? '' : 'mb'}">
+    <div class="row" style="gap:8px"><span class="kit-ic">${icon('msgCheck')}</span><b>Material para o feedback</b>
+      ${es.esforco != null ? html`<span class="chip ${es.esforco >= 70 ? 'ok' : es.esforco >= 45 ? 'warn' : 'bad'}">Esforço ${Math.round(es.esforco)}%</span>` : ''}
+      ${es.roteiro != null ? html`<span class="chip outline">Roteiro AGV ${Math.round(es.roteiro)}%</span>` : ''}
+      ${es.tratativa ? html`<span class="chip bad">${icon('flag')}Para tratativa</span>` : ''}</div>
+    <div class="kit-grid">
+      ${k.ok?.length ? html`<div class="kit-box ok"><h4>${icon('checkCircle')}O que fez bem</h4>${list(k.ok)}</div>` : ''}
+      ${k.op2?.length ? html`<div class="kit-box warn"><h4>${icon('target')}Oportunidades</h4>${list(k.op2)}</div>` : ''}
+      ${k.tentar?.length ? html`<div class="kit-box"><h4>${icon('msgClock')}O que poderia ter tentado</h4>${k.tentar.map((t) => html`<div class="kit-fala">“${cleanQuote(t)}”</div>`)}</div>` : ''}
+      ${k.frase || k.recusa || k.contexto ? html`<div class="kit-box"><h4>${icon('user')}O que o cliente disse</h4>
+        ${k.frase ? html`<div class="kit-fala cli">“${cleanQuote(k.frase)}”</div>` : ''}
+        ${k.recusa ? html`<p class="small t2" style="margin:6px 0 0"><b>Motivo:</b> ${k.recusa}</p>` : ''}
+        ${k.contexto ? html`<p class="small t2" style="margin:4px 0 0"><b>Contrato:</b> ${k.contexto}</p>` : ''}
+        ${k.titular === 'TERCEIRO' ? html`<p class="small" style="margin:4px 0 0;color:var(--warn-ink)"><b>Atenção:</b> quem atendeu não era o titular.</p>` : ''}</div>` : ''}
+      ${k.conduta ? html`<div class="kit-box bad"><h4>${icon('alert')}Postura · ${POSTURE[k.conduta.tipo] || String(k.conduta.tipo).toLowerCase()}</h4>${k.conduta.trecho ? html`<div class="kit-fala">“${cleanQuote(k.conduta.trecho)}”</div>` : ''}</div>` : ''}
+    </div>
+    ${k.mail ? html`<div class="kit-mail"><div class="row between"><h4>${icon('file')}Texto para o e-mail</h4><button class="btn sm ghost" data-copy-mail>${icon('copy')}Copiar texto</button></div><p>${k.mail}</p></div>` : ''}
+  </div>`;
+}
+function bindKit(root) {
+  root.querySelectorAll('[data-copy-mail]').forEach((b) => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(ev.details?.feedback_kit?.mail || ''); toast('Texto do feedback copiado.'); } catch { toast('Não foi possível copiar.', 'err'); }
+  }));
+}
+
 // Dados que vieram do dashboard (tabulação, desfecho, aptidão, conduta, sigilo...)
 const HL_ICON = { bad: 'alert', warn: 'alert', ok: 'checkCircle', info: 'info', speech_agv: 'zap' };
 function callDetails(e) {
@@ -245,8 +282,10 @@ function drawAnalysis(body, el, ctx) {
   const editor = ctx.can('admin', 'qualidade');
   const ai = e.ai;
   const cur = (it) => (draft.has(it.criterion_id) ? draft.get(it.criterion_id).final_result : it.final_result);
+  const kit = e.details?.feedback_kit;
   body.innerHTML = String(html`
-    ${ai ? html`<div class="card card-pad mb" style="background:var(--grad-soft);border-color:rgba(124,108,255,.25)">
+    ${kit ? feedbackKit(e) : ''}
+    ${ai && !(kit && ai.engine === 'dashboard') ? html`<div class="card card-pad mb" style="background:var(--grad-soft);border-color:rgba(124,108,255,.25)">
       <div class="row"><span class="ai-sug" style="padding:0;border:0;background:none;display:inline"><span class="ai-ic" style="display:inline-grid">${icon('sparkles')}</span></span>
         <b>${ai.engine === 'dashboard' ? 'Parecer da monitoria (dashboard)' : 'Parecer da análise automática'}</b><span class="chip ${ai.engine === 'claude' ? 'brand' : 'outline'}">${ai.engine === 'claude' ? `IA · ${e.ai_model || 'Claude'}` : ai.engine === 'dashboard' ? 'Leitura da transcrição completa' : 'Heurística local (sem IA configurada)'}</span>
         <span class="tiny muted">${e.ai_ran_at ? fmtRel(e.ai_ran_at) : ''}</span></div>
@@ -262,6 +301,7 @@ function drawAnalysis(body, el, ctx) {
     <div class="crit-list">${e.items.map((it) => critRow(it, cur(it), editor))}</div>
     <div id="save-bar"></div>`);
 
+  bindKit(body);
   const refreshBar = () => {
     const bar = $('#save-bar', body);
     const changes = [...draft.entries()].filter(([cid, d]) => { const it = e.items.find((i) => i.criterion_id === cid); return it && (d.final_result !== it.final_result || (d.adjust_reason || '') !== (it.adjust_reason || '')); });
@@ -330,7 +370,7 @@ function critRow(it, value, editor) {
         <div class="crit-desc">${it.description || ''}</div>
       </div>
       <div class="crit-cols">
-        <div class="col"><span class="lbl">${origLabel(ev)}</span>${resChip(it.speech_result)}</div>
+        ${ev.details?.esforco ? '' : html`<div class="col"><span class="lbl">${origLabel(ev)}</span>${resChip(it.speech_result)}</div>`}
         ${it.ai_result ? html`<div class="col"><span class="lbl">IA</span>${resChip(it.ai_result)}</div>` : ''}
         <div class="col"><span class="lbl">Resultado final</span>
           <div class="picker" role="radiogroup" aria-label="Resultado de ${it.name}" aria-disabled="${!editor}">
@@ -339,7 +379,7 @@ function critRow(it, value, editor) {
       </div>
     </div>
     <div class="crit-extra">
-      ${it.speech_note ? html`<div class="adj-note">${icon('headset')}<span><b>${ev.source === 'dash_sem_garantia' ? 'Na ligação' : 'Speech'}:</b> ${it.speech_note}</span></div>` : ''}
+      ${it.speech_note ? html`<div class="adj-note">${icon('headset')}<span><b>${ev.source === 'dash_sem_garantia' || ev.details?.feedback_kit || ev.details?.agv_source?.kind === 'dash_agv_esf' ? 'Na ligação' : 'Speech'}:</b> ${it.speech_note}</span></div>` : ''}
       ${it.ai_result && it.ai_result === value && it.ai_result === it.speech_result ? html`<div class="adj-note">${icon('sparkles')}<span><b>IA confirma.</b> ${it.ai_reason || ''}</span></div>` : ''}
       ${it.ai_result && !(it.ai_result === value && it.ai_result === it.speech_result) ? html`<div class="ai-sug"><span class="ai-ic">${icon('sparkles')}</span>
         <div><b>${it.ai_result === it.speech_result ? 'IA confirma o speech' : `IA sugere ${RESULT[it.ai_result]}`}</b> <span class="conf" title="Confiança ${Math.round((it.ai_confidence || 0) * 100)}%">${[1, 2, 3, 4, 5].map((k) => html`<i class="${k <= conf ? 'on' : ''}"></i>`)}</span>
@@ -538,6 +578,16 @@ function suggestion(e) {
   if (sessionStorage.getItem('px_fb_prefill') === 'ai' && e.ai?.feedback) {
     sessionStorage.removeItem('px_fb_prefill');
   }
+  const k = e.details?.feedback_kit;
+  if (k && (k.mail || k.ok?.length || k.tentar?.length)) {
+    const falhas = e.items.filter((i) => i.stage === 'Esforço negocial' && (i.final_result === 'NC' || i.final_result === 'P'));
+    return {
+      content: k.mail || `Feedback da ligação de ${fmtDate(e.call_date)}: ${falhas.map((i) => i.name.toLowerCase()).join(', ')}.`,
+      strengths: (k.ok || []).join('\n'),
+      improvements: (k.op2?.length ? k.op2 : falhas.map((i) => `${i.name}${i.speech_note ? `: ${i.speech_note}` : ''}`)).join('\n'),
+      action_plan: k.tentar?.length ? `Frases para usar nas próximas ligações:\n${k.tentar.map((t) => `• “${cleanQuote(t)}”`).join('\n')}` : '',
+    };
+  }
   const f = e.ai?.feedback;
   return {
     strengths: f?.strengths || strong.slice(0, 4).map((i) => i.name).join(', '),
@@ -574,9 +624,10 @@ function drawFeedback(body, el, ctx) {
   const me = ctx.store.user;
   // Supervisão acompanha os feedbacks; quem aplica é a Qualidade
   if (!ctx.can('admin', 'qualidade')) {
-    body.innerHTML = String(html`<div class="card card-pad">${e.feedbacks.length
+    body.innerHTML = String(html`${feedbackKit(e)}<div class="card card-pad">${e.feedbacks.length
       ? html`<h3 style="margin:0 0 10px;font-size:15px">Feedbacks registrados</h3><div class="stack">${e.feedbacks.map((x) => fbCard(x, me))}</div>`
       : emptyState('msgClock', 'Feedback ainda não aplicado', 'A Qualidade registra aqui o feedback passado ao operador. Se discordar da análise, use “Contestar monitoria”.')}</div>`);
+    bindKit(body);
     return;
   }
   let editing = null;
@@ -613,9 +664,10 @@ function drawFeedback(body, el, ctx) {
           </form>
         </div></div>
       <div class="stack">
+        ${feedbackKit(e, { compact: true })}
         <div class="card card-pad"><h3 style="margin:0 0 10px;font-size:15px">Pontos para conversar</h3>
           ${e.items.filter((i) => i.final_result === 'NC' || i.final_result === 'P').length
-            ? html`<div class="stack">${e.items.filter((i) => i.final_result === 'NC' || i.final_result === 'P').map((i) => html`<div class="row" style="gap:8px;flex-wrap:nowrap;align-items:flex-start">${resChip(i.final_result)}<div class="small"><b>${i.name}</b>${i.adjusted ? html` <span class="chip brand" title="Resultado ajustado pela Qualidade">ajustado</span>` : ''}<div class="muted">${i.ai_evidence ? `“${i.ai_evidence}”` : i.description || ''}</div></div></div>`)}</div>`
+            ? html`<div class="stack">${e.items.filter((i) => i.final_result === 'NC' || i.final_result === 'P').map((i) => html`<div class="row" style="gap:8px;flex-wrap:nowrap;align-items:flex-start">${resChip(i.final_result)}<div class="small"><b>${i.name}</b>${i.adjusted ? html` <span class="chip brand" title="Resultado ajustado pela Qualidade">ajustado</span>` : ''}<div class="muted">${i.ai_evidence ? `“${i.ai_evidence}”` : i.speech_note || i.description || ''}</div></div></div>`)}</div>`
             : html`<p class="small t2" style="margin:0">Nenhum ponto de melhoria — ótimo momento para um feedback de reconhecimento.</p>`}
         </div>
         ${e.feedbacks.length ? html`<div class="card card-pad"><h3 style="margin:0 0 10px;font-size:15px">Feedbacks registrados</h3><div class="stack">${e.feedbacks.map((x) => fbCard(x, me))}</div></div>` : ''}
@@ -629,6 +681,7 @@ function drawFeedback(body, el, ctx) {
       if (!fm.action_plan.value.trim()) fm.action_plan.value = s.action_plan;
       toast('Campos vazios preenchidos com a sugestão. Revise antes de salvar.');
     };
+    bindKit(body);
     $('#fb-cancel', body)?.addEventListener('click', () => { editing = null; paint(); });
     $$('[data-fb-edit]', body).forEach((b) => b.addEventListener('click', () => { editing = e.feedbacks.find((x) => x.id === Number(b.dataset.fbEdit)); paint(); body.scrollIntoView({ behavior: 'smooth' }); }));
     $$('[data-fb-del]', body).forEach((b) => b.addEventListener('click', async () => {
