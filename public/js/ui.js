@@ -288,3 +288,56 @@ export function debounce(fn, ms = 250) { let t; return (...a) => { clearTimeout(
 export function emptyState(ic, title, text, action = '') {
   return html`<div class="empty"><div class="ic">${icon(ic)}</div><h4>${title}</h4><p>${text}</p>${action}</div>`;
 }
+
+// ---------------- Filtro de seleção múltipla (caixas de seleção) ----------------
+// multiSelect devolve o HTML; bindMultiSelect liga o comportamento. A escolha é aplicada ao fechar a lista
+// (clicar fora, Esc ou "Aplicar"), para a página não redesenhar a cada marcação.
+export function multiSelect({ id, allLabel, noun, options, selected = [], cls = '' }) {
+  const sel = new Set(selected.map(String));
+  const label = !sel.size ? allLabel : sel.size === 1 ? (options.find(([v]) => String(v) === [...sel][0])?.[1] ?? allLabel) : `${sel.size} ${noun}`;
+  return html`<div class="ms ${cls} ${sel.size ? 'on' : ''}" data-ms="${id}" data-all="${allLabel}" data-noun="${noun}">
+    <button type="button" class="ms-btn" aria-haspopup="listbox" aria-expanded="false"><span class="ms-lb">${label}</span>${sel.size > 1 ? html`<em class="ms-ct">${sel.size}</em>` : ''}</button>
+    <div class="ms-pop" hidden role="listbox" aria-multiselectable="true">
+      ${options.length > 7 ? html`<input class="ms-q" type="search" placeholder="Buscar…" aria-label="Buscar">` : ''}
+      <div class="ms-acts"><button type="button" data-ms-all>Marcar todos</button><button type="button" data-ms-none>Limpar</button></div>
+      <div class="ms-list">${options.map(([v, l, n]) => html`<label class="ms-opt"><input type="checkbox" value="${v}" ${sel.has(String(v)) ? 'checked' : ''}><span>${l}</span>${n != null ? html`<em>${n}</em>` : ''}</label>`)}</div>
+      <div class="ms-foot"><button type="button" class="ms-ok">Aplicar</button></div>
+    </div></div>`;
+}
+const msOpen = new Set();
+function msClose(box, apply = true) {
+  const pop = box.querySelector('.ms-pop');
+  if (pop.hidden) return;
+  pop.hidden = true; box.classList.remove('open'); box.querySelector('.ms-btn').setAttribute('aria-expanded', 'false');
+  msOpen.delete(box);
+  const checked = [...box.querySelectorAll('.ms-list input:checked')];
+  const vals = checked.map((i) => i.value);
+  // O botão mostra a escolha mesmo quando a página não redesenha a barra de filtros
+  box.querySelector('.ms-lb').textContent = !vals.length ? box.dataset.all : vals.length === 1 ? checked[0].closest('.ms-opt').querySelector('span').textContent : `${vals.length} ${box.dataset.noun}`;
+  box.classList.toggle('on', vals.length > 0);
+  box.querySelector('.ms-ct')?.remove();
+  if (vals.length > 1) box.querySelector('.ms-btn').insertAdjacentHTML('beforeend', `<em class="ms-ct">${vals.length}</em>`);
+  if (apply && vals.join('\u0001') !== box._msStart) box._msChange?.(vals);
+}
+document.addEventListener('mousedown', (e) => { for (const b of [...msOpen]) if (!b.contains(e.target)) msClose(b); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') for (const b of [...msOpen]) msClose(b); });
+export function bindMultiSelect(root, id, onChange) {
+  const box = root.querySelector(`[data-ms="${id}"]`);
+  if (!box) return;
+  box._msChange = onChange;
+  const pop = box.querySelector('.ms-pop');
+  box.querySelector('.ms-btn').addEventListener('click', () => {
+    if (!pop.hidden) return msClose(box);
+    for (const b of [...msOpen]) msClose(b);
+    box._msStart = [...box.querySelectorAll('.ms-list input:checked')].map((i) => i.value).join('\u0001');
+    pop.hidden = false; box.classList.add('open'); box.querySelector('.ms-btn').setAttribute('aria-expanded', 'true'); msOpen.add(box);
+    box.querySelector('.ms-q')?.focus();
+  });
+  box.querySelector('.ms-q')?.addEventListener('input', (e) => {
+    const q = e.target.value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    box.querySelectorAll('.ms-opt').forEach((o) => { o.hidden = q && !o.textContent.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().includes(q); });
+  });
+  box.querySelector('[data-ms-all]').addEventListener('click', () => box.querySelectorAll('.ms-opt:not([hidden]) input').forEach((i) => { i.checked = true; }));
+  box.querySelector('[data-ms-none]').addEventListener('click', () => box.querySelectorAll('.ms-list input').forEach((i) => { i.checked = false; }));
+  box.querySelector('.ms-ok').addEventListener('click', () => msClose(box));
+}

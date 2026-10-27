@@ -4,7 +4,6 @@
 // speech fica como "speech"; o resultado final passa pelas regras de coerência de N/A antes de entrar.
 import { admin, must } from './supa.ts';
 import { computeScore } from './scoring.ts';
-import { cycleFor } from './discador.ts';
 
 const sb = () => admin();
 const httpError = (status, message) => Object.assign(new Error(message), { status });
@@ -132,7 +131,7 @@ export async function importSpeechAgv({ rows }, userId) {
     const TITLES = { ident: 'Itens obrigatórios', neg: 'Etapas da negociação', fin: 'Benefícios, consequências e desfecho' };
     for (const k of ['ident', 'neg', 'fin']) { const t = clip(r.summaries?.[k], 2000); if (t) highlights.push({ kind: 'speech_agv', title: TITLES[k], text: t }); }
     await must(sb().from('px_evaluations').update({
-      channel: 'AGV', outcome, alerts: [...alerts], updated_at: nowIso(),
+      channel: 'AGV', cycle_id: null, outcome, alerts: [...alerts], updated_at: nowIso(),
       speech_score: computeScore(scored, 'speech_result').score, final_score: computeScore(scored, 'final_result').score,
       speech_summary: summaries.join('\n\n').slice(0, 6000) || ev.speech_summary || null,
       ...(r.file && !ev.audio_file ? { audio_file: clip(r.file, 300) } : {}),
@@ -293,7 +292,6 @@ export async function importAgvDashboard({ kind, calls, meta, cycle_id, filename
   const now = nowIso();
   const source = { kind, file: clip(filename, 200), at: now };
   const out = { kind, created: 0, updated: 0, skipped: [], operators_created: opsCreated, cycle_id: cycle_id || null };
-  const cycles = new Map();
   const seen = new Set();
   const scoreOf = (its, field) => computeScore(its.map((it) => ({ ...critByCode(agvCrit, it.code), [field]: it[field] })), field).score;
 
@@ -335,7 +333,7 @@ export async function importAgvDashboard({ kind, calls, meta, cycle_id, filename
       };
       const fill = (field, v) => (ex[field] == null || ex[field] === '' ? (v ?? undefined) : undefined);
       const patch = {
-        channel: 'AGV', outcome: c.outcome || ex.outcome, alerts: [...new Set([...(ex.alerts || []), ...c.alerts])], details, updated_at: now,
+        channel: 'AGV', cycle_id: null, outcome: c.outcome || ex.outcome, alerts: [...new Set([...(ex.alerts || []), ...c.alerts])], details, updated_at: now,
         speech_score: scoreOf(scored, 'speech_result'), final_score: scoreOf(scored, 'final_result'),
         status: ex.status === 'pendente' ? 'revisada' : ex.status, reviewed_by: ex.reviewed_by || userId, reviewed_at: ex.reviewed_at || now,
         tabulation: fill('tabulation', c.tabulation), campaign: fill('campaign', c.campaign), audio_file: fill('audio_file', c.audio_file),
@@ -353,9 +351,8 @@ export async function importAgvDashboard({ kind, calls, meta, cycle_id, filename
     }
     if (!date) { out.skipped.push({ id: c.id, reason: 'sem data da ligação' }); continue; }
     const its = Object.entries(c.items).map(([code, v]) => ({ code, speech_result: v.speech, final_result: v.final }));
-    const cyc = cycle_id || await cycleFor(date, cycles);
     const row = await must(sb().from('px_evaluations').insert({
-      cycle_id: cyc, operator_id: opOf(c), product: c.product, segment: null, channel: 'AGV', source: kind, external_id: c.id, protocol: c.id,
+      cycle_id: null, operator_id: opOf(c), product: c.product, segment: null, channel: 'AGV', source: kind, external_id: c.id, protocol: c.id,
       call_date: date, call_time: c.dt.slice(11, 16) || null, duration_sec: Number.isFinite(Number(c.dur)) && Number(c.dur) > 0 ? Math.round(Number(c.dur)) : null,
       customer: c.customer, audio_file: c.audio_file, campaign: c.campaign, tabulation: c.tabulation, outcome: c.outcome, effort: c.effort,
       speech_score: scoreOf(its, 'speech_result'), final_score: scoreOf(its, 'final_result'), alerts: c.alerts,
@@ -371,7 +368,6 @@ export async function importAgvDashboard({ kind, calls, meta, cycle_id, filename
       })));
     } catch (e) { await sb().from('px_evaluations').delete().eq('id', row.id); throw e; }
     out.created++;
-    if (!out.cycle_id) out.cycle_id = cyc;
   }
   return out;
 }
@@ -458,7 +454,6 @@ export async function importAgvEsforco({ calls, meta, filename }, userId) {
   const now = nowIso();
   const source = { kind: 'dash_agv_esf', file: clip(filename, 200), at: now };
   const out = { kind: 'dash_agv_esf', created: 0, updated: 0, history: 0, skipped: [], operators_created: opsCreated };
-  const cycles = new Map();
   const seen = new Set();
   const scoreOf = (vals) => computeScore(vals.map((v) => ({ ...critByCode(esfCrit, v.code), final_result: v.final })), 'final_result').score;
   const itemRows = (evalId, c) => esfCrit.map((k) => ({
@@ -493,7 +488,7 @@ export async function importAgvEsforco({ calls, meta, filename }, userId) {
       };
       const fill = (field, v) => (ex[field] == null || ex[field] === '' ? (v ?? undefined) : undefined);
       const patch = {
-        channel: 'AGV', details, updated_at: now, speech_score: scoreOf(vals), final_score: scoreOf(vals),
+        channel: 'AGV', cycle_id: null, details, updated_at: now, speech_score: scoreOf(vals), final_score: scoreOf(vals),
         outcome: c.outcome || (c.detailed ? null : ex.outcome),
         alerts: [...new Set([...(ex.alerts || []).filter((a) => !['sem_speech', 'audio_ruim', 'sem_proposta', 'conduta'].includes(a)), ...c.alerts])],
         status: ex.status === 'pendente' ? 'revisada' : ex.status, reviewed_by: ex.reviewed_by || userId, reviewed_at: ex.reviewed_at || now,
@@ -512,7 +507,7 @@ export async function importAgvEsforco({ calls, meta, filename }, userId) {
     if (!c.date) { out.skipped.push({ id: c.key, reason: 'sem data da ligação e não está na plataforma' }); continue; }
     if (!opOf(c)) { out.skipped.push({ id: c.key, reason: 'sem operador' }); continue; }
     const row = await must(sb().from('px_evaluations').insert({
-      cycle_id: await cycleFor(c.date, cycles), operator_id: opOf(c), product: c.product, segment: null, channel: 'AGV', source: 'dash_agv_esf', external_id: c.key, protocol: c.key,
+      cycle_id: null, operator_id: opOf(c), product: c.product, segment: null, channel: 'AGV', source: 'dash_agv_esf', external_id: c.key, protocol: c.key,
       call_date: c.date, call_time: c.time, duration_sec: c.dur, customer: c.customer, audio_file: c.audio_file, campaign: c.campaign, tabulation: c.tabulation,
       outcome: c.outcome, speech_score: scoreOf(vals), final_score: scoreOf(vals), alerts: c.alerts, speech_summary: null, ai_summary: c.ai_summary,
       audio_url: /^https:\/\//.test(meta?.aud || '') ? meta.aud.slice(0, 500) : null,

@@ -1,43 +1,39 @@
 import { api, qs } from '../api.js';
-import { html, raw, icon, $, $$, fmtScore, fmtPct, fmtInt, greeting, userName, deltaTag, avatar, sparkline, band, emptyState, esc, PRODUCT, PRODUCT_SHORT, SEGMENT, SEGMENTS_OF, ALERT } from '../ui.js';
+import { html, raw, icon, $, $$, fmtScore, fmtPct, fmtInt, greeting, userName, deltaTag, avatar, sparkline, band, emptyState, esc, PRODUCT, PRODUCT_SHORT, SEGMENT, SEGMENTS_OF, ALERT, multiSelect, bindMultiSelect } from '../ui.js';
 import { lineChart, barChart, scatterChart, palette, legendHtml } from '../charts.js';
 
 // Produtos com monitorias (a barra só mostra o que tem dado); sem dados ainda, mostra as carteiras PAN
 const productsOf = (m) => (m.products?.length ? m.products.map((p) => p.product) : ['VEICULOS', 'CARTOES', 'CONSIGNADO']);
-const segmentOptions = (m, product, segment) => {
-  const segs = m.products?.find((p) => p.product === product)?.segments || (SEGMENTS_OF[product] || []).map((sg) => ({ segment: sg }));
-  return html`<option value="">Todos os segmentos</option>${segs.map((x) => html`<option value="${x.segment}" ${segment === x.segment ? 'selected' : ''}>${SEGMENT[x.segment]}${x.total != null ? ` (${x.total})` : ''}</option>`)}`;
-};
+// Filtros de seleção múltipla: o valor guardado é a lista separada por "|" (quinzenas por vírgula), como a API recebe
+const many = (v, sep = '|') => String(v || '').split(sep).filter(Boolean);
+function segmentChoices(m) {
+  const out = [];
+  for (const p of productsOf(m)) {
+    const info = m.products?.find((x) => x.product === p);
+    for (const sg of SEGMENTS_OF[p] || []) out.push([sg, `${PRODUCT_SHORT[p]} · ${SEGMENT[sg]}`, info?.segments?.find((x) => x.segment === sg)?.total]);
+  }
+  if (out.length) out.push(['none', SEGMENT.none]);
+  return out;
+}
 
 export function filterBar(store, { product = '', team = '', segment = '' } = {}, { showTeam = true, extra = '' } = {}) {
   const m = store.meta;
+  const segs = segmentChoices(m);
   return html`<div class="filters">
     <span class="muted">${icon('filter')}</span>
-    <select class="select sm" id="f-cycle" aria-label="Quinzena">
-      <option value="">Todas as quinzenas</option>
-      ${m.cycles.map((c) => html`<option value="${c.id}" ${String(store.cycle) === String(c.id) ? 'selected' : ''}>${c.name}${c.status === 'aberto' ? ' · em andamento' : ''}</option>`)}
-    </select>
-    <div class="seg" id="f-product" role="group" aria-label="Produto">
-      <button data-v="" class="${!product ? 'on' : ''}">Todos</button>
-      ${productsOf(m).map((p) => html`<button data-v="${p}" class="${product === p ? 'on' : ''}">${PRODUCT_SHORT[p]}</button>`)}
-    </div>
-    <select class="select sm" id="f-segment" aria-label="Segmento" ${SEGMENTS_OF[product] ? '' : 'hidden'}>${segmentOptions(m, product, segment)}</select>
-    ${showTeam && m.teams.length > 1 ? html`<select class="select sm" id="f-team" aria-label="Equipe"><option value="">Todas as equipes</option>${m.teams.map((t) => html`<option ${team === t ? 'selected' : ''}>${t}</option>`)}</select>` : ''}
+    ${multiSelect({ id: 'f-cycle', allLabel: 'Todas as quinzenas', noun: 'quinzenas', options: m.cycles.map((c) => [c.id, `${c.name}${c.status === 'aberto' ? ' · em andamento' : ''}`]), selected: many(store.cycle, ',') })}
+    ${multiSelect({ id: 'f-product', allLabel: 'Todos os produtos', noun: 'produtos', options: productsOf(m).map((p) => [p, PRODUCT[p], m.products?.find((x) => x.product === p)?.total]), selected: many(product) })}
+    ${segs.length ? multiSelect({ id: 'f-segment', allLabel: 'Todos os segmentos', noun: 'segmentos', options: segs, selected: many(segment) }) : ''}
+    ${showTeam && m.teams.length > 1 ? multiSelect({ id: 'f-team', allLabel: 'Todas as equipes', noun: 'equipes', options: m.teams.map((t) => [t, t]), selected: many(team) }) : ''}
     ${extra}
   </div>`;
 }
 
 export function bindFilterBar(root, store, state, reload) {
-  $('#f-cycle', root)?.addEventListener('change', (e) => { store.cycle = e.target.value; localStorage.setItem('px_cycle', store.cycle); reload(); });
-  $$('#f-product button', root).forEach((b) => b.addEventListener('click', () => {
-    state.product = b.dataset.v; state.segment = '';
-    $$('#f-product button', root).forEach((x) => x.classList.toggle('on', x === b));
-    const sel = $('#f-segment', root);
-    if (sel) { sel.hidden = !SEGMENTS_OF[state.product]; sel.innerHTML = String(segmentOptions(store.meta, state.product, '')); }
-    reload();
-  }));
-  $('#f-segment', root)?.addEventListener('change', (e) => { state.segment = e.target.value; reload(); });
-  $('#f-team', root)?.addEventListener('change', (e) => { state.team = e.target.value; reload(); });
+  bindMultiSelect(root, 'f-cycle', (v) => { store.cycle = v.join(','); localStorage.setItem('px_cycle', store.cycle); reload(); });
+  bindMultiSelect(root, 'f-product', (v) => { state.product = v.join('|'); reload(); });
+  bindMultiSelect(root, 'f-segment', (v) => { state.segment = v.join('|'); reload(); });
+  bindMultiSelect(root, 'f-team', (v) => { state.team = v.join('|'); reload(); });
 }
 
 const state = { product: '', team: '', segment: '' };
@@ -50,7 +46,7 @@ export async function render(el, _p, ctx) {
   el.innerHTML = String(html`
     <div class="page-head">
       <div><h2>${greeting()}, <span class="gradient-text">${userName(u)}</span></h2>
-      <p>${cycle ? html`Resultados da <b>${cycle.name}</b>` : 'Visão consolidada de todas as quinzenas'} · ${productsOf(store.meta).map((p) => PRODUCT[p]).join(', ')}</p></div>
+      <p>${cycle ? html`Resultados da <b>${cycle.name}</b>` : many(store.cycle, ',').length > 1 ? html`Resultados de <b>${many(store.cycle, ',').length} quinzenas</b>` : 'Visão consolidada de todas as quinzenas'} · ${productsOf(store.meta).map((p) => PRODUCT[p]).join(', ')}</p></div>
       <div class="grow"></div>
       <a class="btn" href="#/relatorios">${icon('report')}Gerar dashboard</a>
       <a class="btn primary" href="#/atendimentos">${icon('headset')}Ver atendimentos</a>

@@ -46,7 +46,7 @@ function drawCalls(el, ctx) {
       <div class="grid g-2 mt">
         <div class="field"><label for="calls-cycle">Quinzena de destino</label><select class="select" id="calls-cycle">
           <option value="">Automática (pela data de cada ligação)</option>${ctx.store.meta.cycles.map((c) => html`<option value="${c.id}">${c.name}</option>`)}</select>
-          <span class="hint">Cada ligação vira um atendimento pendente de análise. Se ela já existir na plataforma (por exemplo, importada de um dashboard), só os dados que faltam são completados.</span></div>
+          <span class="hint">Ligações de campanhas AGV não entram em quinzena: ficam na divisão AGV, agrupadas pela análise do dia. Cada ligação vira um atendimento pendente de análise. Se ela já existir na plataforma (por exemplo, importada de um dashboard), só os dados que faltam são completados.</span></div>
         <div id="calls-progress" class="small t2" style="align-self:end"></div>
       </div>
     </div></div>`);

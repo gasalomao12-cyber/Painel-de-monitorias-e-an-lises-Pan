@@ -1,6 +1,7 @@
 import { api, qs } from '../api.js';
 import { downloadFeedbacks } from '../files.js';
 import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, emptyState, toast, busy, debounce, band, ROLE } from '../ui.js';
+import { multiSelect, bindMultiSelect } from '../ui.js';
 import { filterBar, bindFilterBar } from './dashboard.js';
 import { evalCard, bindEvalCards } from './evaluations.js';
 
@@ -60,7 +61,7 @@ async function renderApplied(el, ctx) {
     <div class="page-head"><div><h2>Feedbacks aplicados</h2><p>Histórico completo do que foi passado a cada operador, por quem e quando.</p></div><div class="grow"></div>
       <button class="btn" id="fb-exp">${icon('download')}Exportar Excel</button></div>
     ${filterBar(store, state, { extra: html`
-      <select class="select sm" id="fa-op"><option value="">Todos os operadores</option>${m.operators.map((o) => html`<option value="${o.id}">${o.name}</option>`)}</select>
+      ${multiSelect({ id: 'fa-op', allLabel: 'Todos os operadores', noun: 'operadores', options: m.operators.map((o) => [o.id, o.name]), selected: [] })}
       <input type="date" class="input sm" id="fa-from" aria-label="De"><input type="date" class="input sm" id="fa-to" aria-label="Até">
       <div class="grow"></div><input class="input sm" id="fa-q" placeholder="Buscar no conteúdo…">` })}
     <div id="fa-sum"></div><div id="fa-list"></div>`);
@@ -86,7 +87,7 @@ async function renderApplied(el, ctx) {
     $$('[data-ev]', box).forEach((c) => c.addEventListener('click', () => { sessionStorage.setItem('px_ev_tab', 'feedback'); ctx.navigate(`atendimentos/${c.dataset.ev}`); }));
   };
   bindFilterBar(el, store, state, load);
-  $('#fa-op').onchange = (e) => { st.operator_id = e.target.value; load(); };
+  bindMultiSelect(el, 'fa-op', (v) => { st.operator_id = v.join('|'); load(); });
   $('#fa-from').onchange = (e) => { st.from = e.target.value; load(); };
   $('#fa-to').onchange = (e) => { st.to = e.target.value; load(); };
   $('#fa-q').addEventListener('input', debounce((e) => { state.q = e.target.value; load(); }, 300));
