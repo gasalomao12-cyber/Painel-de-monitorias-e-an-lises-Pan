@@ -267,7 +267,7 @@ function vGeral() {
   <div class="brief"><div class="bi">${ICO.bulb}</div><div><h4>Em poucas palavras</h4><ul>${brief.map((b) => `<li>${b}</li>`).join('')}</ul></div></div>
   <div class="grid">
     <section class="card kpi c3" style="--kc:var(--pan)"><div class="l">Ligações analisadas</div><div class="v num">${A.calls}</div><div class="d">${A.ops} operadores · ${A.lids} liderança${A.lids > 1 ? 's' : ''}</div></section>
-    <section class="card kpi c3" style="--kc:${fill(A.p)};--kv:${fill(A.p)}"><div class="l">Esforço negocial</div><div class="v num">${fp(A.p)}</div><div class="meter"><i style="width:${A.p}%;background:${fill(A.p)}"></i><u style="left:${REF}%"></u></div><div class="d">${A.s} de ${A.n} itens do roteiro cumpridos</div></section>
+    <section class="card kpi c3" style="--kc:${fill(A.p)};--kv:${fill(A.p)}"><div class="l">Esforço negocial</div><div class="v num">${fp(A.p)}</div><div class="meter"><i style="width:${A.p}%;background:${fill(A.p)}"></i><u style="left:${REF}%"></u></div><div class="d">Média dos 6 itens da negociação · referência 70%</div></section>
     <section class="card kpi c3" style="--kc:var(--okf)"><div class="l">Etapa mais forte</div><div class="t">${melhor.t}</div><div class="d"><span class="pill ${band(melhor.p)}">${fp(melhor.p)}</span> <span class="mut">das ligações</span></div></section>
     <section class="card kpi c3" style="--kc:var(--badf)"><div class="l">Maior oportunidade</div><div class="t">${pior.t}</div><div class="d"><span class="pill ${band(pior.p)}">${fp(pior.p)}</span> <span class="mut">das ligações</span></div></section>
     ${card('Esforço negocial etapa por etapa', 'Percentual de ligações em que o operador cumpriu cada item. Clique num item para ver onde faltou.', itemBars(A), 'c7 fillc')}
