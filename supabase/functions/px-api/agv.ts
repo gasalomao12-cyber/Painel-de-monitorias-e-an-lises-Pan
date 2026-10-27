@@ -10,6 +10,12 @@ const sb = () => admin();
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 const nowIso = () => new Date().toISOString();
 const clip = (s, n) => (s == null || String(s).trim() === '' ? null : String(s).trim().slice(0, n));
+// Itens dos atendimentos em lotes: a API devolve no máximo 1000 linhas por consulta (100 ligações × 11 itens passa disso)
+async function itemsOf(evIds, cols = 'id, evaluation_id, criterion_id, speech_result, final_result, adjust_source') {
+  const out = [];
+  for (let i = 0; i < evIds.length; i += 60) out.push(...await must(sb().from('px_evaluation_items').select(cols).in('evaluation_id', evIds.slice(i, i + 60))));
+  return out;
+}
 
 export const AGV_CODES = ['APR', 'ATR', 'SMO', 'SQQ', 'PRP', 'ALT', 'BEN', 'CSQ', 'CFA'];
 const NEGOTIATION = ['SMO', 'SQQ', 'PRP', 'ALT', 'BEN', 'CSQ', 'CFA'];
@@ -72,7 +78,7 @@ export async function importSpeechAgv({ rows }, userId) {
     for (const e of evs) if (!found.has(String(e[col])) || e.channel === 'AGV') found.set(String(e[col]), e);
   }
   const evIds = [...new Set([...found.values()].map((e) => e.id))];
-  const items = evIds.length ? await must(sb().from('px_evaluation_items').select('id, evaluation_id, criterion_id, speech_result, final_result, adjust_source').in('evaluation_id', evIds)) : [];
+  const items = await itemsOf(evIds);
   const crit = await must(sb().from('px_criteria').select('id, code, product, weight, critical').eq('active', true));
   const agvCrit = crit.filter((c) => c.product === 'AGV');
   if (agvCrit.length < AGV_CODES.length) throw httpError(400, 'O roteiro AGV ainda não existe no banco. Rode a migração 20261029120000_px_agv.sql no Supabase.');
@@ -282,7 +288,7 @@ export async function importAgvDashboard({ kind, calls, meta, cycle_id, filename
     for (const e of evs) if (!found.has(String(e[col])) || e.channel === 'AGV') found.set(String(e[col]), e);
   }
   const evIds = [...new Set([...found.values()].map((e) => e.id))];
-  const items = evIds.length ? await must(sb().from('px_evaluation_items').select('id, evaluation_id, criterion_id, speech_result, final_result, adjust_source').in('evaluation_id', evIds)) : [];
+  const items = await itemsOf(evIds);
   const { opOf, created: opsCreated } = await resolveAgvOperators(list);
   const now = nowIso();
   const source = { kind, file: clip(filename, 200), at: now };
@@ -370,3 +376,153 @@ export async function importAgvDashboard({ kind, calls, meta, cycle_id, filename
   return out;
 }
 const critByCode = (list, code) => list.find((c) => c.code === code) || {};
+
+// ------------------------------------------------------------------ Dashboards "Esforço negocial AGV" por carteira
+// Leitura da transcrição completa com 5 critérios de esforço negocial (0, ½ ou 1) e 6 itens do roteiro AGV dos
+// primeiros segundos, cada um com a evidência, mais o material de feedback da ligação (o que fez bem, o que poderia
+// ter tentado, frases sugeridas e texto para o e-mail). Traz também ligações de datas anteriores (só as notas),
+// para a evolução. A ligação é encontrada pelo IdContato; o que a Qualidade ajustou à mão nunca é sobrescrito.
+export const ESF_CR = ['SND', 'VDV', 'ESC', 'APN', 'CSQ'];
+export const ESF_RI = ['NOM', 'EMP', 'GRV', 'SRV', 'OUV', 'SDS'];
+const ESF_DESF = { PROMESSA: OUTCOMES['PROMESSA SEM BOLETO'], RETORNO: OUTCOMES['RETORNO COMBINADO'], RECUSA: OUTCOMES['SEM ACORDO'], SEM_DESFECHO: 'Sem desfecho', ACORDO: OUTCOMES['ACORDO COM BOLETO'] };
+const ESF_POST = { ABRUPTO: 'tom abrupto', SEM_EMPATIA: 'faltou empatia', PRESSAO: 'pressão', IRONICO: 'tom irônico', RISPIDO: 'tom ríspido', IMPACIENTE: 'impaciência' };
+const score = (v) => (v === 1 ? 'C' : v === 0.5 ? 'P' : v === 0 ? 'NC' : 'NA');
+const listOf = (v, n = 8, len = 400) => (Array.isArray(v) ? v.map((x) => clip(x, len)).filter(Boolean).slice(0, n) : []);
+
+// "19/10" + ano → data; "23 a 26/10" (vários dias) não vira data
+function dayOf(label, year) {
+  const m = String(label || '').match(/^(\d{1,2})\/(\d{1,2})$/);
+  return m && year ? `${year}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : null;
+}
+
+function esfCall(c, meta) {
+  const cr = Array.isArray(c.c) ? c.c : [];
+  const ri = Array.isArray(c.s) ? c.s : [];
+  const ev = Array.isArray(c.ev) ? c.ev : [], sev = Array.isArray(c.s_ev) ? c.s_ev : [];
+  const items = {};
+  ESF_CR.forEach((code, j) => { items[code] = { final: score(cr[j]), note: clip(ev[j], 600) }; });
+  ESF_RI.forEach((code, j) => { items[code] = { final: score(ri[j]), note: clip(sev[j], 600) }; });
+  const ger = meta?.ger?.[c.g] || null;
+  const period = meta?.periods?.[c.per] || null;
+  const detailed = !!c.dt;
+  const outcome = ESF_DESF[c.desf] || (c.desf ? clip(c.desf, 80) : null);
+  const vals = (a) => a.filter((x) => x != null);
+  const pctOf = (a) => (vals(a).length ? Math.round((100 * vals(a).reduce((x, y) => x + y, 0)) / vals(a).length) : null);
+  const esf = c.pct ?? (cr.length ? pctOf(cr) : null), rot = c.ap ?? (ri.length ? pctOf(ri) : null);
+  const conduta = c.conduta && c.conduta.tipo ? { tipo: clip(c.conduta.tipo, 40), trecho: clip(c.conduta.trecho, 400) } : null;
+  const trat = cr.length ? (esf != null && esf < 60) || cr[3] === 0 || !!conduta : false;
+  const kit = detailed ? {
+    ok: listOf(c.ok), op2: listOf(c.op2), tentar: listOf(c.tentar), mail: clip(c.mail, 3000), frase: clip(c.frase, 600), recusa: clip(c.recusa, 200),
+    contexto: clip(c.veic, 400), titular: clip(c.titular, 20), conduta,
+  } : null;
+  const highlights = [];
+  if (conduta) highlights.push({ kind: 'bad', title: `Postura: ${ESF_POST[conduta.tipo] || conduta.tipo.toLowerCase()}`, text: conduta.trecho ? `“${conduta.trecho}”` : '' });
+  if (c.titular === 'TERCEIRO') highlights.push({ kind: 'warn', title: 'Quem atendeu não era o titular', text: 'Conferir se os dados da dívida foram passados a outra pessoa.' });
+  const alerts = conduta ? ['conduta'] : [];
+  const key = String(c.cid || c.id);
+  return {
+    key, transcript_id: c.cid && c.id && String(c.id) !== key ? String(c.id) : null, detailed, rotOnly: !cr.length, period, current: c.per === 'C', gerencia: ger?.nome || null,
+    date: detailed ? String(c.dt).slice(0, 10) : dayOf(period, meta?.year), time: detailed ? String(c.dt).slice(11, 16) || null : null,
+    dur: Number.isFinite(Number(c.dur)) && Number(c.dur) > 0 ? Math.round(Number(c.dur)) : null,
+    login: String(c.login || '').trim().toLowerCase(), name: clip(c.op, 160), leader: clip(c.lid, 160), registration: null,
+    team: clip(ger?.op, 80), manager: clip(ger?.nome, 80), product: meta?.carteira === 'VEICULOS' ? 'VEICULOS' : c.pr === 'CON' ? 'CONSIGNADO' : (meta?.carteira || 'CARTOES'),
+    campaign: clip(c.camp, 120), tabulation: clip(c.tab, 120), audio_file: clip(c.arq, 300), customer: clip(c.cli, 160),
+    items, outcome, alerts, highlights, kit, esf, rot, trat,
+    summary: kit?.mail || null,
+    ai_summary: kit && (kit.mail || kit.ok.length) ? { engine: 'dashboard', summary: kit.mail || '', feedback: { strengths: kit.ok.join('; '), improvements: (kit.op2.length ? kit.op2 : kit.tentar).join('; '), action_plan: kit.tentar.map((t) => `“${t.replace(/^["“]|["”]$/g, '')}”`).join(' ') } } : null,
+    facts: [['Período', period ? (c.per === 'C' ? period : `${period} (histórico)`) : null], ['Gerência', ger ? `${ger.nome} · ${ger.op}` : null], ['Tabulação', c.tab], ['Campanha', c.camp],
+      ['Desconexão', c.desc], ['Canal', 'AGV (agente virtual)'], ['Desfecho', outcome], ['Esforço negocial', esf != null ? `${esf}%` : null], ['Roteiro AGV', rot != null ? `${Math.round(rot)}%` : null],
+      ['Motivo da recusa', c.recusa], ['Contrato / dívida', c.veic],
+      ['Vínculo com o áudio', c.conf === false ? 'Provável (pela duração e pelo operador): confira o nome do cliente ao abrir o áudio' : c.conf === true ? 'Confirmado' : null],
+      ['Transcrição', c.cid && c.id && String(c.id) !== String(c.cid) ? String(c.id) : null]],
+  };
+}
+
+export async function importAgvEsforco({ calls, meta, filename }, userId) {
+  if (!Array.isArray(calls) || !calls.length) throw httpError(400, 'Nenhuma ligação recebida.');
+  if (calls.length > 200) throw httpError(400, 'Envie no máximo 200 ligações por vez.');
+  const list = calls.filter((c) => c && (c.cid || c.id)).map((c) => esfCall(c, meta || {}));
+  const crit = await must(sb().from('px_criteria').select('id, code, product, weight, critical').eq('active', true));
+  const esfCrit = crit.filter((c) => c.product === 'AGV2');
+  if (esfCrit.length < ESF_CR.length + ESF_RI.length) throw httpError(400, 'O roteiro de esforço negocial AGV ainda não existe no banco. Rode a migração 20261030120000_px_agv_esforco.sql no Supabase.');
+  const critById = new Map(crit.map((c) => [c.id, c]));
+  const keys = [...new Set(list.map((c) => c.key))];
+  const found = new Map();
+  for (const col of ['external_id', 'protocol']) {
+    const evs = await must(sb().from('px_evaluations').select('*').in(col, keys));
+    for (const e of evs) if (!found.has(String(e[col])) || e.channel === 'AGV') found.set(String(e[col]), e);
+  }
+  const evIds = [...new Set([...found.values()].map((e) => e.id))];
+  const items = await itemsOf(evIds);
+  const { opOf, created: opsCreated } = await resolveAgvOperators(list.filter((c) => c.login || c.name));
+  const now = nowIso();
+  const source = { kind: 'dash_agv_esf', file: clip(filename, 200), at: now };
+  const out = { kind: 'dash_agv_esf', created: 0, updated: 0, history: 0, skipped: [], operators_created: opsCreated };
+  const cycles = new Map();
+  const seen = new Set();
+  const scoreOf = (vals) => computeScore(vals.map((v) => ({ ...critByCode(esfCrit, v.code), final_result: v.final })), 'final_result').score;
+  const itemRows = (evalId, c) => esfCrit.map((k) => ({
+    evaluation_id: evalId, criterion_id: k.id, speech_result: c.items[k.code]?.final || 'NA', final_result: c.items[k.code]?.final || 'NA',
+    speech_note: c.items[k.code]?.note || null,
+  }));
+
+  for (const c of list) {
+    if (seen.has(c.key)) continue;
+    seen.add(c.key);
+    const facts = c.facts.filter(([, v]) => v != null && v !== '');
+    const vals = Object.entries(c.items).map(([code, v]) => ({ code, final: v.final }));
+    const esforco = { esforco: c.esf, roteiro: c.rot, tratativa: c.trat, resumida: !c.detailed, periodo: c.period || null, gerencia: c.gerencia };
+    const ex = found.get(c.key);
+    if (ex) {
+      const its = items.filter((i) => i.evaluation_id === ex.id);
+      if (its.some((i) => i.adjust_source === 'manual')) { out.skipped.push({ id: c.key, reason: 'tem ajuste feito à mão pela Qualidade' }); continue; }
+      // Uma ligação de histórico (só as notas) não substitui uma leitura completa já existente
+      if (!c.detailed && ex.details?.feedback_kit) { out.skipped.push({ id: c.key, reason: 'já tem a leitura completa' }); continue; }
+      const anterior = its.filter((i) => i.final_result && critById.get(i.criterion_id)?.product !== 'AGV2')
+        .map((i) => [critById.get(i.criterion_id)?.code, i.final_result]);
+      if (its.length) await must(sb().from('px_evaluation_items').delete().in('id', its.map((i) => i.id)));
+      await must(sb().from('px_evaluation_items').insert(itemRows(ex.id, c)));
+      const old = ex.details || {};
+      const keysF = new Set(facts.map(([k]) => k));
+      const details = {
+        ...old, origem: 'Dashboard Esforço negocial AGV (leitura da transcrição)',
+        facts: [...(old.facts || []).filter(([k]) => !keysF.has(k) && !['Desfecho (speech)', 'Evidência do speech'].includes(k)), ...facts],
+        highlights: [...(old.highlights || []).filter((h) => !['speech_agv', 'warn', 'bad', 'info'].includes(h.kind)), ...c.highlights],
+        agv_source: source, esforco, ...(c.kit ? { feedback_kit: c.kit } : {}),
+        ...(anterior.length && !old.roteiro_anterior ? { roteiro_anterior: Object.fromEntries(anterior) } : {}),
+      };
+      const fill = (field, v) => (ex[field] == null || ex[field] === '' ? (v ?? undefined) : undefined);
+      const patch = {
+        channel: 'AGV', details, updated_at: now, speech_score: scoreOf(vals), final_score: scoreOf(vals),
+        outcome: c.outcome || (c.detailed ? null : ex.outcome),
+        alerts: [...new Set([...(ex.alerts || []).filter((a) => !['sem_speech', 'audio_ruim', 'sem_proposta', 'conduta'].includes(a)), ...c.alerts])],
+        status: ex.status === 'pendente' ? 'revisada' : ex.status, reviewed_by: ex.reviewed_by || userId, reviewed_at: ex.reviewed_at || now,
+        tabulation: fill('tabulation', c.tabulation), campaign: fill('campaign', c.campaign), audio_file: fill('audio_file', c.audio_file),
+        duration_sec: fill('duration_sec', c.dur), customer: fill('customer', c.customer), call_date: fill('call_date', c.date), call_time: fill('call_time', c.time),
+        audio_url: ex.audio_url ? undefined : (/^https:\/\//.test(meta?.aud || '') ? meta.aud.slice(0, 500) : undefined),
+        ...(c.ai_summary && ex.ai_summary?.engine !== 'claude' ? { ai_summary: c.ai_summary } : {}),
+      };
+      const opId = opOf(c);
+      if (opId && opId !== ex.operator_id && c.login) patch.operator_id = opId;
+      await must(sb().from('px_evaluations').update(Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))).eq('id', ex.id));
+      out.updated++;
+      if (!c.detailed) out.history++;
+      continue;
+    }
+    if (!c.date) { out.skipped.push({ id: c.key, reason: 'sem data da ligação e não está na plataforma' }); continue; }
+    if (!opOf(c)) { out.skipped.push({ id: c.key, reason: 'sem operador' }); continue; }
+    const row = await must(sb().from('px_evaluations').insert({
+      cycle_id: await cycleFor(c.date, cycles), operator_id: opOf(c), product: c.product, segment: null, channel: 'AGV', source: 'dash_agv_esf', external_id: c.key, protocol: c.key,
+      call_date: c.date, call_time: c.time, duration_sec: c.dur, customer: c.customer, audio_file: c.audio_file, campaign: c.campaign, tabulation: c.tabulation,
+      outcome: c.outcome, speech_score: scoreOf(vals), final_score: scoreOf(vals), alerts: c.alerts, speech_summary: null, ai_summary: c.ai_summary,
+      audio_url: /^https:\/\//.test(meta?.aud || '') ? meta.aud.slice(0, 500) : null,
+      status: 'revisada', reviewed_by: userId, reviewed_at: now, created_by: userId,
+      details: { origem: 'Dashboard Esforço negocial AGV (leitura da transcrição)', facts, highlights: c.highlights, agv_source: source, esforco, ...(c.kit ? { feedback_kit: c.kit } : {}) },
+    }).select('id').single());
+    try { await must(sb().from('px_evaluation_items').insert(itemRows(row.id, c))); }
+    catch (e) { await sb().from('px_evaluations').delete().eq('id', row.id); throw e; }
+    out.created++;
+    if (!c.detailed) out.history++;
+  }
+  return out;
+}

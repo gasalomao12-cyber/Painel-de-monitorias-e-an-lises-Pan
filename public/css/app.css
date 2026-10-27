@@ -607,3 +607,22 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .tbl .delta-row td { padding-top: 4px; padding-bottom: 10px; }
 #agv-dim { max-width: 100%; overflow-x: auto; }
 #agv-compare .card-head, #agv-ab .row { flex-wrap: wrap; }
+
+/* Material de feedback (dashboards de esforço negocial AGV) */
+.kit { border-color: color-mix(in srgb, var(--brand) 30%, var(--border)); }
+.kit-ic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--brand-soft); color: var(--brand); }
+.kit-ic svg { width: 16px; height: 16px; }
+.kit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 14px; }
+.kit-box { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--surface-2); min-width: 0; }
+.kit-box h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); }
+.kit-box h4 svg { width: 14px; height: 14px; }
+.kit-box.ok h4 { color: var(--ok-ink); } .kit-box.warn h4 { color: var(--warn-ink); } .kit-box.bad h4 { color: var(--bad-ink); }
+.kit-list { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.5; } .kit-list li + li { margin-top: 4px; }
+.kit-fala { font-size: 13px; line-height: 1.5; padding: 8px 10px; border-radius: 10px; background: var(--surface); border-left: 3px solid var(--brand); }
+.kit-fala + .kit-fala { margin-top: 6px; }
+.kit-fala.cli { border-left-color: var(--muted); font-style: italic; }
+.kit-mail { margin-top: 12px; border: 1px dashed var(--border-strong); border-radius: 12px; padding: 12px 14px; }
+.kit-mail h4 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); }
+.kit-mail h4 svg { width: 14px; height: 14px; }
+.kit-mail p { margin: 8px 0 0; font-size: 13.5px; line-height: 1.6; }
+.stack > .kit.card { margin: 0; }

@@ -98,6 +98,26 @@ function detectAgvKind(calls) {
   return null;
 }
 const ddmm = (d) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : '');
+// Períodos e gerências ficam no script do dashboard (PER e GER); lidos como texto, sem executar nada do arquivo
+function readEsforco(data, doc, text, file) {
+  const periods = {};
+  for (const m of text.matchAll(/\{\s*k:\s*'([A-Z])',\s*lb:\s*'([^']+)'\s*\}/g)) periods[m[1]] = m[2];
+  const ger = {};
+  const gerBlock = (text.match(/const GER = \{([\s\S]*?)\};/) || [])[1] || '';
+  for (const m of gerBlock.matchAll(/(\w+):\s*\{\s*nome:\s*'([^']+)',\s*op:\s*'([^']+)'/g)) ger[m[1]] = { nome: m[2], op: m[3] };
+  const title = (doc.title || '').trim();
+  const dates = data.calls.map((c) => c.dt).filter(Boolean).sort();
+  const year = (dates[dates.length - 1] || String(new Date().getFullYear())).slice(0, 4);
+  // Notas do roteiro dos primeiros segundos das ligações de histórico vêm na lista "rot"
+  const rot = new Map((data.rot || []).map((r) => [`${r.per}:${r.id}`, r]));
+  const calls = data.calls.map((c) => { const r = rot.get(`${c.per}:${c.id}`); return r && !c.s ? { ...c, s: r.s, ap: r.ap } : c; });
+  const ids = new Set(data.calls.map((c) => `${c.per}:${c.id}`));
+  for (const r of data.rot || []) if (!ids.has(`${r.per}:${r.id}`)) calls.push({ ...r, c: null });
+  return {
+    kind: 'dash_agv_esf', calls, name: file.name, title,
+    meta: { periods, ger, year, title, aud: typeof data.aud === 'string' ? data.aud : null, carteira: /ve[ií]culo/i.test(title) ? 'VEICULOS' : 'CARTOES' },
+  };
+}
 export async function readDashboard(file) {
   const text = await file.text();
   const doc = new DOMParser().parseFromString(text, 'text/html');
@@ -107,6 +127,9 @@ export async function readDashboard(file) {
   try { data = JSON.parse(node.textContent); } catch { throw new Error('Não foi possível ler os dados do dashboard.'); }
   const ger = data.ger || null;
   if (ger && Array.isArray(data.calls) && !data.calls.length) throw new Error(`O dashboard AGV da gerência ${ger.nome || ''} (${ger.curto || ger.escopo || ''}) veio sem nenhuma ligação. Gere o arquivo de novo com as ligações do período.`);
+  // "Esforço negocial AGV" por carteira: 5 critérios (c) e 6 itens do roteiro (s) por ligação, com histórico
+  const ec = (data.calls || []).find((c) => c && Array.isArray(c.c));
+  if (ec && ec.c.length === 5 && 'per' in ec) return readEsforco(data, doc, text, file);
   const agvKind = detectAgvKind(data.calls);
   if (agvKind) {
     const first = (d) => data.calls.filter((c) => c.day === d).map((c) => String(c.dt).slice(0, 10)).sort()[0];

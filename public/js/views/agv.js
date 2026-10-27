@@ -6,7 +6,7 @@ import { mapCalls, readDashboard } from './import.js';
 
 // Divisão AGV: ligações das campanhas em que a assistente virtual (AGV) transfere para o operador,
 // avaliadas no roteiro AGV. Os dados vêm enxutos da API e os recortes são montados aqui, na hora.
-const state = { product: '', campaign: '', team: '', from: '', to: '', dim: 'product', a: '', b: '' };
+const state = { product: '', campaign: '', team: '', from: '', to: '', dim: 'product', a: '', b: '', roteiro: '' };
 let data = null;
 
 const DIMS = [
@@ -145,12 +145,14 @@ function drawFilters(el, ctx) {
       ${(m.agv?.campaigns || []).map((c) => html`<option ${state.campaign === c ? 'selected' : ''}>${c}</option>`)}</select>
     ${m.teams.length > 1 ? html`<select class="select sm" id="a-team" aria-label="Equipe"><option value="">Todas as equipes</option>${m.teams.map((t) => html`<option ${state.team === t ? 'selected' : ''}>${t}</option>`)}</select>` : ''}
     <label class="small t2 row" style="gap:6px">De <input class="input sm" type="date" id="a-from" value="${state.from}"></label>
-    <label class="small t2 row" style="gap:6px">até <input class="input sm" type="date" id="a-to" value="${state.to}"></label>`);
+    <label class="small t2 row" style="gap:6px">até <input class="input sm" type="date" id="a-to" value="${state.to}"></label>
+    ${(data.roteiros || []).filter((r) => r.total).length > 1 ? html`<div class="seg" id="a-rot" role="group" aria-label="Roteiro">${data.roteiros.filter((r) => r.total).map((r) => html`<button data-v="${r.key}" class="${data.roteiro === r.key ? 'on' : ''}">${r.label}</button>`)}</div>` : ''}`);
   const reload = () => load(el, ctx);
   $('#a-cycle', box).onchange = (e) => { store.cycle = e.target.value; localStorage.setItem('px_cycle', store.cycle); state.a = state.b = ''; reload(); };
   $$('#a-product button', box).forEach((b) => b.addEventListener('click', () => { state.product = b.dataset.v; reload(); }));
   $('#a-campaign', box).onchange = (e) => { state.campaign = e.target.value; reload(); };
   $('#a-team', box)?.addEventListener('change', (e) => { state.team = e.target.value; reload(); });
+  $$('#a-rot button', box).forEach((b) => b.addEventListener('click', () => { state.roteiro = b.dataset.v; state.a = state.b = ''; reload(); }));
   $('#a-from', box).onchange = (e) => { state.from = e.target.value; state.a = state.b = ''; reload(); };
   $('#a-to', box).onchange = (e) => { state.to = e.target.value; state.a = state.b = ''; reload(); };
 }
@@ -159,7 +161,7 @@ async function load(el, ctx) {
   const { store } = ctx;
   const body = $('#agv-body', el);
   body.style.opacity = '.5';
-  const d = await api.get(`/agv/data${qs({ cycle_id: store.cycle, product: state.product, campaign: state.campaign, team: state.team, from: state.from, to: state.to })}`);
+  const d = await api.get(`/agv/data${qs({ cycle_id: store.cycle, product: state.product, campaign: state.campaign, team: state.team, from: state.from, to: state.to, roteiro: state.roteiro })}`);
   if (!ctx.isCurrent()) return;
   body.style.opacity = '';
   const byEval = new Map();
@@ -195,7 +197,9 @@ function draw(el, ctx) {
       ${kpi('target', 'Aderência ao roteiro AGV', fmtScore(s.adherence), '%', 'itens feitos ÷ itens que cabiam', s.adherence)}
       ${kpi('alert', 'Terminaram sem acordo', fmtScore(s.noDeal), '%', html`${fmtInt(s.outcomes['Sem acordo'] || 0)} de ${fmtInt(s.withOutcome)} com desfecho`, null, 'bad')}
       ${kpi('users', 'Operadores', fmtInt(s.operators), '', html`nota média <b class="score-txt band-${band(s.avg)}">${fmtScore(s.avg)}</b>`)}
-      ${kpi('alert', 'Sem proposta com valor', fmtScore(pct(s.per.PRP.NC, s.per.PRP.base)), '%', html`${fmtInt(s.per.PRP.NC)} de ${fmtInt(s.per.PRP.base)} ligações com negociação`, null, 'bad')}
+      ${data.roteiro === 'AGV2' && s.per.APN
+        ? kpi('alert', 'Sem tentativa após o não', fmtScore(pct(s.per.APN.NC, s.per.APN.base)), '%', html`${fmtInt(s.per.APN.NC)} de ${fmtInt(s.per.APN.base)} recusas encerradas sem outra opção`, null, 'bad')
+        : s.per.PRP ? kpi('alert', 'Sem proposta com valor', fmtScore(pct(s.per.PRP.NC, s.per.PRP.base)), '%', html`${fmtInt(s.per.PRP.NC)} de ${fmtInt(s.per.PRP.base)} ligações com negociação`, null, 'bad') : ''}
       ${kpi('alert', 'Alertas', fmtInt(s.alerts.reduce((a, [, v]) => a + v, 0)), '', s.alerts.slice(0, 2).map(([a, v]) => `${v} ${(ALERT[a]?.[0] || a).toLowerCase()}`).join(' · ') || 'nenhum alerta', null, 'bad')}
     </div>
 
@@ -384,14 +388,14 @@ export function mapSpeechReport(rows) {
   return { rows: [...latest.values()], evaluations: rows.length, questions: Object.keys(q) };
 }
 
-export const AGV_DASH_KIND = { dash_agv: 'Teste do speech AGV (por gerência)', dash_agv_cmp: 'Comparativo AGV' };
+export const AGV_DASH_KIND = { dash_agv: 'Teste do speech AGV (por gerência)', dash_agv_cmp: 'Comparativo AGV', dash_agv_esf: 'Esforço negocial AGV (por carteira)' };
 // Envia um dashboard AGV em lotes; devolve o total de novas, completadas e ignoradas
 export async function sendAgvDashboard(d, onProgress) {
-  const t = { created: 0, updated: 0, skipped: [], operators_created: 0 };
+  const t = { created: 0, updated: 0, history: 0, skipped: [], operators_created: 0 };
   for (let i = 0; i < d.calls.length; i += 100) {
     onProgress?.(`${d.name}: ${Math.min(i + 100, d.calls.length)} de ${d.calls.length}…`);
     const r = await api.post('/import/agv-dashboard', { kind: d.kind, calls: d.calls.slice(i, i + 100), meta: d.meta, filename: d.name, batch: i / 100 + 1, last: i + 100 >= d.calls.length });
-    t.created += r.created; t.updated += r.updated; t.operators_created += r.operators_created; t.skipped.push(...r.skipped);
+    t.created += r.created; t.updated += r.updated; t.history += r.history || 0; t.operators_created += r.operators_created; t.skipped.push(...r.skipped);
   }
   return t;
 }
@@ -461,7 +465,8 @@ function openImport(el, ctx) {
       }
       for (const d of files.dash) {
         const t = await sendAgvDashboard(d, (msg) => { res.textContent = msg; });
-        lines.push(html`<div class="insight"><span class="ic" style="background:var(--ok-soft);color:var(--ok-ink)">${icon('checkCircle')}</span><div><b>${d.name}</b><div class="t2 small">${t.created} ligação(ões) nova(s) · ${t.updated} completada(s) com a leitura revisada${t.operators_created ? ` · ${t.operators_created} operador(es) cadastrado(s)` : ''}${t.skipped.length ? ` · ${t.skipped.length} ignorada(s): ${t.skipped.slice(0, 4).map((x) => `${x.id} (${x.reason})`).join(', ')}` : ''}</div></div></div>`);
+        const why = Object.entries(t.skipped.reduce((a, x) => { a[x.reason] = (a[x.reason] || 0) + 1; return a; }, {})).map(([k, v]) => `${v} ${k}`).join(' · ');
+        lines.push(html`<div class="insight"><span class="ic" style="background:var(--ok-soft);color:var(--ok-ink)">${icon('checkCircle')}</span><div><b>${d.name}</b><div class="t2 small">${t.created} ligação(ões) nova(s) · ${t.updated} completada(s) com a leitura revisada${t.history ? ` · ${t.history} das datas anteriores (para a evolução)` : ''}${t.operators_created ? ` · ${t.operators_created} operador(es) cadastrado(s)` : ''}${why ? ` · não alteradas: ${why}` : ''}</div></div></div>`);
       }
       files.dash = [];
       if (files.speech) {
