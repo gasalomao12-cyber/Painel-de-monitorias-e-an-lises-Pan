@@ -188,6 +188,22 @@ fica no campo desfecho da ligação.
 - **Migração**: rode `supabase/migrations/20261029120000_px_agv.sql` no SQL Editor. Ela cria o roteiro AGV e passa
   para ele as ligações AGV do discador que ainda não foram avaliadas.
 
+## Análises AGV: análise do dia, não quinzena
+
+- **Fora das quinzenas:** ligações AGV avaliadas nos roteiros AGV não entram nas quinzenas de monitoria.
+- **Agrupamento:** elas se agrupam pela **análise**, que é o período do arquivo importado (ex.: "19/10", "23 a 26/10") ou, sem ele, o dia da ligação.
+- **Telas:** Análises AGV e Esforço negocial filtram e comparam por análise, dia e semana.
+- **Migração:** `supabase/migrations/20261031120000_px_agv_analise_diaria.sql` tira da quinzena as ligações AGV que já estavam lá.
+
+## Filtros de seleção múltipla
+
+Todos os filtros de lista aceitam várias escolhas, por caixa de seleção, com busca, "Marcar todos", "Limpar" e "Aplicar":
+- **Painel e Atendimentos:** quinzena, produto, segmento, equipe, operador, status, campanha e alerta.
+- **Análises AGV:** análise, carteira, campanha e equipe.
+- **Esforço negocial:** gerência, análise (ou um dia dela), liderança e motivo.
+
+A API recebe as listas separadas por `|`.
+
 ## Esforço negocial AGV
 
 Menu **Esforço negocial**. É o mesmo painel dos dashboards "Esforço negocial AGV", agora alimentado pelos dados da plataforma.

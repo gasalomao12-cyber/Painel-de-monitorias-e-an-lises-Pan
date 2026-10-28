@@ -118,18 +118,30 @@ function scoped(query, req) {
 }
 
 // Filtros comuns às views px_v_eval_cards e px_v_item_facts
+// Filtros de seleção múltipla chegam separados por "|" (ids também aceitam vírgula)
+const vals = (v) => (v == null || v === '' ? [] : String(v).split('|').map((s) => s.trim()).filter(Boolean));
+const idVals = (v) => String(v ?? '').split(/[|,]/).map(Number).filter(Boolean);
+const pgList = (l) => l.map((v) => `"${String(v).replace(/["\\]/g, '')}"`).join(',');
+function inOrEq(x, col, l) { return l.length > 1 ? x.in(col, l) : x.eq(col, l[0]); }
+// Segmento: "none" = sem segmento, junto ou não com outros
+function segmentFilter(x, l) {
+  if (!l.length) return x;
+  const named = l.filter((v) => v !== 'none');
+  if (!l.includes('none')) return inOrEq(x, 'segment', named);
+  return named.length ? x.or(`segment.is.null,segment.in.(${pgList(named)})`) : x.is('segment', null);
+}
+
 function applyFilters(query, req, q, { cards = true } = {}) {
   let x = scoped(query, req);
-  const ids = (v) => String(v).split(',').map(Number).filter(Boolean);
-  if (q.cycle_id) { const l = ids(q.cycle_id); if (l.length) x = x.in('cycle_id', l); }
-  if (q.product) x = x.eq('product', q.product);
-  if (q.segment) x = q.segment === 'none' ? x.is('segment', null) : x.eq('segment', q.segment);
+  if (q.cycle_id) { const l = idVals(q.cycle_id); if (l.length) x = x.in('cycle_id', l); }
+  if (vals(q.product).length) x = inOrEq(x, 'product', vals(q.product));
+  x = segmentFilter(x, vals(q.segment));
   if (q.channel) x = q.channel === 'none' ? x.is('channel', null) : q.channel === 'Convencional' ? x.or('channel.is.null,channel.neq.AGV') : x.eq('channel', q.channel);
-  if (q.campaign) x = x.eq('campaign', q.campaign);
-  if (q.operator_id) x = x.eq('operator_id', Number(q.operator_id));
-  if (q.team) x = x.eq('team', q.team);
-  if (q.supervisor) x = x.eq('supervisor_user_id', q.supervisor);
-  if (q.status) x = x.eq('status', q.status);
+  if (vals(q.campaign).length) x = inOrEq(x, 'campaign', vals(q.campaign));
+  if (idVals(q.operator_id).length) x = inOrEq(x, 'operator_id', idVals(q.operator_id));
+  if (vals(q.team).length) x = inOrEq(x, 'team', vals(q.team));
+  if (vals(q.supervisor).length) x = inOrEq(x, 'supervisor_user_id', vals(q.supervisor));
+  if (vals(q.status).length) x = inOrEq(x, 'status', vals(q.status));
   if (q.feedback === 'applied') x = x.eq('status', 'feedback_aplicado');
   if (q.feedback === 'pending') x = x.neq('status', 'feedback_aplicado');
   if (q.min !== undefined && q.min !== '') x = x.gte('final_score', Number(q.min));
@@ -138,7 +150,7 @@ function applyFilters(query, req, q, { cards = true } = {}) {
   if (q.to) x = x.lte('call_date', q.to);
   const s = likeSafe(q.q);
   if (s) x = x.or(['operator_name', 'protocol', 'customer', 'contract', 'registration', ...(cards ? ['login', 'audio_file', 'supervisor_name'] : [])].map((c) => `${c}.ilike.*${s}*`).join(','));
-  if (cards && q.alert) x = x.contains('alerts', [q.alert]);
+  if (cards && vals(q.alert).length) x = vals(q.alert).length > 1 ? x.overlaps('alerts', vals(q.alert)) : x.contains('alerts', vals(q.alert));
   if (cards && q.adjusted === '1') x = x.gt('adjustments', 0);
   if (cards && q.critical === '1') x = x.gt('critical_fail', 0);
   return x;
@@ -786,11 +798,11 @@ router.delete('/evaluations/:id/feedback/:fid', QUALITY, h(async (req, res) => {
 
 function feedbackQuery(req, q) {
   let x = scoped(sb().from('px_v_feedbacks').select('*'), req);
-  if (q.cycle_id) x = x.eq('cycle_id', Number(q.cycle_id));
-  if (q.operator_id) x = x.eq('operator_id', Number(q.operator_id));
-  if (q.product) x = x.eq('product', q.product);
-  if (q.segment) x = q.segment === 'none' ? x.is('segment', null) : x.eq('segment', q.segment);
-  if (q.team) x = x.eq('team', q.team);
+  if (idVals(q.cycle_id).length) x = inOrEq(x, 'cycle_id', idVals(q.cycle_id));
+  if (idVals(q.operator_id).length) x = inOrEq(x, 'operator_id', idVals(q.operator_id));
+  if (vals(q.product).length) x = inOrEq(x, 'product', vals(q.product));
+  x = segmentFilter(x, vals(q.segment));
+  if (vals(q.team).length) x = inOrEq(x, 'team', vals(q.team));
   if (q.applied_by) x = x.eq('applied_by', q.applied_by);
   if (q.from) x = x.gte('applied_at', q.from);
   if (q.to) x = x.lte('applied_at', `${q.to}T23:59:59`);
@@ -985,9 +997,9 @@ router.get('/agv/data', h(async (req, res) => {
   const agv = evals.filter((e) => e.channel === 'AGV' && agvIds.has(e.id));
   const anyAgv = new Set(items.filter((i) => i.criterion_product === 'AGV' || i.criterion_product === 'AGV2').map((i) => i.evaluation_id));
   const criteria = await must(sb().from('px_criteria').select('id, code, name, description, stage, sort').eq('product', roteiro).eq('active', true).order('sort'));
-  // Roteiro de esforço: a análise de origem (ex.: "19/10", "23 a 26/10") separa as leituras na evolução
+  // Análise de origem (ex.: "19/10", "23 a 26/10"); sem ela, a análise é o dia da ligação
   const analysis = new Map();
-  if (roteiro === 'AGV2') {
+  {
     const ids = agv.map((e) => e.id);
     for (let i = 0; i < ids.length; i += 300) {
       for (const r of await must(sb().from('px_evaluations').select('id, esforco:details->esforco').in('id', ids.slice(i, i + 300)))) analysis.set(r.id, r.esforco || {});

@@ -1,5 +1,5 @@
 import { api, qs } from '../api.js';
-import { toast } from '../ui.js';
+import { toast, multiSelect, bindMultiSelect } from '../ui.js';
 
 // Painel de esforço negocial AGV — mesma estrutura dos dashboards "Esforço negocial AGV" (capa, visão geral,
 // lideranças, operadores e ligações), com os dados da plataforma, mais dispersões e evolução entre as análises.
@@ -79,7 +79,7 @@ const ICO = {
 // ------------------------------------------------------------------ estado
 let RAW = [];                 // todas as ligações AGV elegíveis (todas as análises)
 let ROTC = [];                // roteiro de esforço: ligações com o roteiro dos primeiros segundos (inclui as sem negociação)
-let VIEW = 'capa', GER = '', PER = '', F = { lid: '', tab: '' }, LQ = '', CHIP = 'todas', SORT = { k: 'p', d: 1 }, PRE = null, GRAN = 'cycle';
+let VIEW = 'capa', GERS = [], PERS = [], F = { lid: [], tab: [] }, LQ = '', CHIP = 'todas', SORT = { k: 'p', d: 1 }, PRE = null, GRAN = 'cycle';
 let LISTA = [], MID = null, root = null, LIDS = [], TABS = [];
 
 function prep(d) {
@@ -115,11 +115,12 @@ function prep(d) {
     const riS = ri ? RI.reduce((a, x) => a + (ri[x.code] === 'SIM' ? 1 : ri[x.code] === 'PARCIAL' ? 0.5 : 0), 0) : 0;
     if (!n && !riN) continue;
     const conduta = (e.alerts || []).includes('conduta');
-    const an = V2 && e.analysis ? { id: `a:${e.analysis}`, name: `Análise de ${e.analysis}` } : null;
+    // Análise = período do arquivo importado (ex.: "23 a 26/10") ou o dia da ligação; nada de quinzena
+    const an = e.analysis ? { id: `a:${e.analysis}`, name: `Análise de ${e.analysis}` } : e.date ? { id: `d:${e.date}`, name: `Análise de ${dfmt(e.date)}` } : { id: 'sem-data', name: 'Sem data' };
     out.push({
       eid: e.id, id: String(e.call_id || e.id), dt, date: e.date || '', dur: e.duration, op: e.operator || 'Operador', login: e.login || '', lid: e.supervisor || 'Sem liderança',
       ger: mgrOf(e), team: e.team || '', product: e.product, tab: tabLabel(e.tabulation), cli: e.customer || '', arq: e.audio_file || '', camp: e.campaign || '',
-      cycle_id: an ? an.id : e.cycle_id, cycle: an ? an.name : e.cycle || 'Sem quinzena', cycle_start: an ? e.date || '' : e.cycle_start || '',
+      cycle_id: an.id, cycle: an.name, cycle_start: e.date || '',
       desf, it, s, n, p: pc(s, n), falta: IT.filter((i) => it[i.k] === 'NAO').map((i) => i.k), ri, rp: pc(riS, riN), conduta,
     });
   }
@@ -128,7 +129,7 @@ function prep(d) {
 }
 
 const gers = () => [...new Set(RAW.map((c) => c.ger))].sort((a, b) => RAW.filter((c) => c.ger === b).length - RAW.filter((c) => c.ger === a).length);
-const inGer = () => RAW.filter((c) => !GER || c.ger === GER);
+const inGer = () => RAW.filter((c) => !GERS.length || GERS.includes(c.ger));
 function periodsOf(L) {
   const M = new Map();
   for (const c of L) {
@@ -138,16 +139,18 @@ function periodsOf(L) {
   }
   return [...M.values()].sort((a, b) => String(a.start).localeCompare(String(b.start)));
 }
-const inPer = () => inGer().filter((c) => !PER || String(c.cycle_id || '') === PER);
-const fl = () => inPer().filter((c) => (!F.lid || c.lid === F.lid) && (!F.tab || c.tab === F.tab));
+// Análises escolhidas: a análise inteira ou um dia dela
+const perOk = (c) => !PERS.length || PERS.some((p) => p === String(c.cycle_id || '') || (p.startsWith('d:') && c.date === p.slice(2)));
+const inPer = () => inGer().filter(perOk);
+const fl = () => inPer().filter((c) => (!F.lid.length || F.lid.includes(c.lid)) && (!F.tab.length || F.tab.includes(c.tab)));
 const lcol = (l) => PAL[Math.max(0, LIDS.indexOf(l)) % PAL.length];
 function refreshLists() {
   const L = inPer();
   const cnt = (k) => (a, b) => L.filter((c) => c[k] === b).length - L.filter((c) => c[k] === a).length;
   LIDS = [...new Set(L.map((c) => c.lid))].sort(cnt('lid'));
   TABS = [...new Set(L.map((c) => c.tab))].sort(cnt('tab'));
-  if (F.lid && !LIDS.includes(F.lid)) F.lid = '';
-  if (F.tab && !TABS.includes(F.tab)) F.tab = '';
+  F.lid = F.lid.filter((l) => LIDS.includes(l));
+  F.tab = F.tab.filter((t) => TABS.includes(t));
 }
 // Cabeçalho: gerência, equipe e carteira do recorte
 function G() {
@@ -155,7 +158,8 @@ function G() {
   const teams = Object.entries(L.reduce((a, c) => { if (c.team) a[c.team] = (a[c.team] || 0) + 1; return a; }, {})).sort((a, b) => b[1] - a[1]);
   const prods = new Set(L.map((c) => c.product));
   const op = prods.size === 1 && prods.has('VEICULOS') ? 'Banco PAN · Veículos' : prods.has('VEICULOS') ? 'Banco PAN · Veículos e Sem Garantia' : 'Banco PAN · Sem Garantia';
-  return { nome: GER || 'todas as gerências', curto: GER ? teams[0]?.[0] || 'AGV PAN' : 'AGV PAN', op, all: !GER };
+  const one = GERS.length === 1;
+  return { nome: one ? GERS[0] : GERS.length ? `${GERS.length} gerências` : 'todas as gerências', curto: one ? teams[0]?.[0] || 'AGV PAN' : 'AGV PAN', op, all: !GERS.length, many: GERS.length > 1 };
 }
 function perLabel(L) {
   const d = L.map((c) => c.date).filter(Boolean).sort();
@@ -198,7 +202,7 @@ function faixas(L) {
   return `<div class="stk" role="img" aria-label="Ligações por faixa de esforço">${rows.filter((r) => r.n).map((r) => `<i style="width:${(100 * r.n) / t}%;background:${r.c}" data-tip="${r.t}: ${lg(r.n)}"></i>`).join('')}</div>
   <div class="bands">${rows.slice().reverse().map((r) => `<button class="bd" data-goband="${r.k}"><span class="dt" style="background:${r.c}"></span><span class="tx"><b>${r.t}</b><small>esforço ${r.r}</small></span><span class="n num">${r.n}</span><span class="p num">${fp(pc(r.n, t))}</span></button>`).join('')}</div>`;
 }
-const flR = () => ROTC.filter((c) => (!GER || c.ger === GER) && (!PER || String(c.cycle_id || '') === PER) && (!F.lid || c.lid === F.lid) && (!F.tab || c.tab === F.tab));
+const flR = () => ROTC.filter((c) => (!GERS.length || GERS.includes(c.ger)) && perOk(c) && (!F.lid.length || F.lid.includes(c.lid)) && (!F.tab.length || F.tab.includes(c.tab)));
 function riBars(L) {
   const ps = L.map((c) => c.rp).filter((v) => v != null);
   const ap = ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : null;
@@ -281,14 +285,16 @@ function dispCalls(L) {
 }
 
 // Evolução entre as análises (quinzena, semana ou dia), sem o filtro de quinzena
-const GRANS = [['cycle', 'Análise (quinzena)'], ['week', 'Semana'], ['day', 'Dia']];
+const GRANS = [['cycle', 'Análise'], ['day', 'Dia'], ['week', 'Semana']];
 function evoGroups() {
-  const L = inGer().filter((c) => (!F.lid || c.lid === F.lid) && (!F.tab || c.tab === F.tab));
+  const L = inGer().filter((c) => (!F.lid.length || F.lid.includes(c.lid)) && (!F.tab.length || F.tab.includes(c.tab)));
   const M = new Map();
   for (const c of L) {
     const [k, label, ord] = GRAN === 'cycle' ? [String(c.cycle_id || ''), c.cycle, c.cycle_start || ''] : GRAN === 'week' ? [monday(c.date), `Sem. ${dfmt(monday(c.date))}`, monday(c.date)] : [c.date, dfmt(c.date), c.date];
-    if (!M.has(k)) M.set(k, { k, label: label.replace(/ quinzena · /i, 'ª q. ').replace('ªª', 'ª'), ord, v: [] });
-    M.get(k).v.push(c);
+    if (!M.has(k)) M.set(k, { k, label, ord, v: [] });
+    const g = M.get(k);
+    if (ord && (!g.ord || ord < g.ord)) g.ord = ord;
+    g.v.push(c);
   }
   return [...M.values()].sort((a, b) => String(a.ord).localeCompare(String(b.ord))).map((g) => ({ ...g, A: agg(g.v) }));
 }
@@ -305,14 +311,14 @@ function vGeral() {
   const L = fl(); if (!L.length) return semDados();
   const A = agg(L), R = rank(A), pior = R[0], melhor = R[R.length - 1], R2 = R.slice(0, 2);
   const crit = L.filter((c) => c.b === 'bad').length;
-  const evo = evoGroups(), cur = evo.findIndex((g) => (GRAN === 'cycle' ? g.k === (PER || evo[evo.length - 1]?.k) : false));
+  const evo = evoGroups(), cur = evo.findIndex((g) => (GRAN === 'cycle' ? g.k === (PERS.length === 1 ? PERS[0] : !PERS.length ? evo[evo.length - 1]?.k : null) : false));
   const prevA = cur > 0 ? evo[cur - 1] : null, curA = cur >= 0 ? evo[cur] : null;
   const brief = [
     `Analisei <b>${lg(A.calls)}</b> AGV com negociação, de <b>${A.ops} operadores</b>${A.lids > 1 ? ` em ${A.lids} lideranças` : ''}. O esforço negocial ficou em <b>${fp(A.p)}</b>.`,
     R2.length > 1 ? `O ponto mais fraco do roteiro é <b>${pior.t.toLowerCase()}</b> (${fp(pior.p)}), seguido de <b>${R2[1].t.toLowerCase()}</b> (${fp(R2[1].p)}). O mais forte é <b>${melhor.t.toLowerCase()}</b> (${fp(melhor.p)}).` : '',
     `<b>${lg(crit)}</b> (${fp(pc(crit, A.calls))}) ficaram com esforço crítico, abaixo de 45%, e <b>${fp(pc(A.sem, A.calls))}</b> terminaram sem acordo.`,
     V2 ? `<b>${lg(A.trat)}</b> pedem tratativa (esforço abaixo de 60%, sem tentativa após o não ou postura)${A.semtN ? `, e em <b>${A.semt} de ${A.semtN}</b> recusas o operador encerrou sem trazer outra opção` : ''}. O material de feedback de cada uma está em Ligações.` : '',
-    prevA && curA && GRAN === 'cycle' && !F.lid && !F.tab ? `Em relação à análise anterior (${esc(prevA.label)}), o esforço ${curA.A.p - prevA.A.p >= 0.5 ? 'subiu' : curA.A.p - prevA.A.p <= -0.5 ? 'caiu' : 'ficou estável'}: <b>${fp(prevA.A.p)} → ${fp(curA.A.p)}</b>.` : ''].filter(Boolean);
+    prevA && curA && GRAN === 'cycle' && !F.lid.length && !F.tab.length ? `Em relação à análise anterior (${esc(prevA.label)}), o esforço ${curA.A.p - prevA.A.p >= 0.5 ? 'subiu' : curA.A.p - prevA.A.p <= -0.5 ? 'caiu' : 'ficou estável'}: <b>${fp(prevA.A.p)} → ${fp(curA.A.p)}</b>.` : ''].filter(Boolean);
   return `<div class="stack">
   <div class="brief"><div class="bi">${ICO.bulb}</div><div><h4>Em poucas palavras</h4><ul>${brief.map((b) => `<li>${b}</li>`).join('')}</ul></div></div>
   <div class="grid">
@@ -413,7 +419,7 @@ function vEvo() {
   const opTable = (rows) => `<div class="tw"><table class="hm"><colgroup><col style="width:46%"><col><col><col style="width:22%"></colgroup><thead><tr><th>Operador</th><th class="c">${esc(prev.label)}</th><th class="c">${esc(last.label)}</th><th class="c">Variação</th></tr></thead><tbody>
     ${rows.map((r) => `<tr class="rw" data-goop="${esc(r.k)}"><td><div class="who"><b>${esc(r.name)}</b><small>${r.n[0]} → ${r.n[1]} ligações</small></div></td><td class="c">${hc(r.a)}</td><td class="c">${hc(r.b)}</td><td class="c">${dlt(r.d)}</td></tr>`).join('') || '<tr><td colspan="4" class="mut">Nenhum operador nas duas análises.</td></tr>'}</tbody></table></div>`;
   return `<div class="stack">
-  <div class="tb" style="justify-content:space-between">${seg}<p class="cnt" style="margin:0">Comparando <b>${P.length}</b> ${GRAN === 'cycle' ? 'análises' : GRAN === 'week' ? 'semanas' : 'dias'} · o filtro de quinzena não se aplica aqui</p></div>
+  <div class="tb" style="justify-content:space-between">${seg}<p class="cnt" style="margin:0">Comparando <b>${P.length}</b> ${GRAN === 'cycle' ? 'análises' : GRAN === 'week' ? 'semanas' : 'dias'} · o filtro de análise não se aplica aqui</p></div>
   <div class="grid">
     ${card('Esforço negocial por análise', 'Total do recorte (linha grossa) e cada item do roteiro', `${lines(labels, [{ label: 'Esforço negocial', data: P.map((g) => g.A.p), color: 'var(--ink)', w: 3.5, values: true },
       ...IT.map((i, n) => ({ label: i.c, data: P.map((g) => g.A.I[i.k].p), color: colors[n], dash: n % 2 === 1 }))], { h: 380, w: 1240 })}
@@ -448,8 +454,18 @@ const VIEWS = {
 
 // ------------------------------------------------------------------ capa e cabeçalho
 const selRot = (cls) => (ROTEIROS.length > 1 ? `<label class="${cls}"><span class="sr">Roteiro</span><select data-f="rot">${ROTEIROS.map((r) => `<option value="${r.key}"${(V2 ? 'AGV2' : 'AGV') === r.key ? ' selected' : ''}>Roteiro: ${esc(r.label)}</option>`).join('')}</select></label>` : '');
-const selGer = (cls) => `<label class="${cls}"><span class="sr">Gerência</span><select data-f="ger"><option value="">Todas as gerências</option>${gers().map((g) => `<option value="${esc(g)}"${GER === g ? ' selected' : ''}>Gerência ${esc(g)}</option>`).join('')}</select></label>`;
-const selPer = (cls) => { const P = periodsOf(inGer()); return `<label class="${cls}"><span class="sr">Análise</span><select data-f="per"><option value="">Todas as análises</option>${P.map((p) => `<option value="${esc(p.id)}"${PER === p.id ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>`; };
+const msHtml = (o) => String(multiSelect(o));
+const selGer = (cls) => msHtml({ id: 'f-ger', cls, allLabel: 'Todas as gerências', noun: 'gerências', options: gers().map((g) => [g, `Gerência ${g}`, RAW.filter((c) => c.ger === g).length]), selected: GERS });
+// Análises (a mais recente primeiro) e, quando uma análise cobre vários dias, cada dia dela
+function perOptions() {
+  const L = inGer(), P = periodsOf(L).reverse();
+  const opts = P.map((p) => [p.id, p.name, L.filter((c) => String(c.cycle_id) === p.id).length]);
+  const ids = new Set(opts.map((o) => o[0]));
+  const days = [...new Set(L.filter((c) => String(c.cycle_id).startsWith('a:') && c.date).map((c) => c.date))].sort().reverse();
+  for (const d of days) if (!ids.has(`d:${d}`) && P.some((p) => p.id.startsWith('a:') && L.some((c) => c.date === d && String(c.cycle_id) === p.id && L.filter((x) => String(x.cycle_id) === p.id).some((x) => x.date !== d)))) opts.push([`d:${d}`, `Só o dia ${dfmt(d)}`, L.filter((c) => c.date === d).length]);
+  return opts;
+}
+const selPer = (cls) => msHtml({ id: 'f-per', cls, allLabel: 'Todas as análises', noun: 'análises', options: perOptions(), selected: PERS });
 function cover() {
   const L = inPer(), A = agg(L), g = G(), has = L.length;
   const col = (p) => (p >= 70 ? '#34D399' : p >= 45 ? '#FBBF24' : '#FB7185');
@@ -457,7 +473,7 @@ function cover() {
   <div class="cv-top">${LOGOS}<span class="cv-tag"><i></i>${has ? `${lg(A.calls)} · ${perLabel(L)}` : 'Relatório AGV'}</span></div>
   <div class="cv-hero"><div>
     <div class="kick">Monitoria de qualidade · ${esc(g.op)}</div>
-    <h1>Esforço negocial<span>${g.all ? 'todas as gerências' : `gerência ${esc(g.nome)}`}</span></h1>
+    <h1>Esforço negocial<span>${g.all || g.many ? esc(g.nome) : `gerência ${esc(g.nome)}`}</span></h1>
     <p class="lead">${V2 ? 'Leitura das ligações <b>AGV</b> pela transcrição completa: os 5 critérios do esforço negocial (sondagem, valor da dívida, escada de ofertas, tentativa após o não e consequências) e o roteiro dos primeiros segundos, com o material de feedback de cada ligação.' : 'Análise das ligações <b>AGV com negociação</b>, conferindo item a item o roteiro de negociação: sondagem, proposta, alternativa e argumentação.'}</p>
     <div class="cv-sel">${selRot('')}${selGer('')}${selPer('')}</div>
     <div class="cv-btns"><button class="cbtn pri" data-go="geral">Abrir a análise →</button>${has ? '<button class="cbtn" data-go="lid">Ver por liderança</button><button class="cbtn" data-go="evo">Ver evolução</button>' : ''}</div>
@@ -479,20 +495,28 @@ function header() {
   const g = G(), L = fl();
   const ops = new Set(L.map((c) => c.login || c.op)).size;
   const ct = { geral: '', lid: new Set(L.map((c) => c.lid)).size, ops, lig: L.length, evo: periodsOf(inGer()).length };
-  return `<div class="topw"><header class="hdr"><div class="hdr-in">${LOGOS}<div class="hdr-t"><h1>Esforço negocial · ${esc(g.curto)}</h1><p>${g.all ? 'todas as gerências' : `gerência ${esc(g.nome)}`}${perLabel(inPer()) ? ` · ${perLabel(inPer())}` : ''} · ligações AGV com negociação</p></div>
+  return `<div class="topw"><header class="hdr"><div class="hdr-in">${LOGOS}<div class="hdr-t"><h1>Esforço negocial · ${esc(g.curto)}</h1><p>${g.all || g.many ? esc(g.nome) : `gerência ${esc(g.nome)}`}${perLabel(inPer()) ? ` · ${perLabel(inPer())}` : ''} · ligações AGV com negociação</p></div>
   ${selRot('hsel')}${selGer('hsel')}${selPer('hsel')}
   <button class="hbtn" data-act="capa" aria-label="Capa">${ICO.home}<span>Capa</span></button><button class="hbtn" data-act="print" aria-label="Imprimir">${ICO.print}<span>Imprimir</span></button></div></header>
   <div class="bar"><div class="bar-in"><nav class="tabs" role="tablist">${Object.entries(VIEWS).map(([k, v]) => `<button class="tab${VIEW === k ? ' on' : ''}" role="tab" aria-selected="${VIEW === k}" data-go="${k}">${v.t}${RAW.length && ct[k] !== '' ? `<span class="ct num">${ct[k]}</span>` : ''}</button>`).join('')}</nav>
-  ${RAW.length ? `<div class="flt">${LIDS.length > 1 ? `<label class="sel${F.lid ? ' on' : ''}"><span class="sr">Liderança</span><select data-f="lid"><option value="">Todas as lideranças</option>${LIDS.map((l) => `<option value="${esc(l)}"${F.lid === l ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>` : ''}
-  <label class="sel${F.tab ? ' on' : ''}"><span class="sr">Motivo</span><select data-f="tab"><option value="">Todos os motivos</option>${TABS.map((t) => `<option value="${esc(t)}"${F.tab === t ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
-  ${F.lid || F.tab ? '<button class="clr" data-act="limpar">Limpar</button>' : ''}</div>` : ''}</div></div></div>`;
+  ${RAW.length ? `<div class="flt">${LIDS.length > 1 ? msHtml({ id: 'f-lid', cls: 'fsel', allLabel: 'Todas as lideranças', noun: 'lideranças', options: LIDS.map((l) => [l, l, inPer().filter((c) => c.lid === l).length]), selected: F.lid }) : ''}
+  ${msHtml({ id: 'f-tab', cls: 'fsel', allLabel: 'Todos os motivos', noun: 'motivos', options: TABS.map((t) => [t, t, inPer().filter((c) => c.tab === t).length]), selected: F.tab })}
+  ${F.lid.length || F.tab.length ? '<button class="clr" data-act="limpar">Limpar</button>' : ''}</div>` : ''}</div></div></div>`;
 }
 
+function bindFilters() {
+  bindMultiSelect(root, 'f-ger', (v) => { GERS = v; PERS = latestPers(); F = { lid: [], tab: [] }; draw(); });
+  bindMultiSelect(root, 'f-per', (v) => { PERS = v; draw(); });
+  bindMultiSelect(root, 'f-lid', (v) => { F.lid = v; draw(); });
+  bindMultiSelect(root, 'f-tab', (v) => { F.tab = v; draw(); });
+}
 function draw(keepFocus) {
   refreshLists();
-  if (VIEW === 'capa') { root.innerHTML = cover(); return; }
+  if (VIEW === 'capa') { root.innerHTML = cover(); bindFilters(); return; }
   const V = VIEWS[VIEW];
-  root.innerHTML = `${header()}<main class="wrap"><div class="vh"><div><h2>${V.t}</h2><p>${V.s()}${F.lid ? ` · ${esc(F.lid)}` : ''}${F.tab ? ` · ${esc(F.tab)}` : ''}</p></div></div><div>${V.f()}</div></main>`;
+  const sub = (l, noun) => (l.length === 1 ? ` · ${esc(l[0])}` : l.length ? ` · ${l.length} ${noun}` : '');
+  root.innerHTML = `${header()}<main class="wrap"><div class="vh"><div><h2>${V.t}</h2><p>${V.s()}${sub(F.lid, 'lideranças')}${sub(F.tab, 'motivos')}</p></div></div><div>${V.f()}</div></main>`;
+  bindFilters();
   if (keepFocus) { const q = root.querySelector('#esf-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
 }
 function go(v) { VIEW = v; draw(); window.scrollTo({ top: 0 }); }
@@ -582,23 +606,19 @@ function bind() {
     if (ds.open) return abrir(ds.open);
     if (ds.goitem) { const it = IT.find((x) => x.k === ds.goitem); return preLig(`Faltou: ${it.c}`, (c) => c.it[it.k] === 'NAO'); }
     if (ds.goband) { const b = BANDS.find((x) => x.k === ds.goband); return preLig(`Esforço ${b.t.toLowerCase()}`, (c) => c.b === b.k); }
-    if (ds.golid) { F.lid = ds.golid; return go('lid'); }
-    if (ds.golidcalls) { F.lid = ds.golidcalls; PRE = null; CHIP = 'todas'; return go('lig'); }
-    if (ds.gotab) { F.tab = ds.gotab; return go(VIEW); }
+    if (ds.golid) { F.lid = [ds.golid]; return go('lid'); }
+    if (ds.golidcalls) { F.lid = [ds.golidcalls]; PRE = null; CHIP = 'todas'; return go('lig'); }
+    if (ds.gotab) { F.tab = [ds.gotab]; return go(VIEW); }
     if (ds.goop) { const L = (VIEW === 'evo' ? inGer() : fl()).filter((c) => (c.login || c.op) === ds.goop).sort((a, b) => (a.p ?? 0) - (b.p ?? 0)); LISTA = L.map((c) => c.id); if (L.length) abrir(L[0].id); return; }
     const a = ds.act;
     if (a === 'capa') { fechar(); return go('capa'); }
     if (a === 'print') return window.print();
-    if (a === 'limpar') { F = { lid: '', tab: '' }; return draw(); }
+    if (a === 'limpar') { F = { lid: [], tab: [] }; return draw(); }
     if (a === 'clrpre') { PRE = null; return draw(); }
   });
   root.addEventListener('change', (e) => {
     const s = e.target.closest('[data-f]'); if (!s) return;
-    if (s.dataset.f === 'rot') { ROTSEL = s.value; PER = ''; F = { lid: '', tab: '' }; CHIP = 'todas'; PRE = null; load(); return; }
-    if (s.dataset.f === 'ger') { GER = s.value; PER = latestPer(); F = { lid: '', tab: '' }; }
-    else if (s.dataset.f === 'per') PER = s.value;
-    else F[s.dataset.f] = s.value;
-    draw();
+    if (s.dataset.f === 'rot') { ROTSEL = s.value; PERS = []; F = { lid: [], tab: [] }; CHIP = 'todas'; PRE = null; load(); }
   });
   root.addEventListener('input', (e) => { if (e.target.id === 'esf-q') { LQ = e.target.value; clearTimeout(draw.t); draw.t = setTimeout(() => draw(true), 200); } });
   const tip = document.createElement('div'); tip.className = 'esf-tip'; root.appendChild(tip);
@@ -606,7 +626,7 @@ function bind() {
   root.addEventListener('mousemove', move);
   root.addEventListener('mouseleave', () => { tip.style.opacity = 0; });
 }
-const latestPer = () => { const P = periodsOf(inGer()); return P.length ? P[P.length - 1].id : ''; };
+const latestPers = () => { const P = periodsOf(inGer()); return P.length ? [P[P.length - 1].id] : []; };
 
 export async function render(el, _p, ctx) {
   ctx.setTitle('Esforço negocial', 'AGV');
@@ -636,8 +656,10 @@ async function load(ctx = loadCtx) {
   const all = prep(d);
   RAW = all.filter((c) => c.n > 0);
   ROTC = all.filter((c) => c.rp != null);
-  if (GER && !gers().includes(GER)) GER = '';
-  if (!PER || !periodsOf(inGer()).some((p) => p.id === PER)) PER = latestPer();
+  GERS = GERS.filter((g) => gers().includes(g));
+  const P = new Set(periodsOf(inGer()).map((p) => p.id));
+  PERS = PERS.filter((p) => P.has(p) || (p.startsWith('d:') && inGer().some((c) => c.date === p.slice(2))));
+  if (!PERS.length) PERS = latestPers();
   if (root && root.querySelector('.cover, .topw')) draw();
   return true;
 }

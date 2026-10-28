@@ -1,6 +1,6 @@
 import { api, qs } from '../api.js';
 import { downloadEvaluations } from '../files.js';
-import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, scoreRing, deltaTag, emptyState, toast, modal, busy, debounce, STATUS, userName, ALERT, origLabel, CONTEST } from '../ui.js';
+import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, scoreRing, deltaTag, emptyState, toast, modal, busy, debounce, STATUS, userName, ALERT, origLabel, CONTEST, multiSelect, bindMultiSelect } from '../ui.js';
 import { filterBar, bindFilterBar } from './dashboard.js';
 import { palette } from '../charts.js';
 
@@ -52,7 +52,8 @@ export async function render(el, _p, ctx) {
   // Vindo do painel (ex.: clique em um alerta), já abre filtrado
   try {
     const f = JSON.parse(sessionStorage.getItem('px_eval_preset') || 'null');
-    if (f) { Object.assign(state, { product: f.product || '', segment: f.segment || '', alert: f.alert || '', channel: f.channel || '', campaign: f.campaign || '' }); sessionStorage.removeItem('px_eval_preset'); }
+    const j = (v) => (Array.isArray(v) ? v.join('|') : v || '');
+    if (f) { Object.assign(state, { product: j(f.product), segment: j(f.segment), alert: j(f.alert), channel: j(f.channel), campaign: j(f.campaign) }); sessionStorage.removeItem('px_eval_preset'); }
   } catch { /* ignora */ }
   state.selecting = false; state.selected.clear(); state.shown = 60;
   const m = store.meta;
@@ -65,14 +66,11 @@ export async function render(el, _p, ctx) {
       ${can('admin') ? html`<a class="btn primary" href="#/analise-ia">${icon('plus')}Nova monitoria</a>` : ''}
     </div>
     ${filterBar(store, state, { extra: html`
-      <select class="select sm" id="f-op" aria-label="Operador"><option value="">Todos os operadores</option>${m.operators.map((o) => html`<option value="${o.id}" ${String(state.operator_id) === String(o.id) ? 'selected' : ''}>${o.name}</option>`)}</select>
-      <select class="select sm" id="f-status" aria-label="Status">
-        <option value="">Todos os status</option>
-        ${Object.entries(STATUS).map(([k, v]) => html`<option value="${k}" ${state.status === k ? 'selected' : ''}>${v}</option>`)}
-      </select>
+      ${multiSelect({ id: 'f-op', allLabel: 'Todos os operadores', noun: 'operadores', options: m.operators.map((o) => [o.id, o.name]), selected: String(state.operator_id || '').split('|').filter(Boolean) })}
+      ${multiSelect({ id: 'f-status', allLabel: 'Todos os status', noun: 'status', options: Object.entries(STATUS), selected: String(state.status || '').split('|').filter(Boolean) })}
       <select class="select sm" id="f-channel" aria-label="Canal"><option value="">Todos os canais</option>${[['AGV', 'AGV (assistente virtual)'], ['Convencional', 'Convencional']].map(([k, t]) => html`<option value="${k}" ${state.channel === k ? 'selected' : ''}>${t}</option>`)}</select>
-      ${state.campaign ? html`<span class="chip brand" id="f-campaign" title="Clique para remover" style="cursor:pointer">${icon('x')}${state.campaign}</span>` : ''}
-      <select class="select sm" id="f-alert" aria-label="Alerta"><option value="">Todos os alertas</option>${Object.entries(ALERT).map(([k, [t]]) => html`<option value="${k}" ${state.alert === k ? 'selected' : ''}>${t}</option>`)}</select>
+      ${(m.agv?.campaigns || []).length ? multiSelect({ id: 'f-campaign', allLabel: 'Todas as campanhas', noun: 'campanhas', options: [...new Set([...(m.agv?.campaigns || []), ...String(state.campaign || '').split('|').filter(Boolean)])].map((c) => [c, c]), selected: String(state.campaign || '').split('|').filter(Boolean) }) : ''}
+      ${multiSelect({ id: 'f-alert', allLabel: 'Todos os alertas', noun: 'alertas', options: Object.entries(ALERT).map(([k, [t]]) => [k, t]), selected: String(state.alert || '').split('|').filter(Boolean) })}
       <label class="check small"><input type="checkbox" id="f-adj" ${state.adjusted ? 'checked' : ''}>Com ajustes</label>
       <label class="check small"><input type="checkbox" id="f-crit" ${state.critical ? 'checked' : ''}>Falha crítica</label>
       <div class="grow"></div>
@@ -90,11 +88,11 @@ export async function render(el, _p, ctx) {
 
   const reload = () => { state.shown = 60; load(el, ctx); };
   bindFilterBar(el, store, state, reload);
-  $('#f-op').onchange = (e) => { state.operator_id = e.target.value; reload(); };
-  $('#f-status').onchange = (e) => { state.status = e.target.value; reload(); };
-  $('#f-alert').onchange = (e) => { state.alert = e.target.value; reload(); };
+  bindMultiSelect(el, 'f-op', (v) => { state.operator_id = v.join('|'); reload(); });
+  bindMultiSelect(el, 'f-status', (v) => { state.status = v.join('|'); reload(); });
+  bindMultiSelect(el, 'f-alert', (v) => { state.alert = v.join('|'); reload(); });
+  bindMultiSelect(el, 'f-campaign', (v) => { state.campaign = v.join('|'); reload(); });
   $('#f-channel').onchange = (e) => { state.channel = e.target.value; reload(); };
-  $('#f-campaign')?.addEventListener('click', (e) => { state.campaign = ''; e.currentTarget.remove(); reload(); });
   $('#f-adj').onchange = (e) => { state.adjusted = e.target.checked; reload(); };
   $('#f-crit').onchange = (e) => { state.critical = e.target.checked; reload(); };
   $('#f-sort').onchange = (e) => { state.sort = e.target.value; reload(); };

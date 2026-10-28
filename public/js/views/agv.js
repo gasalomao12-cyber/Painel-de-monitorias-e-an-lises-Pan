@@ -1,22 +1,27 @@
 import { api, qs } from '../api.js';
-import { html, raw, icon, $, $$, toast, modal, busy, fmtScore, fmtPct, fmtInt, fmtDate, deltaTag, band, emptyState, PRODUCT, PRODUCT_SHORT, ALERT } from '../ui.js';
+import { html, raw, icon, $, $$, toast, modal, busy, fmtScore, fmtPct, fmtInt, fmtDate, deltaTag, band, emptyState, PRODUCT, ALERT, multiSelect, bindMultiSelect } from '../ui.js';
 import { lineChart, barChart, radarChart, palette, legendHtml } from '../charts.js';
 import { parseSheetFile } from '../files.js';
 import { mapCalls, readDashboard } from './import.js';
 
 // Divisão AGV: ligações das campanhas em que a assistente virtual (AGV) transfere para o operador,
 // avaliadas no roteiro AGV. Os dados vêm enxutos da API e os recortes são montados aqui, na hora.
-const state = { product: '', campaign: '', team: '', from: '', to: '', dim: 'product', a: '', b: '', roteiro: '' };
+// As análises AGV são diárias (ou pelo período do arquivo importado): não usam as quinzenas de monitoria.
+// Filtros de seleção múltipla: carteira, campanha e equipe vão para a API; a análise é aplicada aqui.
+const state = { product: [], campaign: [], team: [], analysis: [], from: '', to: '', dim: 'product', a: '', b: '', roteiro: '' };
 let data = null;
 
 const DIMS = [
   ['product', 'Carteira'], ['campaign', 'Campanha'], ['team', 'Equipe'], ['supervisor', 'Supervisor'],
-  ['operator', 'Operador'], ['cycle', 'Quinzena'], ['week', 'Semana'], ['day', 'Dia'],
+  ['operator', 'Operador'], ['analysis', 'Análise'], ['week', 'Semana'], ['day', 'Dia'],
 ];
-const TIME_DIMS = ['cycle', 'week', 'day'];
+const TIME_DIMS = ['analysis', 'week', 'day'];
 const OUTCOME_ORDER = ['Acordo com boleto', 'Promessa sem boleto', 'Retorno combinado', 'Sem acordo', 'Sem negociação com o titular', 'Final cortado'];
 const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : null);
 const ddmm = (d) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : '');
+// Análise de cada ligação: o período do arquivo importado (ex.: "23 a 26/10") ou, sem ele, o dia da ligação
+const anKey = (e) => (e.analysis ? `a:${e.analysis}` : e.date ? `d:${e.date}` : '—');
+const anLabel = (e) => (e.analysis ? `Análise de ${e.analysis}` : e.date ? `Análise de ${ddmm(e.date)}` : 'Sem data');
 function monday(d) {
   const x = new Date(`${d}T12:00:00`);
   x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
@@ -30,7 +35,7 @@ function keyOf(e, dim) {
     case 'team': return [e.team || '—', e.team || 'Sem equipe'];
     case 'supervisor': return [e.supervisor || '—', e.supervisor || 'Sem supervisor'];
     case 'operator': return [String(e.operator_id), e.operator];
-    case 'cycle': return [String(e.cycle_id || '—'), e.cycle || 'Sem quinzena'];
+    case 'analysis': return [anKey(e), anLabel(e)];
     case 'week': { const m = e.date ? monday(e.date) : '—'; return [m, e.date ? `Semana de ${ddmm(m)}` : 'Sem data']; }
     default: return [e.date || '—', e.date ? fmtDate(e.date) : 'Sem data'];
   }
@@ -78,30 +83,40 @@ function groups(evs, dim) {
   const map = new Map();
   for (const e of evs) {
     const [k, label] = keyOf(e, dim);
-    if (!map.has(k)) map.set(k, { key: k, label, evs: [], first: e.cycle_start || e.date || '' });
-    map.get(k).evs.push(e);
+    if (!map.has(k)) map.set(k, { key: k, label, evs: [], first: e.date || '' });
+    const g = map.get(k);
+    if (e.date && e.date < g.first) g.first = e.date;
+    g.evs.push(e);
   }
   const out = [...map.values()].map((g) => ({ ...g, s: summarize(g.evs) }));
-  return TIME_DIMS.includes(dim) ? out.sort((a, b) => String(a.key === '—' ? 'z' : dim === 'cycle' ? a.first : a.key).localeCompare(String(b.key === '—' ? 'z' : dim === 'cycle' ? b.first : b.key)))
+  return TIME_DIMS.includes(dim) ? out.sort((a, b) => String(a.key === '—' ? 'z' : dim === 'analysis' ? a.first : a.key).localeCompare(String(b.key === '—' ? 'z' : dim === 'analysis' ? b.first : b.key)))
     : out.sort((a, b) => (b.s.adherence ?? -1) - (a.s.adherence ?? -1) || b.s.total - a.s.total);
 }
 
-// Períodos para o "A × B": quinzenas, semanas e dias que têm ligações
-function periods(evs) {
-  const cyc = new Map(), wk = new Set(), dy = new Set();
+// Análises importadas, com a data mais antiga de cada uma
+function analyses(evs) {
+  const m = new Map();
   for (const e of evs) {
-    if (e.cycle_id) cyc.set(String(e.cycle_id), { name: e.cycle, start: e.cycle_start || '' });
-    if (e.date) { wk.add(monday(e.date)); dy.add(e.date); }
+    const k = anKey(e); if (k === '—') continue;
+    const cur = m.get(k);
+    if (!cur) m.set(k, { key: k, label: anLabel(e), start: e.date || '', n: 1 });
+    else { cur.n++; if (e.date && e.date < cur.start) cur.start = e.date; }
   }
+  return [...m.values()].sort((a, b) => a.start.localeCompare(b.start));
+}
+// Períodos para o "A × B": análises, semanas e dias que têm ligações
+function periods(evs) {
+  const wk = new Set(), dy = new Set();
+  for (const e of evs) if (e.date) { wk.add(monday(e.date)); dy.add(e.date); }
   return {
-    cycles: [...cyc.entries()].sort((a, b) => a[1].start.localeCompare(b[1].start)).map(([id, c]) => [`c:${id}`, c.name]),
+    cycles: analyses(evs).map((a) => [`c:${a.key}`, a.label]),
     weeks: [...wk].sort().map((w) => [`w:${w}`, `Semana de ${ddmm(w)}`]),
     days: [...dy].sort().map((d) => [`d:${d}`, fmtDate(d)]),
   };
 }
 const inPeriod = (e, p) => {
   const [t, v] = [p.slice(0, 1), p.slice(2)];
-  if (t === 'c') return String(e.cycle_id) === v;
+  if (t === 'c') return anKey(e) === v;
   if (t === 'w') return e.date && monday(e.date) === v;
   return e.date === v;
 };
@@ -133,35 +148,42 @@ export async function render(el, _p, ctx) {
 function drawFilters(el, ctx) {
   const { store } = ctx;
   const m = store.meta;
-  const prods = [...new Set(data.allProducts)];
   const box = $('#agv-filters', el);
+  const cnt = (k) => data.allEvals.reduce((a, e) => { a[e[k]] = (a[e[k]] || 0) + 1; return a; }, {});
+  const prods = [...new Set([...data.allProducts, ...state.product])];
+  const camps = [...new Set([...(m.agv?.campaigns || []), ...state.campaign])];
+  const teams = [...new Set([...(m.teams || []), ...state.team])];
   box.innerHTML = String(html`
     <span class="muted">${icon('filter')}</span>
-    <select class="select sm" id="a-cycle" aria-label="Quinzena"><option value="">Todas as quinzenas</option>
-      ${m.cycles.map((c) => html`<option value="${c.id}" ${String(store.cycle) === String(c.id) ? 'selected' : ''}>${c.name}</option>`)}</select>
-    <div class="seg" id="a-product" role="group" aria-label="Carteira"><button data-v="" class="${!state.product ? 'on' : ''}">Todas</button>
-      ${prods.map((p) => html`<button data-v="${p}" class="${state.product === p ? 'on' : ''}">${PRODUCT_SHORT[p] || p}</button>`)}</div>
-    <select class="select sm" id="a-campaign" aria-label="Campanha"><option value="">Todas as campanhas</option>
-      ${(m.agv?.campaigns || []).map((c) => html`<option ${state.campaign === c ? 'selected' : ''}>${c}</option>`)}</select>
-    ${m.teams.length > 1 ? html`<select class="select sm" id="a-team" aria-label="Equipe"><option value="">Todas as equipes</option>${m.teams.map((t) => html`<option ${state.team === t ? 'selected' : ''}>${t}</option>`)}</select>` : ''}
+    ${multiSelect({ id: 'a-analysis', allLabel: 'Todas as análises', noun: 'análises', options: analyses(data.allEvals).reverse().map((a) => [a.key, a.label, a.n]), selected: state.analysis })}
+    ${multiSelect({ id: 'a-product', allLabel: 'Todas as carteiras', noun: 'carteiras', options: prods.map((p) => [p, PRODUCT[p] || p]), selected: state.product })}
+    ${multiSelect({ id: 'a-campaign', allLabel: 'Todas as campanhas', noun: 'campanhas', options: camps.map((c) => [c, c, cnt('campaign')[c]]), selected: state.campaign })}
+    ${teams.length > 1 ? multiSelect({ id: 'a-team', allLabel: 'Todas as equipes', noun: 'equipes', options: teams.map((t) => [t, t]), selected: state.team }) : ''}
     <label class="small t2 row" style="gap:6px">De <input class="input sm" type="date" id="a-from" value="${state.from}"></label>
     <label class="small t2 row" style="gap:6px">até <input class="input sm" type="date" id="a-to" value="${state.to}"></label>
-    ${(data.roteiros || []).filter((r) => r.total).length > 1 ? html`<div class="seg" id="a-rot" role="group" aria-label="Roteiro">${data.roteiros.filter((r) => r.total).map((r) => html`<button data-v="${r.key}" class="${data.roteiro === r.key ? 'on' : ''}">${r.label}</button>`)}</div>` : ''}`);
+    ${(data.roteiros || []).filter((r) => r.total).length > 1 ? html`<div class="seg" id="a-rot" role="group" aria-label="Roteiro">${data.roteiros.filter((r) => r.total).map((r) => html`<button data-v="${r.key}" class="${data.roteiro === r.key ? 'on' : ''}">${r.label}</button>`)}</div>` : ''}
+    ${state.analysis.length || state.product.length || state.campaign.length || state.team.length || state.from || state.to ? html`<button class="btn sm ghost" id="a-clear">${icon('x')}Limpar filtros</button>` : ''}`);
   const reload = () => load(el, ctx);
-  $('#a-cycle', box).onchange = (e) => { store.cycle = e.target.value; localStorage.setItem('px_cycle', store.cycle); state.a = state.b = ''; reload(); };
-  $$('#a-product button', box).forEach((b) => b.addEventListener('click', () => { state.product = b.dataset.v; reload(); }));
-  $('#a-campaign', box).onchange = (e) => { state.campaign = e.target.value; reload(); };
-  $('#a-team', box)?.addEventListener('change', (e) => { state.team = e.target.value; reload(); });
-  $$('#a-rot button', box).forEach((b) => b.addEventListener('click', () => { state.roteiro = b.dataset.v; state.a = state.b = ''; reload(); }));
+  bindMultiSelect(box, 'a-analysis', (v) => { state.analysis = v; state.a = state.b = ''; applyAnalysis(); drawFilters(el, ctx); draw(el, ctx); });
+  bindMultiSelect(box, 'a-product', (v) => { state.product = v; reload(); });
+  bindMultiSelect(box, 'a-campaign', (v) => { state.campaign = v; reload(); });
+  bindMultiSelect(box, 'a-team', (v) => { state.team = v; reload(); });
+  $$('#a-rot button', box).forEach((b) => b.addEventListener('click', () => { state.roteiro = b.dataset.v; state.analysis = []; state.a = state.b = ''; reload(); }));
   $('#a-from', box).onchange = (e) => { state.from = e.target.value; state.a = state.b = ''; reload(); };
   $('#a-to', box).onchange = (e) => { state.to = e.target.value; state.a = state.b = ''; reload(); };
+  $('#a-clear', box)?.addEventListener('click', () => { Object.assign(state, { analysis: [], product: [], campaign: [], team: [], from: '', to: '', a: '', b: '' }); reload(); });
+}
+// A análise é filtrada aqui (o rótulo vem com os dados); o restante já vem filtrado da API
+function applyAnalysis() {
+  const sel = new Set(state.analysis);
+  data.evals = sel.size ? data.allEvals.filter((e) => sel.has(anKey(e))) : data.allEvals;
 }
 
 async function load(el, ctx) {
   const { store } = ctx;
   const body = $('#agv-body', el);
   body.style.opacity = '.5';
-  const d = await api.get(`/agv/data${qs({ cycle_id: store.cycle, product: state.product, campaign: state.campaign, team: state.team, from: state.from, to: state.to, roteiro: state.roteiro })}`);
+  const d = await api.get(`/agv/data${qs({ product: state.product.join('|'), campaign: state.campaign.join('|'), team: state.team.join('|'), from: state.from, to: state.to, roteiro: state.roteiro })}`);
   if (!ctx.isCurrent()) return;
   body.style.opacity = '';
   const byEval = new Map();
@@ -169,8 +191,10 @@ async function load(el, ctx) {
     if (!byEval.has(id)) byEval.set(id, {});
     byEval.get(id)[code] = [fin, sp, adj];
   }
-  const keep = data?.allProducts && (state.product || state.campaign) ? data.allProducts : null;
-  data = { ...d, byEval, name: Object.fromEntries(d.criteria.map((c) => [c.code, c.name])), allProducts: keep || [...new Set(d.evals.map((e) => e.product))] };
+  const keep = data?.allProducts && (state.product.length || state.campaign.length || state.team.length) ? data.allProducts : null;
+  data = { ...d, allEvals: d.evals, byEval, name: Object.fromEntries(d.criteria.map((c) => [c.code, c.name])), allProducts: keep || [...new Set(d.evals.map((e) => e.product))] };
+  if (state.analysis.length) state.analysis = state.analysis.filter((k) => d.evals.some((e) => anKey(e) === k));
+  applyAnalysis();
   drawFilters(el, ctx);
   draw(el, ctx);
 }
@@ -210,7 +234,7 @@ function draw(el, ctx) {
     </div>
 
     <div class="card mt">
-      <div class="card-head"><div><h3>Período A × período B</h3><div class="sub">Quanto cada pergunta subiu ou caiu entre dois períodos (quinzenas, semanas ou dias).</div></div></div>
+      <div class="card-head"><div><h3>Período A × período B</h3><div class="sub">Quanto cada pergunta subiu ou caiu entre dois períodos (análises, semanas ou dias).</div></div></div>
       <div class="card-body" id="agv-ab"></div>
     </div>
 
@@ -308,7 +332,7 @@ function drawAB(body) {
   };
   if (!opts.some(([k]) => k === state.a) || !opts.some(([k]) => k === state.b)) [state.a, state.b] = pickDefault();
   const sel = (id, v) => html`<select class="select sm" id="${id}" style="width:auto;min-width:200px">
-    ${p.cycles.length ? html`<optgroup label="Quinzenas">${p.cycles.map(([k, l]) => html`<option value="${k}" ${v === k ? 'selected' : ''}>${l}</option>`)}</optgroup>` : ''}
+    ${p.cycles.length ? html`<optgroup label="Análises">${p.cycles.map(([k, l]) => html`<option value="${k}" ${v === k ? 'selected' : ''}>${l}</option>`)}</optgroup>` : ''}
     ${p.weeks.length ? html`<optgroup label="Semanas">${p.weeks.map(([k, l]) => html`<option value="${k}" ${v === k ? 'selected' : ''}>${l}</option>`)}</optgroup>` : ''}
     ${p.days.length ? html`<optgroup label="Dias">${p.days.map(([k, l]) => html`<option value="${k}" ${v === k ? 'selected' : ''}>${l}</option>`)}</optgroup>` : ''}</select>`;
   const A = summarize(data.evals.filter((e) => inPeriod(e, state.a)));

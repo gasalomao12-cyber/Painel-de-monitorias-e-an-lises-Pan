@@ -108,8 +108,10 @@ export async function importCalls({ calls, cycle_id }, userId) {
     const op = byLogin.get(r.login);
     const product = productOf(r);
     const date = r.at.slice(0, 10);
+    // Ligações AGV têm grupo próprio (a análise do dia), fora das quinzenas de monitoria
+    const agv = /AGV/i.test(r.campaign || '');
     fresh.push({
-      cycle_id: cycle_id || await cycleFor(date, cycles), operator_id: op.id, product,
+      cycle_id: agv ? null : cycle_id || await cycleFor(date, cycles), operator_id: op.id, product,
       segment: ['CARTOES', 'CONSIGNADO'].includes(product) ? lastSeg.get(`${op.id}:${product}`) || null : null,
       source: 'discador', external_id: r.id, protocol: r.id, call_date: date, call_time: r.at.slice(11, 16) || null,
       duration_sec: r.duration, customer: r.customer, contract: r.contract, audio_file: r.audio_file,
