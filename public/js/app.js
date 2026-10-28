@@ -46,6 +46,7 @@ const NAV = [
   { id: 'operadores', label: 'Operadores', icon: 'users' },
   { id: 'agv', label: 'Análises AGV', icon: 'zap' },
   { id: 'esforco', label: 'Esforço negocial', icon: 'target' },
+  { id: 'quedas', label: 'Queda de ligação', icon: 'phoneOff' },
   { sec: 'Qualidade', roles: ['admin', 'qualidade'] },
   { id: 'analise-ia', label: 'Análise com IA', icon: 'sparkles', roles: ['admin'] },
   { id: 'importar', label: 'Importar monitorias', icon: 'upload', roles: ['admin', 'qualidade'] },
@@ -73,6 +74,7 @@ const ROUTES = [
   [/^operadores\/(\d+)$/, () => import('./views/operator.js'), 'Operador'],
   [/^agv$/, () => import('./views/agv.js'), 'Análises AGV'],
   [/^esforco$/, () => import('./views/esforco.js'), 'Esforço negocial'],
+  [/^quedas$/, () => import('./views/quedas.js'), 'Queda de ligação'],
   [/^analise-ia$/, () => import('./views/ai.js'), 'Análise com IA', ['admin']],
   [/^contestacoes$/, () => import('./views/contests.js'), 'Contestações'],
   [/^acoes$/, () => import('./views/actions.js'), 'Controle de ações'],
@@ -410,6 +412,8 @@ const refreshSoon = (() => {
 async function applyRemoteChange() {
   if (!store.user || !store.meta) return;
   await refreshMeta().catch(() => {});
+  // Telas de trabalho em conjunto atualizam só os números, mesmo com uma análise aberta
+  if (currentView?.onRemote && !document.hidden) { currentView.onRemote(); return; }
   if (canRefreshNow()) { pendingRefresh = false; $('#live-pill')?.remove(); route({ silent: true }); }
   else showUpdatePill();
 }

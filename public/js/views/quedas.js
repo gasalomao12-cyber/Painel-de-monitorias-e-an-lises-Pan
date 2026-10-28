@@ -1,0 +1,753 @@
+import { api } from '../api.js';
+import { html, icon, $, $$, toast, modal, busy, debounce, emptyState, confirmDialog, multiSelect, bindMultiSelect, fmtDur, fmtRel, avatar } from '../ui.js';
+import { scatterChart, palette, destroyAll } from '../charts.js';
+import { parseSheetFile, parseWorkbook, readTranscriptFile } from '../files.js';
+
+// Força-tarefa de queda de ligação: análise manual, em conjunto e em tempo real, dos atendimentos
+// tabulados como queda. O capacity traz liderança/gerência/campanha pelo login ou nome do operador.
+const VERDICT = {
+  cliente: ['Cliente desligou', 'ok', 'O cliente encerrou ou abandonou: a queda procede'],
+  operador: ['Operador desligou', 'bad', 'Desvio de conduta: o operador encerrou com o cliente na linha'],
+  tecnica: ['Queda técnica', 'info', 'Falha de linha, sistema ou discador'],
+  mudo: ['Ligação muda', 'warn', 'Sem áudio ou sem resposta do cliente'],
+  concluido: ['Atendimento seguiu', 'warn', 'Não houve queda: a conversa continuou ou terminou normalmente'],
+  inconclusivo: ['Inconclusivo', 'outline', 'Sem áudio ou trecho suficiente para concluir'],
+};
+const VCOLOR = { cliente: '--ok', operador: '--bad', tecnica: '--s-refin', mudo: '--warn', concluido: '--s-entrega', inconclusivo: '--na' };
+// A queda procede quando o cliente (ou a linha) derrubou a ligação
+const TAB_OK = { cliente: true, tecnica: true, operador: false, mudo: false, concluido: false, inconclusivo: null };
+const CONDUCT = ['Desligou na cara do cliente', 'Desligou durante o atendimento', 'Encerrou sem retorno ao cliente', 'Outro desvio de conduta'];
+const LIST = { todos: 'Todos', pendente: 'Pendentes', analisada: 'Analisados', desvio: 'Com desvio', interna: 'Desconexão interna' };
+const PAGE = 25;
+
+const key = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+const isDrop = (t) => /queda|caiu|abandon/.test(key(t));
+const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
+const pctTxt = (a, b) => (b ? `${pct(a, b)}%` : '—');
+const dt = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)} ${s.slice(11, 16)}` : '—');
+const dayOf = (s) => (s ? s.slice(0, 10) : '');
+const title = (s) => String(s || '').toLowerCase().replace(/(^|\s)(\p{L})/gu, (m) => m.toUpperCase()).replace(/\b(De|Da|Do|Dos|Das|E)\b/g, (w) => w.toLowerCase());
+const short = (s) => { const p = title(s).split(' ').filter(Boolean); return p.length > 2 ? `${p[0]} ${p[p.length - 1]}` : p.join(' '); };
+const mmss = (s) => { const m = String(s || '').trim().match(/^(?:(\d+):)?(\d{1,2}):(\d{2})$/); return m ? (Number(m[1] || 0) * 3600 + Number(m[2]) * 60 + Number(m[3])) : /^\d+$/.test(String(s || '').trim()) ? Number(s) : null; };
+
+const state = { f: {}, from: '', to: '', q: '', list: 'todos', page: 0 };
+const FILTERS = [
+  ['manager', 'Todas as gerências', 'gerências', (r) => r.manager],
+  ['leader', 'Todas as lideranças', 'lideranças', (r) => r.leader],
+  ['login', 'Todos os operadores', 'operadores', (r) => r.login],
+  ['campaign', 'Todas as campanhas', 'campanhas', (r) => r.campaign],
+  ['segment', 'Todos os segmentos', 'segmentos', (r) => r.segment],
+  ['tabulation', 'Todas as tabulações', 'tabulações', (r) => r.tabulation],
+  ['disconnect', 'Interna e externa', 'tipos', (r) => r.disconnect || '—'],
+  ['verdict', 'Todos os resultados', 'resultados', (r) => r.verdict || 'pendente'],
+  ['analyst', 'Todos os analistas', 'analistas', (r) => r.analyst_name],
+];
+let D = null;
+let CTX = null;
+let ROOT = null;
+let roster = new Map();
+let rosterRows = [];
+
+function loadCss() {
+  if (!document.querySelector('link[data-qd]')) {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'css/quedas.css'; l.dataset.qd = '1'; document.head.appendChild(l);
+  }
+}
+
+export async function render(el, _p, ctx) {
+  CTX = ctx; ROOT = el;
+  loadCss();
+  ctx.setTitle('Queda de ligação', 'Força-tarefa');
+  await fetchData();
+  if (!ctx.isCurrent()) return;
+  draw();
+}
+
+// Alguém salvou uma análise: atualiza números e lista sem fechar o que estiver aberto
+export async function onRemote() {
+  if (!ROOT?.isConnected) return;
+  await fetchData().catch(() => {});
+  if (!ROOT?.isConnected) return;
+  const filtersBusy = $('.ms.open', ROOT) || ROOT.contains(document.activeElement) && /^(INPUT|SELECT)$/.test(document.activeElement.tagName);
+  if (filtersBusy) drawBody(); else draw();
+}
+
+async function fetchData() {
+  D = await api.get('/quedas');
+  rosterRows = D.roster;
+  roster = new Map(D.roster.map((r) => [r.login, r]));
+}
+
+const managerOf = (leader) => D.leaders.find((l) => key(l.leader) === key(leader))?.manager || '';
+const managers = () => [...new Set([...D.leaders.map((l) => l.manager), ...(CTX.store.meta.operators || []).map((o) => o.manager_name)].filter(Boolean))].sort();
+
+// Operador pelo login ou pelo nome (com ou sem acento); entre homônimos, prefere quem está ativo
+export function findOperator(q, rows = rosterRows) {
+  const raw = String(q || '').trim();
+  if (!raw) return null;
+  const tagged = raw.match(/[·(]\s*([\w.-]+)\s*\)?\s*$/);
+  const byLogin = new Map(rows.map((r) => [r.login, r]));
+  if (tagged && byLogin.get(tagged[1].toLowerCase())) return byLogin.get(tagged[1].toLowerCase());
+  const lg = raw.toLowerCase().replace(/\s+/g, '');
+  if (byLogin.get(lg)) return byLogin.get(lg);
+  const k = key(raw);
+  const pick = (list) => { const act = list.filter((r) => r.active); return act.length === 1 ? act[0] : list.length === 1 ? list[0] : null; };
+  const exact = rows.filter((r) => r.name_key === k);
+  if (exact.length) return pick(exact);
+  const words = k.split(' ').filter((w) => w.length > 1);
+  if (words.length >= 2) {
+    const all = rows.filter((r) => { const n = r.name_key.split(' '); return words.every((w) => n.some((x) => x.startsWith(w))); });
+    if (all.length) return pick(all);
+  }
+  return null;
+}
+
+function filtered() {
+  const f = state.f;
+  const q = key(state.q);
+  return D.rows.filter((r) => {
+    for (const [id, , , get] of FILTERS) if (f[id]?.length && !f[id].includes(String(get(r) ?? ''))) return false;
+    if (state.from && dayOf(r.call_at) < state.from) return false;
+    if (state.to && dayOf(r.call_at) > state.to) return false;
+    if (q && !key([r.contact_id, r.login, r.operator_name, r.leader, r.tabulation, r.notes, r.audio_file].join(' ')).includes(q)) return false;
+    return true;
+  });
+}
+const inList = (r) => (state.list === 'todos' ? true : state.list === 'desvio' ? r.conduct : state.list === 'interna' ? r.disconnect === 'Interna' : r.status === state.list);
+
+function draw() {
+  destroyAll();
+  const can = CTX.can('admin', 'qualidade');
+  const opts = (id, get, label = (v) => v) => {
+    const m = new Map();
+    for (const r of D.rows) { const v = String(get(r) ?? ''); if (v) m.set(v, (m.get(v) || 0) + 1); }
+    return [...m].sort((a, b) => String(label(a[0])).localeCompare(String(label(b[0])))).map(([v, n]) => [v, label(v), n]);
+  };
+  const labelOf = { login: (v) => `${title(roster.get(v)?.name || D.rows.find((r) => r.login === v)?.operator_name || v)} · ${v}`, verdict: (v) => VERDICT[v]?.[0] || 'Pendente', leader: title, manager: title, analyst: (v) => v };
+  ROOT.innerHTML = String(html`<div class="qd">
+    <div class="page-head qd-head"><div><h2>Queda de ligação</h2><p>Força-tarefa: ouça o áudio, confirme quem encerrou a ligação e se a tabulação de queda procede. Os números atualizam sozinhos para todo mundo.</p></div>
+      <div class="grow"></div>
+      <div class="qd-actions">
+        <button class="btn sm" id="qd-folder">${icon('folder')}Pasta de áudios</button>
+        <button class="btn sm" id="qd-csv">${icon('upload')}Importar CSV</button>
+        <button class="btn sm" id="qd-cap">${icon('users')}Capacity${D.roster.length ? '' : html` <b class="qd-dot"></b>`}</button>
+        <button class="btn sm primary" id="qd-new">${icon('plus')}Nova análise</button>
+      </div></div>
+    ${!D.roster.length ? html`<div class="banner warn">${icon('alert')}<div><b>Anexe o capacity</b> para a plataforma trazer liderança, gerência e campanha ao digitar o login ou o nome do operador. ${can ? html`<button class="btn sm" id="qd-cap2">Anexar capacity</button>` : 'Peça para a Qualidade anexar.'}</div></div>` : ''}
+    <div class="filters qd-filters" id="qd-filters">
+      ${FILTERS.map(([id, all, noun, get]) => multiSelect({ id: `qf-${id}`, allLabel: all, noun, options: opts(id, get, labelOf[id]), selected: state.f[id] || [], cls: 'sm' }))}
+      <input class="input sm" type="date" id="qd-from" value="${state.from}" aria-label="De"><input class="input sm" type="date" id="qd-to" value="${state.to}" aria-label="Até">
+      <input class="input sm qd-q" id="qd-q" placeholder="Buscar ID, login, observação…" value="${state.q}">
+      ${Object.values(state.f).some((v) => v?.length) || state.from || state.to || state.q ? html`<button class="btn sm ghost" id="qd-clear">${icon('x')}Limpar</button>` : ''}
+    </div>
+    <div id="qd-body"></div>
+  </div>`);
+  for (const [id] of FILTERS) bindMultiSelect(ROOT, `qf-${id}`, (v) => { state.f[id] = v; state.page = 0; draw(); });
+  $('#qd-from', ROOT).onchange = (e) => { state.from = e.target.value; state.page = 0; draw(); };
+  $('#qd-to', ROOT).onchange = (e) => { state.to = e.target.value; state.page = 0; draw(); };
+  $('#qd-q', ROOT).addEventListener('input', debounce((e) => { state.q = e.target.value; state.page = 0; drawBody(); }, 250));
+  $('#qd-clear', ROOT)?.addEventListener('click', () => { state.f = {}; state.from = ''; state.to = ''; state.q = ''; state.page = 0; draw(); });
+  $('#qd-folder', ROOT).onclick = openFolder;
+  $('#qd-csv', ROOT).onclick = openImport;
+  $('#qd-cap', ROOT).onclick = openCapacity;
+  $('#qd-cap2', ROOT)?.addEventListener('click', openCapacity);
+  $('#qd-new', ROOT).onclick = () => openReview(null);
+  drawBody();
+}
+
+function stats(rows) {
+  const done = rows.filter((r) => r.status === 'analisada');
+  const conduct = done.filter((r) => r.conduct);
+  const wrong = done.filter((r) => r.tab_correct === false);
+  const ok = done.filter((r) => r.tab_correct === true);
+  const int = rows.filter((r) => r.disconnect === 'Interna');
+  const intDone = int.filter((r) => r.status === 'analisada');
+  return { rows, done, conduct, wrong, ok, int, intDone, intConduct: intDone.filter((r) => r.conduct) };
+}
+
+function drawBody() {
+  const box = $('#qd-body', ROOT);
+  if (!box) return;
+  destroyAll();
+  const rows = filtered();
+  const s = stats(rows);
+  if (!D.rows.length) {
+    box.innerHTML = String(emptyState('phoneOff', 'Nenhum atendimento na força-tarefa ainda', 'Importe o CSV de metadados do discador ou lance um atendimento em “Nova análise”.'));
+    return;
+  }
+  const locks = D.rows.filter((r) => r.locked_by && r.locked_by !== D.me);
+  box.innerHTML = String(html`
+    <div class="qd-kpis">
+      ${kpi('Atendimentos', rows.length, `${rows.length - s.done.length} pendente(s)`)}
+      ${kpi('Analisados', s.done.length, `${pctTxt(s.done.length, rows.length)} do total`, 'brand', s.done.length && rows.length ? pct(s.done.length, rows.length) : null)}
+      ${kpi('Desvio de conduta', s.conduct.length, `${pctTxt(s.conduct.length, s.done.length)} dos analisados`, s.conduct.length ? 'bad' : '')}
+      ${kpi('Tabulação incorreta', pctTxt(s.wrong.length, s.wrong.length + s.ok.length), `${s.wrong.length} de ${s.wrong.length + s.ok.length} com conclusão`, s.wrong.length ? 'warn' : '')}
+      ${kpi('Queda procede', pctTxt(s.ok.length, s.wrong.length + s.ok.length), `${s.ok.length} cliente ou linha`, 'ok')}
+      ${kpi('Desconexão interna', pctTxt(s.int.length, rows.length), s.intDone.length ? `${pctTxt(s.intConduct.length, s.intDone.length)} delas foram o operador` : `${s.int.length} atendimento(s)`, s.intConduct.length ? 'bad' : '')}
+    </div>
+    <div class="qd-grid">
+      <section class="card qd-card"><div class="qd-ch"><h3>Desconexão × resultado</h3><span class="sub">quem encerrou, por tipo de desconexão</span></div>${discBlock(rows)}</section>
+      <section class="card qd-card"><div class="qd-ch"><h3>Ofensores</h3><span class="sub">desvios e tabulações incorretas</span></div>${offenders(s.done)}</section>
+      <section class="card qd-card"><div class="qd-ch"><h3>Dispersão por operador</h3><span class="sub">quedas tabuladas × % incorreta</span></div><div class="qd-chart"><canvas id="qd-sc" aria-label="Dispersão por operador"></canvas></div><div class="qd-legend"><span><i style="background:var(--bad)"></i>com desvio de conduta</span><span><i style="background:var(--brand)"></i>sem desvio</span></div></section>
+    </div>
+    ${conductCards(s.conduct)}
+    <div class="qd-grid two">
+      <section class="card qd-card"><div class="qd-ch"><h3>Por liderança</h3><span class="sub">gerência · liderança</span></div>${byLeader(rows)}</section>
+      <section class="card qd-card"><div class="qd-ch"><h3>Andamento da força-tarefa</h3><span class="sub">análises por pessoa</span></div>${progress(rows, locks)}</section>
+    </div>
+    <section class="card qd-card qd-listcard">
+      <div class="qd-ch"><div class="seg" id="qd-tabs">${Object.entries(LIST).map(([k, l]) => html`<button class="${state.list === k ? 'on' : ''}" data-l="${k}">${l} <em>${rows.filter((r) => (k === 'todos' ? true : k === 'desvio' ? r.conduct : k === 'interna' ? r.disconnect === 'Interna' : r.status === k)).length}</em></button>`)}</div>
+        <div class="grow"></div>${CTX.can('admin') ? html`<button class="btn sm ghost" id="qd-del-sel" hidden>${icon('trash')}Excluir selecionados</button>` : ''}</div>
+      <div id="qd-list"></div>
+    </section>`);
+  $$('#qd-tabs [data-l]', box).forEach((b) => b.addEventListener('click', () => { state.list = b.dataset.l; state.page = 0; drawBody(); }));
+  $$('[data-op]', box).forEach((b) => b.addEventListener('click', () => { state.f.login = [b.dataset.op]; state.list = b.dataset.list || 'todos'; state.page = 0; draw(); }));
+  $$('[data-ld]', box).forEach((b) => b.addEventListener('click', () => { state.f.leader = [b.dataset.ld]; state.page = 0; draw(); }));
+  $$('[data-dv]', box).forEach((b) => b.addEventListener('click', () => { state.f.disconnect = [b.dataset.dv]; if (b.dataset.v) state.f.verdict = [b.dataset.v]; state.page = 0; draw(); }));
+  $$('[data-open]', box).forEach((b) => b.addEventListener('click', () => openReview(Number(b.dataset.open))));
+  drawScatter(s.done, rows);
+  drawList(rows);
+}
+
+function kpi(label, val, foot, tone = '', meter = null) {
+  return html`<div class="qd-kpi ${tone}"><span>${label}</span><b class="num">${val}</b><small>${foot}</small>${meter != null ? html`<i class="qd-meter"><i style="width:${meter}%"></i></i>` : ''}</div>`;
+}
+
+function discBlock(rows) {
+  const groups = [['Interna', 'Interna'], ['Externa', 'Externa'], ['—', 'Sem informação']].map(([k, l]) => [k, l, rows.filter((r) => (r.disconnect || '—') === k)]).filter(([, , g]) => g.length);
+  if (!groups.length) return html`<p class="qd-none">Sem atendimentos no filtro.</p>`;
+  return html`<div class="qd-disc">${groups.map(([k, l, g]) => {
+    const done = g.filter((r) => r.verdict);
+    const parts = Object.keys(VERDICT).map((v) => [v, done.filter((r) => r.verdict === v).length]).filter(([, n]) => n);
+    const op = done.filter((r) => r.verdict === 'operador').length;
+    return html`<div class="qd-disc-row">
+      <div class="qd-disc-top"><b>${l}</b><span class="num">${g.length} · ${done.length} analisado(s)</span>${op ? html`<span class="chip bad">${pctTxt(op, done.length)} operador</span>` : ''}</div>
+      <div class="qd-stack">${parts.length ? parts.map(([v, n]) => html`<button style="flex:${n};background:var(${VCOLOR[v]})" title="${VERDICT[v][0]}: ${n}" data-dv="${k}" data-v="${v}" aria-label="${l}: ${VERDICT[v][0]} ${n}"></button>`) : html`<i class="qd-stack-empty" style="flex:1"></i>`}${g.length > done.length ? html`<i class="qd-stack-pend" style="flex:${g.length - done.length}" title="Pendentes: ${g.length - done.length}"></i>` : ''}</div>
+    </div>`;
+  })}
+    <div class="qd-legend">${Object.entries(VERDICT).map(([v, [l]]) => html`<span><i style="background:var(${VCOLOR[v]})"></i>${l}</span>`)}<span><i class="pend"></i>Pendente</span></div>
+  </div>`;
+}
+
+function byOperator(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    const k = r.login || key(r.operator_name);
+    if (!k) continue;
+    const o = m.get(k) || m.set(k, { login: r.login, name: r.operator_name || roster.get(r.login)?.name || r.login, leader: r.leader, manager: r.manager, campaign: r.campaign, rows: [] }).get(k);
+    o.rows.push(r);
+  }
+  return [...m.values()];
+}
+
+function offenders(done) {
+  const ops = byOperator(done).map((o) => ({ ...o, conduct: o.rows.filter((r) => r.conduct).length, wrong: o.rows.filter((r) => r.tab_correct === false).length }))
+    .filter((o) => o.conduct || o.wrong).sort((a, b) => b.conduct - a.conduct || b.wrong - a.wrong || b.rows.length - a.rows.length).slice(0, 7);
+  if (!ops.length) return html`<p class="qd-none">${done.length ? 'Nenhum desvio ou tabulação incorreta até agora.' : 'Os ofensores aparecem conforme as análises são salvas.'}</p>`;
+  const max = Math.max(...ops.map((o) => o.conduct + o.wrong));
+  return html`<ol class="qd-off">${ops.map((o) => html`<li><button data-op="${o.login || ''}">
+    <span class="qd-off-n"><b>${short(o.name)}</b><small>${o.login || ''} · ${short(o.leader) || 'sem liderança'}</small></span>
+    <span class="qd-off-bar"><i class="c" style="width:${(o.conduct / max) * 100}%"></i><i class="w" style="width:${((o.wrong - Math.min(o.wrong, o.conduct)) / max) * 100}%"></i></span>
+    <span class="qd-off-v num">${o.conduct ? html`<em class="bad">${o.conduct}</em>` : ''}${o.wrong}/${o.rows.length}</span></button></li>`)}</ol>
+    <p class="qd-foot"><i class="dot bad"></i>desvio de conduta · <i class="dot warn"></i>tabulação incorreta · número = incorretas/analisadas</p>`;
+}
+
+function drawScatter(done, rows) {
+  const canvas = $('#qd-sc', ROOT);
+  if (!canvas) return;
+  const ops = byOperator(rows).map((o) => {
+    const d = o.rows.filter((r) => r.status === 'analisada');
+    const concl = d.filter((r) => r.tab_correct != null);
+    return { ...o, total: o.rows.length, concl: concl.length, wrong: concl.filter((r) => r.tab_correct === false).length, conduct: d.filter((r) => r.conduct).length };
+  }).filter((o) => o.concl);
+  if (!ops.length) { canvas.parentElement.innerHTML = '<p class="qd-none">A dispersão aparece com as primeiras análises concluídas.</p>'; return; }
+  const c = palette();
+  const pt = (o) => ({ x: o.total, y: pct(o.wrong, o.concl), label: short(o.name), o });
+  const xmax = Math.max(5, ...ops.map((o) => o.total)) + 1;
+  scatterChart(canvas, [
+    { label: 'Sem desvio', color: c.brand, data: ops.filter((o) => !o.conduct).map(pt) },
+    { label: 'Com desvio', color: c.bad, data: ops.filter((o) => o.conduct).map(pt), radius: 7 },
+  ], {
+    xmin: 0, xmax, ymin: 0, ymax: 100, xLabel: 'quedas tabuladas', yLabel: '% incorreta',
+    tooltip: (ctx) => { const o = ctx.raw.o; return ` ${ctx.raw.label}: ${o.total} queda(s), ${o.wrong}/${o.concl} incorreta(s)${o.conduct ? `, ${o.conduct} desvio(s)` : ''}`; },
+    onClick: (p) => { if (p.o.login) { state.f.login = [p.o.login]; state.page = 0; draw(); } },
+  });
+}
+
+function conductCards(conduct) {
+  if (!conduct.length) return '';
+  const ops = byOperator(conduct).sort((a, b) => b.rows.length - a.rows.length);
+  const totalOf = (o) => D.rows.filter((r) => r.login === o.login && r.status === 'analisada').length;
+  return html`<section class="qd-conduct"><div class="qd-ch"><h3>${icon('alert')}Desvios de conduta</h3><span class="sub">operadores que desligaram com o cliente na linha</span></div>
+    <div class="qd-cards">${ops.map((o) => {
+      const types = {};
+      for (const r of o.rows) types[r.conduct_type || 'Desligou com o cliente na linha'] = (types[r.conduct_type || 'Desligou com o cliente na linha'] || 0) + 1;
+      const last = o.rows.map((r) => r.call_at || r.analyzed_at).sort().pop();
+      const int = o.rows.filter((r) => r.disconnect === 'Interna').length;
+      return html`<article class="qd-op">
+        <header>${avatar(title(o.name), 'sm')}<div><b>${title(o.name)}</b><small>${o.login || '—'} · ${title(o.leader) || 'sem liderança'}${o.manager ? ` · ${title(o.manager)}` : ''}</small></div><span class="qd-op-n num" title="desvios / analisados">${o.rows.length}<small>/${totalOf(o)}</small></span></header>
+        <div class="qd-op-tags">${Object.entries(types).map(([t, n]) => html`<span class="chip bad">${t}${n > 1 ? ` · ${n}` : ''}</span>`)}${int ? html`<span class="chip outline">${int} interna(s)</span>` : ''}</div>
+        <footer><span>Último: ${dt(last)}</span><button class="btn sm ghost" data-op="${o.login || ''}" data-list="desvio">Ver atendimentos${icon('chevRight')}</button></footer>
+      </article>`;
+    })}</div></section>`;
+}
+
+function byLeader(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    const k = r.leader || '—';
+    const o = m.get(k) || m.set(k, { leader: r.leader, manager: r.manager, rows: [] }).get(k);
+    o.rows.push(r);
+  }
+  const list = [...m.values()].map((o) => { const s = stats(o.rows); return { ...o, s }; }).sort((a, b) => b.s.conduct.length - a.s.conduct.length || b.rows.length - a.rows.length);
+  return html`<div class="table-wrap qd-tbl-wrap"><table class="tbl qd-tbl"><thead><tr><th>Liderança</th><th class="right">Quedas</th><th class="right">Analisadas</th><th class="right">Desvios</th><th class="right">Incorreta</th><th class="right">Interna</th></tr></thead>
+    <tbody>${list.map((o) => html`<tr class="click" data-ld="${o.leader || ''}"><td><b>${short(o.leader) || 'Sem liderança'}</b><small>${title(o.manager) || 'gerência a definir'}</small></td>
+      <td class="right num">${o.rows.length}</td><td class="right num">${o.s.done.length}</td>
+      <td class="right num">${o.s.conduct.length ? html`<span class="chip bad">${o.s.conduct.length}</span>` : '0'}</td>
+      <td class="right num">${pctTxt(o.s.wrong.length, o.s.wrong.length + o.s.ok.length)}</td><td class="right num">${pctTxt(o.s.int.length, o.rows.length)}</td></tr>`)}</tbody></table></div>`;
+}
+
+function progress(rows, locks) {
+  const m = new Map();
+  const today = new Date().toISOString().slice(0, 10);
+  for (const r of rows.filter((x) => x.status === 'analisada')) {
+    const k = r.analyst_name || '—';
+    const o = m.get(k) || m.set(k, { name: k, n: 0, today: 0, conduct: 0 }).get(k);
+    o.n++; if ((r.analyzed_at || '').slice(0, 10) === today) o.today++; if (r.conduct) o.conduct++;
+  }
+  const list = [...m.values()].sort((a, b) => b.n - a.n);
+  const done = rows.filter((r) => r.status === 'analisada').length;
+  return html`<div class="qd-prog">
+    <div class="qd-prog-bar"><i style="width:${pct(done, rows.length) || 0}%"></i></div>
+    <p class="qd-foot">${done} de ${rows.length} analisados · ${rows.length - done} na fila</p>
+    ${locks.length ? html`<div class="qd-live">${locks.slice(0, 6).map((r) => html`<span class="chip brand"><i class="qd-pulse"></i>${r.locked_name} · ${r.contact_id || short(r.operator_name)}</span>`)}</div>` : ''}
+    ${list.length ? html`<ul class="qd-people">${list.map((o) => html`<li>${avatar(o.name, 'sm')}<b>${o.name}</b><span class="num">${o.n}<small>${o.today ? ` · ${o.today} hoje` : ''}</small></span></li>`)}</ul>` : html`<p class="qd-none">Ninguém analisou ainda.</p>`}
+  </div>`;
+}
+
+function drawList(rows) {
+  const box = $('#qd-list', ROOT);
+  const list = rows.filter(inList);
+  const pages = Math.max(1, Math.ceil(list.length / PAGE));
+  state.page = Math.min(state.page, pages - 1);
+  const pg = list.slice(state.page * PAGE, state.page * PAGE + PAGE);
+  if (!list.length) { box.innerHTML = '<p class="qd-none" style="padding:24px">Nada nesta lista com os filtros atuais.</p>'; return; }
+  const admin = CTX.can('admin');
+  box.innerHTML = String(html`<div class="table-wrap"><table class="tbl qd-tbl qd-list"><thead><tr>${admin ? html`<th><input type="checkbox" id="qd-all" aria-label="Selecionar todos"></th>` : ''}<th>Ligação</th><th>Operador</th><th>Liderança</th><th class="right">Duração</th><th>Tabulação</th><th>Desconexão</th><th>Resultado</th><th>Anexos</th><th>Analista</th></tr></thead>
+    <tbody>${pg.map((r) => html`<tr class="click ${r.conduct ? 'qd-row-bad' : ''}" data-open="${r.id}">
+      ${admin ? html`<td data-nocl><input type="checkbox" class="qd-sel" value="${r.id}" aria-label="Selecionar"></td>` : ''}
+      <td><b class="num">${r.contact_id || '—'}</b><small>${dt(r.call_at)}</small></td>
+      <td><b>${short(r.operator_name) || r.login || '—'}</b><small>${r.login || ''}${r.campaign ? ` · ${title(r.campaign)}` : ''}</small></td>
+      <td><span>${short(r.leader) || '—'}</span><small>${short(r.manager)}</small></td>
+      <td class="right num">${fmtDur(r.duration_sec)}</td>
+      <td><span class="qd-tab ${isDrop(r.tabulation) ? 'is-drop' : ''}">${r.tabulation || '—'}</span>${r.tab_correct === false && r.correct_tab ? html`<small>→ ${r.correct_tab}</small>` : ''}</td>
+      <td>${r.disconnect ? html`<span class="chip ${r.disconnect === 'Interna' ? 'warn' : 'outline'}">${r.disconnect}</span>` : html`<span class="muted">—</span>`}</td>
+      <td>${r.locked_by && r.locked_by !== D.me ? html`<span class="chip brand"><i class="qd-pulse"></i>${r.locked_name}</span>` : r.verdict ? html`<span class="chip ${VERDICT[r.verdict][1]}">${VERDICT[r.verdict][0]}</span>${r.conduct && r.verdict !== 'operador' ? html` <span class="chip bad">Desvio</span>` : ''}` : html`<span class="chip">Pendente</span>`}</td>
+      <td class="qd-att">${r.audio_path || r.audio_url ? html`<span title="Áudio anexado">${icon('audio')}</span>` : ''}${r.transcript_name ? html`<span title="Transcrição anexada">${icon('file')}</span>` : ''}</td>
+      <td><small>${r.analyst_name || ''}</small></td></tr>`)}</tbody></table></div>
+    ${pages > 1 ? html`<div class="qd-pager"><button class="btn sm ghost" id="qd-prev" ${state.page ? '' : 'disabled'}>${icon('chevLeft')}</button><span>${state.page + 1} de ${pages} · ${list.length} atendimentos</span><button class="btn sm ghost" id="qd-next" ${state.page < pages - 1 ? '' : 'disabled'}>${icon('chevRight')}</button></div>` : ''}`);
+  $$('tr[data-open]', box).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-nocl]')) return; openReview(Number(tr.dataset.open), list); }));
+  $('#qd-prev', box)?.addEventListener('click', () => { state.page--; drawList(rows); });
+  $('#qd-next', box)?.addEventListener('click', () => { state.page++; drawList(rows); });
+  const delBtn = $('#qd-del-sel', ROOT);
+  const sync = () => { const n = $$('.qd-sel:checked', box).length; if (delBtn) { delBtn.hidden = !n; delBtn.lastChild.textContent = `Excluir ${n} selecionado(s)`; } };
+  $('#qd-all', box)?.addEventListener('change', (e) => { $$('.qd-sel', box).forEach((c) => { c.checked = e.target.checked; }); sync(); });
+  $$('.qd-sel', box).forEach((c) => c.addEventListener('change', sync));
+  if (delBtn) delBtn.onclick = async () => {
+    const ids = $$('.qd-sel:checked', box).map((c) => Number(c.value));
+    if (!ids.length || !(await confirmDialog('Excluir atendimentos', `${ids.length} atendimento(s) saem da força-tarefa, com a análise e os anexos. Não dá para desfazer.`, { ok: 'Excluir', danger: true }))) return;
+    try { const r = await api.post('/quedas/delete', { ids }); toast(`${r.deleted} atendimento(s) excluído(s).`); await fetchData(); draw(); } catch (ex) { toast(ex.message, 'err'); }
+  };
+}
+
+// ---------------------------------------------------------------- Pasta de áudios
+async function openFolder() {
+  if (D.folder) { window.open(D.folder, '_blank', 'noopener'); return; }
+  if (!CTX.can('admin', 'qualidade')) { toast('A pasta de áudios ainda não foi configurada. Peça para a Qualidade colar o link em Capacity.', 'err', 5000); return; }
+  folderDialog();
+}
+function folderDialog() {
+  modal({
+    title: 'Pasta de áudios',
+    body: html`<p class="t2" style="margin-top:0">Cole o link da pasta do SharePoint/OneDrive com os áudios da força-tarefa. O botão “Pasta de áudios” abre esse link para todos os analistas. O link fica só no banco da plataforma.</p>
+      <div class="field"><label for="qd-furl">Link da pasta</label><input class="input" id="qd-furl" value="${D.folder || ''}" placeholder="https://paschoalotto-my.sharepoint.com/…"></div>`,
+    foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="qd-fsave">Salvar</button>`,
+    onMount: (m, close) => {
+      $('#qd-fsave', m).onclick = async (e) => {
+        const btnEl = e.currentTarget;
+        busy(btnEl, true, 'Salvando');
+        try { await api.put('/quedas/folder', { url: $('#qd-furl', m).value }); D.folder = $('#qd-furl', m).value.trim() || null; close(); toast('Link da pasta salvo.'); }
+        catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
+      };
+    },
+  });
+}
+
+// ---------------------------------------------------------------- Capacity
+const hk = (s) => key(s).replace(/ /g, '');
+const col = (row, ...names) => { for (const [k, v] of Object.entries(row)) { const kk = hk(k); if (names.some((n) => (n.endsWith('*') ? kk.startsWith(n.slice(0, -1)) : kk === n))) return v; } return null; };
+
+export function capacityRows(sheets) {
+  const out = [];
+  const summary = [];
+  for (const { name, rows } of sheets) {
+    if (!rows.length || col(rows[0], 'login') === undefined || !Object.keys(rows[0]).some((k) => hk(k) === 'login')) continue;
+    const kind = /deslig/i.test(name) ? 'DESLIGADO' : /remanej/i.test(name) ? 'REMANEJADO' : /afast/i.test(name) ? 'AFASTADO' : null;
+    let n = 0;
+    for (const r of rows) {
+      const login = String(col(r, 'login') || '').trim();
+      const nm = String(col(r, 'operador', 'nome', 'colaborador', 'nomecompleto') || '').trim();
+      if (!login || !nm) continue;
+      const dest = col(r, 'carteiradestino');
+      out.push({
+        login, name: nm, registration: col(r, 'nc', 'matricula', 'bpm') != null ? String(col(r, 'nc', 'matricula', 'bpm')) : null,
+        shift: col(r, 'turno'), status: kind ? (kind === 'REMANEJADO' && dest ? `REMANEJADO · ${dest}` : kind) : String(col(r, 'situacao', 'status') || 'ATIVO'),
+        campaign: kind ? null : col(r, 'campanha*'), segment: kind ? null : col(r, 'segmento*', 'carteira'),
+        leader: col(r, 'lideranca', 'lider', 'supervisor', 'supervisao', 'coordenador'), active: !kind,
+      });
+      n++;
+    }
+    summary.push([name, n, kind]);
+  }
+  return { rows: out, summary };
+}
+
+function openCapacity() {
+  const canEdit = CTX.can('admin', 'qualidade');
+  const active = D.roster.filter((r) => r.active);
+  const leaders = [...new Set(active.map((r) => r.leader).filter(Boolean))].sort();
+  const mgrs = managers();
+  modal({
+    title: 'Capacity e gerências', wide: true, cls: 'qd-modal',
+    body: html`
+      <div class="qd-cap-top">
+        <div><b class="num">${active.length}</b><span>operadores ativos</span></div>
+        <div><b class="num">${leaders.length}</b><span>lideranças</span></div>
+        <div><b>${D.roster_updated_at ? fmtRel(D.roster_updated_at) : '—'}</b><span>${D.roster_file || 'nenhum capacity anexado'}</span></div>
+      </div>
+      ${canEdit ? html`<label class="qd-drop" id="qd-capdrop">${icon('upload')}<span><b>Anexar capacity atualizado</b><small>.xlsx com a aba de ativos (OPERADOR, LOGIN, LIDERANÇA, CAMPANHA, SEGMENTO). Abas de desligados e remanejados também são lidas.</small></span><input type="file" accept=".xlsx,.csv" id="qd-capfile" hidden></label>
+        <div id="qd-cappv"></div>` : ''}
+      <h4 class="qd-h4">Gerência de cada liderança</h4>
+      <p class="tiny muted" style="margin-top:-4px">O capacity não traz a gerência. Ela vem dos operadores já cadastrados na plataforma; ajuste aqui quando precisar. Vale também para os atendimentos já lançados.</p>
+      ${leaders.length ? html`<div class="qd-leaders">${leaders.map((l) => html`<div class="qd-leader"><span><b>${title(l)}</b><small>${active.filter((r) => r.leader === l).length} operador(es) · ${[...new Set(active.filter((r) => r.leader === l).map((r) => title(r.segment)).filter(Boolean))].join(', ')}</small></span>
+        <input class="input sm" list="qd-mgrs" data-leader="${l}" value="${managerOf(l)}" placeholder="Gerência" ${canEdit ? '' : 'disabled'}></div>`)}</div><datalist id="qd-mgrs">${mgrs.map((m) => html`<option value="${m}">`)}</datalist>` : html`<p class="qd-none">Anexe o capacity para listar as lideranças.</p>`}
+      ${canEdit ? html`<h4 class="qd-h4">Pasta de áudios</h4><div class="row" style="gap:8px"><input class="input sm" id="qd-furl2" value="${D.folder || ''}" placeholder="Link da pasta no SharePoint" style="flex:1"><button class="btn sm" id="qd-fsave2">Salvar link</button></div>` : ''}`,
+    foot: html`<button class="btn" data-close>Fechar</button>`,
+    onMount: (m) => {
+      $$('[data-leader]', m).forEach((inp) => inp.addEventListener('change', async () => {
+        try { await api.put('/quedas/leaders', { leader: inp.dataset.leader, manager: inp.value }); const l = D.leaders.find((x) => x.leader === inp.dataset.leader); if (l) l.manager = inp.value; else D.leaders.push({ leader: inp.dataset.leader, manager: inp.value }); toast(`Gerência de ${short(inp.dataset.leader)} salva.`); }
+        catch (ex) { toast(ex.message, 'err'); }
+      }));
+      $('#qd-fsave2', m)?.addEventListener('click', async () => {
+        try { await api.put('/quedas/folder', { url: $('#qd-furl2', m).value }); D.folder = $('#qd-furl2', m).value.trim() || null; toast('Link da pasta salvo.'); } catch (ex) { toast(ex.message, 'err'); }
+      });
+      $('#qd-capfile', m)?.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const pv = $('#qd-cappv', m);
+        pv.innerHTML = '<p class="qd-none">Lendo o capacity…</p>';
+        try {
+          const { rows, summary } = capacityRows(await parseWorkbook(file));
+          const act = rows.filter((r) => r.active);
+          if (!act.length) throw new Error('Não encontrei a aba de ativos com as colunas OPERADOR e LOGIN.');
+          const cur = new Set(D.roster.filter((r) => r.active).map((r) => r.login));
+          const nw = new Set(act.map((r) => r.login.toLowerCase()));
+          const added = [...nw].filter((l) => !cur.has(l)).length;
+          const left = [...cur].filter((l) => !nw.has(l)).length;
+          pv.innerHTML = String(html`<div class="qd-pv"><p><b>${file.name}</b></p><ul>${summary.map(([n, c, k]) => html`<li>${n}: <b>${c}</b> ${k ? `(${k.toLowerCase()})` : 'ativos'}</li>`)}</ul>
+            ${D.roster.length ? html`<p class="tiny">${added} entram, ${left} saem do ativo (continuam nas análises antigas).</p>` : ''}
+            <button class="btn primary sm" id="qd-capgo">${icon('check')}Atualizar ${act.length} operadores ativos</button></div>`);
+          $('#qd-capgo', pv).onclick = async (ev) => {
+            const btnEl = ev.currentTarget;
+            busy(btnEl, true, 'Atualizando');
+            try {
+              const r = await api.post('/quedas/roster', { rows, file: file.name });
+              toast(`Capacity atualizado: ${r.active} ativos${r.removed ? `, ${r.removed} saíram` : ''}.${r.missing_manager ? ` ${r.missing_manager} liderança(s) sem gerência: preencha abaixo.` : ''}`, 'ok', 6000);
+              await fetchData(); draw();
+              m.closest('.overlay')?.remove();
+              openCapacity();
+            } catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
+          };
+        } catch (ex) { pv.innerHTML = ''; toast(ex.message, 'err', 5000); }
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------- CSV de metadados
+export function metadataRows(rows) {
+  return rows.map((r) => ({
+    contact_id: String(col(r, 'idcontato', 'idligacao', 'idchamada', 'id') || '').trim(),
+    dialer_campaign: col(r, 'campanha'), operation: col(r, 'operacao'), login: col(r, 'login', 'usuario'),
+    call_at: col(r, 'datahoraligacao', 'datahora', 'data'), duration: col(r, 'duracao', 'tempo'),
+    tabulation: col(r, 'finalizacao', 'tabulacao'), contract: col(r, 'contrato'), customer: col(r, 'cliente', 'nomecliente'),
+    audio_file: col(r, 'nomedoarquivo', 'arquivo'), audio_original: col(r, 'nomeoriginaldoarquivo'),
+    disconnect: col(r, 'tipodedesconexao', 'desconexao', 'tipodesconexao'),
+  })).filter((r) => r.contact_id);
+}
+
+function openImport() {
+  let parsed = null;
+  let fileName = '';
+  modal({
+    title: 'Importar CSV de metadados', wide: true, cls: 'qd-modal',
+    body: html`<p class="t2" style="margin-top:0">Opcional: o CSV do discador traz IdContato, login, data, duração, finalização, arquivo do áudio e o tipo de desconexão (Interna/Externa). Cada linha vira um atendimento para análise, já com liderança, gerência e campanha do capacity. Telefone e CPF não são guardados.</p>
+      <label class="qd-drop">${icon('upload')}<span><b>Escolher o CSV</b><small>Modelo: colunas IdContato; Campanha; Login; DataHoraLigacao; Duracao; FINALIZACAO; NomeDoArquivo; TIPO DE DESCONEXÃO</small></span><input type="file" accept=".csv,.xlsx,.txt" id="qd-csvf" hidden></label>
+      <div id="qd-csvpv"></div>`,
+    foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="qd-csvgo" disabled>${icon('upload')}Importar</button>`,
+    onMount: (m, close) => {
+      const go = $('#qd-csvgo', m);
+      const chosen = () => (parsed ? ($('#qd-onlydrop', m)?.checked ? parsed.filter((r) => isDrop(r.tabulation)) : parsed) : []);
+      const sync = () => { const n = chosen().length; go.disabled = !n; go.lastChild.textContent = n ? `Importar ${n} atendimento(s)` : 'Importar'; };
+      $('#qd-csvf', m).onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        fileName = file.name;
+        try {
+          parsed = metadataRows(await parseSheetFile(file));
+          if (!parsed.length) throw new Error('Não encontrei a coluna IdContato no arquivo.');
+          const tabs = {};
+          for (const r of parsed) tabs[r.tabulation || '—'] = (tabs[r.tabulation || '—'] || 0) + 1;
+          const drops = parsed.filter((r) => isDrop(r.tabulation)).length;
+          const int = parsed.filter((r) => key(r.disconnect).startsWith('intern')).length;
+          const unknown = [...new Set(parsed.map((r) => String(r.login || '').toLowerCase()).filter((l) => l && !roster.has(l)))];
+          const known = new Set(D.rows.map((r) => r.contact_id));
+          const again = parsed.filter((r) => known.has(r.contact_id)).length;
+          $('#qd-csvpv', m).innerHTML = String(html`<div class="qd-pv">
+            <p><b>${file.name}</b> · ${parsed.length} linha(s) · ${drops} com tabulação de queda · ${int} desconexão interna${again ? ` · ${again} já na força-tarefa (só os dados do discador são atualizados)` : ''}</p>
+            <div class="qd-tabs">${Object.entries(tabs).sort((a, b) => b[1] - a[1]).map(([t, n]) => html`<span class="chip ${isDrop(t) ? 'warn' : 'outline'}">${t} · ${n}</span>`)}</div>
+            <label class="check"><input type="checkbox" id="qd-onlydrop" ${drops ? 'checked' : ''}> Importar só as tabulações de queda</label>
+            ${unknown.length ? html`<p class="tiny" style="color:var(--warn-ink)">${unknown.length} login(s) fora do capacity: ${unknown.slice(0, 8).join(', ')}${unknown.length > 8 ? '…' : ''}. Eles entram sem liderança; atualize o capacity se precisar.</p>` : ''}
+          </div>`);
+          $('#qd-onlydrop', m).onchange = sync;
+          sync();
+        } catch (ex) { parsed = null; $('#qd-csvpv', m).innerHTML = ''; sync(); toast(ex.message, 'err', 5000); }
+      };
+      go.onclick = async (e) => {
+        const btnEl = e.currentTarget;
+        const rows = chosen();
+        if (!rows.length) return;
+        busy(btnEl, true, 'Importando');
+        try {
+          const r = await api.post('/quedas/import', { rows, batch: fileName });
+          close();
+          toast(`${r.created} atendimento(s) na fila${r.updated ? `, ${r.updated} atualizado(s)` : ''}.`, 'ok', 5000);
+          await fetchData(); draw();
+        } catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
+      };
+    },
+  });
+}
+
+// ---------------------------------------------------------------- Análise de um atendimento
+async function openReview(id, queue = null) {
+  let row = {};
+  let locked = false;
+  let lockTimer = null;
+  if (id) {
+    try { row = await api.get(`/quedas/${id}`); } catch (ex) { toast(ex.message, 'err'); return; }
+    const lk = await api.post(`/quedas/${id}/lock`).catch(() => ({ ok: true }));
+    if (!lk.ok && !(await confirmDialog('Atendimento em análise', `${lk.by} está analisando este atendimento agora. Quer abrir mesmo assim? Quem salvar por último fica valendo.`, { ok: 'Abrir mesmo assim' }))) return;
+    if (!lk.ok) await api.post(`/quedas/${id}/lock`, { force: true }).catch(() => {});
+    locked = true;
+    lockTimer = setInterval(() => api.post(`/quedas/${id}/lock`, { force: true }).catch(() => {}), 5 * 60 * 1000);
+  }
+  const canDelete = id && (CTX.can('admin') || (row.status === 'pendente' && row.created_by === CTX.store.user.id));
+  const tabs = [...new Set(D.rows.map((r) => r.tabulation).filter(Boolean))].sort();
+  const leaders = [...new Set(rosterRows.map((r) => r.leader).filter(Boolean))].sort();
+  const camps = [...new Set(rosterRows.map((r) => r.campaign).filter(Boolean))].sort();
+  const segs = [...new Set(rosterRows.map((r) => r.segment).filter(Boolean))].sort();
+  const opList = rosterRows.filter((r) => r.active).sort((a, b) => a.name.localeCompare(b.name));
+  let audioFile = null;
+  let transcript = row.transcript || '';
+  let transcriptName = row.transcript_name || '';
+  const callLocal = row.call_at ? row.call_at.slice(0, 16) : '';
+  const v = row.verdict || '';
+  const next = () => (queue || []).find((r) => r.id !== id && r.status === 'pendente' && !(r.locked_by && r.locked_by !== D.me));
+
+  const { el: m, close } = modal({
+    title: id ? `Análise do atendimento ${row.contact_id || `#${id}`}` : 'Nova análise de queda', wide: true, cls: 'qd-modal qd-rev',
+    body: html`
+      ${row.analyst_name ? html`<div class="banner info">${icon('info')}<div>Analisado por <b>${row.analyst_name}</b> ${fmtRel(row.analyzed_at)}.</div></div>` : ''}
+      <div class="qd-sec"><h4>${icon('headset')}Atendimento</h4>
+        <div class="qd-fgrid">
+          <div class="field"><label for="r-cid">ID do contato</label><input class="input" id="r-cid" value="${row.contact_id || ''}" placeholder="IdContato"></div>
+          <div class="field"><label for="r-at">Data e hora</label><input class="input" type="datetime-local" id="r-at" value="${callLocal}"></div>
+          <div class="field"><label for="r-dur">Duração</label><input class="input" id="r-dur" value="${row.duration_sec != null ? fmtDur(row.duration_sec) : ''}" placeholder="m:ss"></div>
+          <div class="field"><label for="r-tab">Tabulação do operador</label><input class="input" id="r-tab" list="r-tabs" value="${row.tabulation || ''}" placeholder="QUEDA LIGACAO CLIENTE"><datalist id="r-tabs">${['QUEDA LIGACAO CLIENTE', 'QUEDA DE LIGACAO', ...tabs].filter((t, i, a) => a.indexOf(t) === i).map((t) => html`<option value="${t}">`)}</datalist></div>
+          <div class="field"><label>Tipo de desconexão</label><div class="seg" id="r-disc">${['Interna', 'Externa', ''].map((d) => html`<button type="button" data-v="${d}" class="${(row.disconnect || '') === d ? 'on' : ''}">${d || 'Não informado'}</button>`)}</div></div>
+          ${row.dialer_campaign || row.operation ? html`<div class="field"><label>Discador</label><div class="qd-ro">${[row.dialer_campaign, row.operation].filter(Boolean).join(' · ')}</div></div>` : ''}
+        </div>
+        ${row.disconnect === 'Interna' ? html`<p class="qd-hint warn">${icon('alert')}Desconexão <b>interna</b>: a ligação foi encerrada do nosso lado. Confirme no áudio se o cliente realmente abandonou antes de validar a queda.</p>` : ''}
+      </div>
+      <div class="qd-sec"><h4>${icon('user')}Operador</h4>
+        <div class="qd-fgrid">
+          <div class="field span-2"><label for="r-op">Login ou nome completo</label><input class="input" id="r-op" list="r-ops" autocomplete="off" value="${row.login ? `${title(row.operator_name || roster.get(row.login)?.name || '')} · ${row.login}`.replace(/^ · /, '') : row.operator_name || ''}" placeholder="Digite o login ou o nome (com ou sem acento)">
+            <datalist id="r-ops">${opList.map((o) => html`<option value="${title(o.name)} · ${o.login}">`)}</datalist><small class="qd-found" id="r-found"></small></div>
+          <div class="field"><label for="r-ld">Liderança</label><input class="input" id="r-ld" list="r-lds" value="${row.leader || ''}"><datalist id="r-lds">${leaders.map((l) => html`<option value="${l}">`)}</datalist></div>
+          <div class="field"><label for="r-mg">Gerência</label><input class="input" id="r-mg" list="r-mgs" value="${row.manager || ''}"><datalist id="r-mgs">${managers().map((l) => html`<option value="${l}">`)}</datalist></div>
+          <div class="field"><label for="r-cp">Campanha / setor</label><input class="input" id="r-cp" list="r-cps" value="${row.campaign || ''}"><datalist id="r-cps">${camps.map((l) => html`<option value="${l}">`)}</datalist></div>
+          <div class="field"><label for="r-sg">Segmento</label><input class="input" id="r-sg" list="r-sgs" value="${row.segment || ''}"><datalist id="r-sgs">${segs.map((l) => html`<option value="${l}">`)}</datalist></div>
+        </div>
+      </div>
+      <div class="qd-sec"><h4>${icon('audio')}Áudio e transcrição</h4>
+        <div class="qd-audio">
+          <button type="button" class="btn sm" id="r-folder">${icon('folder')}Abrir pasta de áudios${icon('external')}</button>
+          ${row.audio_file || row.audio_original ? html`<button type="button" class="btn sm ghost" id="r-copy" title="${row.audio_file || row.audio_original}">${icon('copy')}Copiar nome do arquivo</button><span class="qd-fname" title="${row.audio_file || ''}">${row.audio_original || row.audio_file}</span>` : ''}
+        </div>
+        <div class="qd-fgrid">
+          <div class="field span-2"><label for="r-aurl">Link do áudio analisado</label><input class="input" id="r-aurl" value="${row.audio_url || ''}" placeholder="Cole o link do arquivo na pasta (Copiar link)"></div>
+          <div class="field span-2"><label>Arquivo do áudio</label><label class="qd-file">${icon('upload')}<span id="r-aname">${row.audio_name || 'Anexar áudio (.wav, .mp3…)'}</span><input type="file" accept="audio/*,.wav,.mp3,.gsm,.ogg,.opus,.m4a" id="r-afile" hidden></label>
+            ${row.audio_path ? html`<div class="qd-player" id="r-player"><button type="button" class="btn sm" id="r-play">${icon('play')}Ouvir áudio anexado</button>${canEditRow(row) ? html`<button type="button" class="btn-icon" id="r-adel" aria-label="Remover áudio">${icon('trash')}</button>` : ''}</div>` : ''}</div>
+        </div>
+        <div class="field"><label for="r-tr">Transcrição <span class="muted tiny" id="r-trname">${transcriptName && transcriptName !== 'Transcrição colada' ? `· ${transcriptName}` : ''}</span></label>
+          <div class="qd-trbar"><label class="btn sm ghost">${icon('file')}Anexar arquivo (.txt, .docx)<input type="file" accept=".txt,.docx,.vtt,.srt,.json" id="r-trfile" hidden></label></div>
+          <textarea class="textarea qd-tr" id="r-tr" placeholder="Cole aqui a transcrição (Atendente: … / Cliente: …)">${transcript}</textarea></div>
+      </div>
+      <div class="qd-sec"><h4>${icon('target')}Resultado da análise</h4>
+        <div class="qd-verdicts" id="r-verdict">${Object.entries(VERDICT).map(([k, [l, tone, d]]) => html`<button type="button" class="qd-vd ${tone} ${v === k ? 'on' : ''}" data-v="${k}"><b>${l}</b><small>${d}</small></button>`)}</div>
+        <div class="qd-fgrid">
+          <div class="field"><label>A tabulação de queda procede?</label><div class="seg" id="r-tabok">${[['1', 'Sim'], ['0', 'Não'], ['', 'Sem conclusão']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.tab_correct === true ? '1' : row.tab_correct === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
+          <div class="field" id="r-ctab-f"><label for="r-ctab">Tabulação correta</label><input class="input" id="r-ctab" list="r-tabs" value="${row.correct_tab || ''}" placeholder="Qual deveria ser"></div>
+          <div class="field"><label for="r-mom">Momento da queda</label><input class="input" id="r-mom" value="${row.drop_moment || ''}" placeholder="m:ss no áudio"></div>
+        </div>
+        <div class="qd-conduct-box ${row.conduct ? 'on' : ''}" id="r-cbox">
+          <label class="switch"><input type="checkbox" id="r-conduct" ${row.conduct ? 'checked' : ''}><span><b>Desvio de conduta</b> · o operador desligou com o cliente na linha</span></label>
+          <select class="select sm" id="r-ctype"><option value="">Tipo de desvio…</option>${CONDUCT.map((c) => html`<option ${row.conduct_type === c ? 'selected' : ''}>${c}</option>`)}</select>
+        </div>
+        <div class="field"><label for="r-notes">Observação / evidência</label><textarea class="textarea" id="r-notes" rows="3" placeholder="O que aconteceu na ligação (ex.: cliente pediu para aguardar e o operador encerrou aos 2:10)">${row.notes || ''}</textarea></div>
+      </div>`,
+    foot: html`${canDelete ? html`<button class="btn ghost danger" id="r-del">${icon('trash')}Excluir</button>` : ''}<div class="grow"></div>
+      <button class="btn ghost" data-close>Cancelar</button>
+      ${queue ? html`<button class="btn" id="r-savenext">Salvar e próximo${icon('chevRight')}</button>` : ''}
+      <button class="btn primary" id="r-save">${icon('check')}Salvar</button>`,
+    onClose: () => { clearInterval(lockTimer); if (locked && id) api.post(`/quedas/${id}/unlock`).catch(() => {}); },
+  });
+
+  const val = (s) => $(s, m).value.trim();
+  const segVal = (s) => $(`${s} button.on`, m)?.dataset.v ?? '';
+  const segBind = (s, cb) => $$(`${s} button`, m).forEach((b) => b.addEventListener('click', () => { $$(`${s} button`, m).forEach((x) => x.classList.toggle('on', x === b)); cb?.(b.dataset.v); }));
+  segBind('#r-disc');
+  segBind('#r-tabok', () => syncTab());
+  const syncTab = () => { $('#r-ctab-f', m).hidden = segVal('#r-tabok') !== '0'; };
+  const syncConduct = () => {
+    const on = $('#r-conduct', m).checked;
+    $('#r-cbox', m).classList.toggle('on', on);
+    $('#r-ctype', m).hidden = !on;
+  };
+  syncTab(); syncConduct();
+  let autoConduct = false;
+  $$('#r-verdict .qd-vd', m).forEach((b) => b.addEventListener('click', () => {
+    const was = b.classList.contains('on');
+    $$('#r-verdict .qd-vd', m).forEach((x) => x.classList.toggle('on', x === b && !was));
+    const k = was ? '' : b.dataset.v;
+    const ok = k ? TAB_OK[k] : null;
+    $$('#r-tabok button', m).forEach((x) => x.classList.toggle('on', x.dataset.v === (ok === true ? '1' : ok === false ? '0' : '')));
+    // "Operador desligou" é sempre desvio de conduta; ao trocar de resultado, desfaz só a marcação automática
+    if (k === 'operador') {
+      if (!$('#r-conduct', m).checked) { $('#r-conduct', m).checked = true; autoConduct = true; }
+      if (!$('#r-ctype', m).value) $('#r-ctype', m).value = CONDUCT[1];
+    } else if (autoConduct) { $('#r-conduct', m).checked = false; $('#r-ctype', m).value = ''; autoConduct = false; }
+    if (k === 'concluido' && !val('#r-ctab')) setTimeout(() => $('#r-ctab', m).focus(), 0);
+    syncTab(); syncConduct();
+  }));
+  $('#r-conduct', m).onchange = () => { autoConduct = false; syncConduct(); };
+
+  // Login ou nome → liderança, gerência, campanha e segmento
+  const found = $('#r-found', m);
+  const applyOp = (fill) => {
+    const o = findOperator(val('#r-op'));
+    if (!val('#r-op')) { found.textContent = ''; found.className = 'qd-found'; return null; }
+    if (!o) { found.textContent = rosterRows.length ? 'Não encontrado no capacity: preencha liderança e campanha à mão.' : 'Anexe o capacity para preencher sozinho.'; found.className = 'qd-found warn'; return null; }
+    found.innerHTML = String(html`${icon('checkCircle')}${title(o.name)} · ${o.login} · ${o.status || (o.active ? 'ATIVO' : 'INATIVO')}${o.shift ? ` · ${o.shift}` : ''}`);
+    found.className = `qd-found ${o.active ? 'ok' : 'warn'}`;
+    if (fill) {
+      $('#r-ld', m).value = o.leader || '';
+      $('#r-mg', m).value = managerOf(o.leader) || '';
+      $('#r-cp', m).value = o.campaign || '';
+      $('#r-sg', m).value = o.segment || '';
+      $('#r-op', m).value = `${title(o.name)} · ${o.login}`;
+    }
+    return o;
+  };
+  $('#r-op', m).addEventListener('input', debounce(() => { const o = findOperator(val('#r-op')); if (o && (val('#r-op').includes('·') || o.login === val('#r-op').toLowerCase())) applyOp(true); else applyOp(false); }, 200));
+  $('#r-op', m).addEventListener('change', () => applyOp(true));
+  if (val('#r-op')) applyOp(false);
+  $('#r-ld', m).addEventListener('change', () => { if (!val('#r-mg') || D.leaders.some((l) => l.manager === val('#r-mg'))) $('#r-mg', m).value = managerOf(val('#r-ld')) || val('#r-mg'); });
+
+  $('#r-cid', m).addEventListener('change', () => {
+    const dup = D.rows.find((r) => r.contact_id && r.contact_id === val('#r-cid') && r.id !== id);
+    if (dup && !id) { toast(`O atendimento ${dup.contact_id} já está na força-tarefa: abrindo.`); close(); openReview(dup.id, queue); }
+    else if (dup) toast(`O ID ${dup.contact_id} já é de outro atendimento da força-tarefa.`, 'err');
+  });
+  $('#r-folder', m).onclick = () => openFolder();
+  $('#r-copy', m)?.addEventListener('click', async () => { try { await navigator.clipboard.writeText(row.audio_original || row.audio_file); toast('Nome do arquivo copiado: busque na pasta com Ctrl+F.'); } catch { toast('Não foi possível copiar.', 'err'); } });
+  $('#r-afile', m).onchange = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    if (f.size > 50 * 1024 * 1024) { toast('Áudio acima de 50 MB.', 'err'); e.target.value = ''; return; }
+    audioFile = f; $('#r-aname', m).textContent = `${f.name} · será anexado ao salvar`;
+  };
+  $('#r-play', m)?.addEventListener('click', async (e) => {
+    const btnEl = e.currentTarget;
+    busy(btnEl, true, 'Carregando');
+    try { const { url } = await api.get(`/quedas/${id}/audio`); btnEl.replaceWith(Object.assign(document.createElement('audio'), { src: url, controls: true, autoplay: true, className: 'qd-audio-el' })); }
+    catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
+  });
+  $('#r-adel', m)?.addEventListener('click', async () => {
+    if (!(await confirmDialog('Remover áudio', 'O arquivo anexado sai desta análise.', { ok: 'Remover', danger: true }))) return;
+    try { await api.del(`/quedas/${id}/audio`); $('#r-player', m)?.remove(); $('#r-aname', m).textContent = 'Anexar áudio (.wav, .mp3…)'; toast('Áudio removido.'); } catch (ex) { toast(ex.message, 'err'); }
+  });
+  $('#r-trfile', m).onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try { const t = await readTranscriptFile(f); $('#r-tr', m).value = t.text; transcriptName = t.name; $('#r-trname', m).textContent = `· ${t.name}`; }
+    catch (ex) { toast(ex.message, 'err'); }
+  };
+  $('#r-tr', m).addEventListener('input', () => { if (!$('#r-tr', m).value.trim()) transcriptName = ''; });
+  $('#r-del', m)?.addEventListener('click', async () => {
+    if (!(await confirmDialog('Excluir atendimento', 'O atendimento sai da força-tarefa, com a análise e os anexos.', { ok: 'Excluir', danger: true }))) return;
+    try { await api.post('/quedas/delete', { ids: [id] }); locked = false; close(); toast('Atendimento excluído.'); await fetchData(); draw(); } catch (ex) { toast(ex.message, 'err'); }
+  });
+
+  const save = async (btnEl, goNext) => {
+    const verdict = $('#r-verdict .qd-vd.on', m)?.dataset.v || null;
+    const o = findOperator(val('#r-op'));
+    const opText = val('#r-op');
+    if (!opText) { toast('Informe o login ou o nome do operador.', 'err'); $('#r-op', m).focus(); return; }
+    const conduct = $('#r-conduct', m).checked;
+    if (conduct && !$('#r-ctype', m).value) { toast('Escolha o tipo de desvio de conduta.', 'err'); $('#r-ctype', m).focus(); return; }
+    const tabOk = segVal('#r-tabok');
+    const dur = val('#r-dur');
+    const body = {
+      contact_id: val('#r-cid'), call_at: val('#r-at') ? `${val('#r-at').replace('T', ' ')}:00` : '', duration_sec: dur ? mmss(dur) : '',
+      tabulation: val('#r-tab'), disconnect: segVal('#r-disc'),
+      login: o ? o.login : /^[\w.-]+$/.test(opText) ? opText : '', operator_name: o ? o.name : /\s/.test(opText) ? opText.replace(/\s*·.*$/, '') : (row.operator_name || ''),
+      leader: val('#r-ld'), manager: val('#r-mg'), campaign: val('#r-cp'), segment: val('#r-sg'),
+      audio_url: val('#r-aurl'), transcript: $('#r-tr', m).value, transcript_name: transcriptName,
+      verdict, conduct, conduct_type: conduct ? $('#r-ctype', m).value : '', tab_correct: tabOk === '' ? null : tabOk === '1',
+      correct_tab: tabOk === '0' ? val('#r-ctab') : '', drop_moment: val('#r-mom'), notes: val('#r-notes'), force: true,
+    };
+    if (body.audio_url && !/^https:\/\//i.test(body.audio_url)) { toast('O link do áudio precisa começar com https://', 'err'); return; }
+    if (dur && body.duration_sec == null) { toast('Duração no formato m:ss (ex.: 2:35).', 'err'); return; }
+    busy(btnEl, true, 'Salvando');
+    try {
+      const saved = id ? await api.put(`/quedas/${id}`, body) : await api.post('/quedas', body);
+      if (audioFile) {
+        try { await api.upload(`/quedas/${saved.id}/audio?name=${encodeURIComponent(audioFile.name)}`, audioFile); }
+        catch (ex) { toast(`Análise salva, mas o áudio não foi anexado: ${ex.message}`, 'err', 6000); }
+      }
+      locked = false;
+      close();
+      toast(verdict ? `Análise salva${conduct ? ' · desvio de conduta registrado' : ''}.` : 'Atendimento salvo como pendente.');
+      await fetchData(); if (ROOT?.isConnected) draw();
+      if (goNext) { const n = next(); if (n) openReview(n.id, filtered().filter(inList)); else toast('Não há mais pendentes nesta lista.'); }
+    } catch (ex) { toast(ex.message, 'err', 5000); busy(btnEl, false); }
+  };
+  $('#r-save', m).onclick = (e) => save(e.currentTarget, false);
+  $('#r-savenext', m)?.addEventListener('click', (e) => save(e.currentTarget, true));
+}
+
+function canEditRow(r) {
+  return CTX.can('admin', 'qualidade') || r.status === 'pendente' || r.analyst_id === CTX.store.user.id || r.created_by === CTX.store.user.id;
+}
