@@ -11,6 +11,7 @@ import { normalizeRows } from './normalize.ts';
 import { importDashboard } from './dashboard.ts';
 import { importCalls } from './discador.ts';
 import { importSpeechAgv, importAgvDashboard, importAgvEsforco } from './agv.ts';
+import { registerQuedas } from './quedas.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
 
@@ -1461,7 +1462,7 @@ router.post('/admin/clear-demo', ADMIN, h(async (req, res) => {
 }));
 
 // Backup em JSON de todas as tabelas da plataforma (a chave da IA não é exportada)
-const BACKUP_TABLES = ['px_profiles', 'px_cycles', 'px_operators', 'px_criteria', 'px_evaluations', 'px_evaluation_items', 'px_feedbacks', 'px_bugs', 'px_audit_log', 'px_settings', 'px_notifications'];
+const BACKUP_TABLES = ['px_profiles', 'px_cycles', 'px_operators', 'px_criteria', 'px_evaluations', 'px_evaluation_items', 'px_feedbacks', 'px_bugs', 'px_audit_log', 'px_settings', 'px_notifications', 'px_roster', 'px_roster_leaders', 'px_drop_reviews'];
 router.get('/admin/backup', ADMIN, h(async (req, res) => {
   const out = { generated_at: nowIso(), source: 'PX Monitorias & Feedbacks', tables: {} };
   for (const t of BACKUP_TABLES) {
@@ -1481,6 +1482,9 @@ router.get('/export/evaluations', h(async (req, res) => {
 router.get('/export/feedbacks', h(async (req, res) => {
   res.json(await fetchAll(() => scoped(sb().from('px_v_feedbacks').select('*'), req).order('applied_at', { ascending: false }).order('id')));
 }));
+
+// --------------------------------------------------------------- Força-tarefa de quedas de ligação
+registerQuedas(router, { h, QUALITY, ADMIN });
 
 // --------------------------------------------------------------- Erros
 router.use((err, req, res, _next) => {

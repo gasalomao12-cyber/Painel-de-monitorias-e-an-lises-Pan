@@ -24,6 +24,7 @@ export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 // ---------------- Ícones (traço 2px, 24x24) ----------------
 const P = {
+  phoneOff: '<path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><path d="M22 2 2 22"/>',
   dashboard: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
   headset: '<path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 15a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2z"/><path d="M3 15a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/><path d="M18 17v1a3 3 0 0 1-3 3h-3"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
@@ -204,16 +205,16 @@ export function toast(msg, type = 'ok', ms = 3200) {
 }
 
 // ---------------- Modal ----------------
-export function modal({ title, body, foot, wide = false, onMount, dismissable = true }) {
+export function modal({ title, body, foot, wide = false, onMount, onClose, dismissable = true, cls = '' }) {
   const ov = document.createElement('div');
   ov.className = 'overlay';
-  ov.innerHTML = String(html`<div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${title}">
+  ov.innerHTML = String(html`<div class="modal ${wide ? 'wide' : ''} ${cls}" role="dialog" aria-modal="true" aria-label="${title}">
     <div class="modal-head"><h3>${title}</h3>${dismissable ? html`<button class="btn-icon" data-close aria-label="Fechar">${icon('x')}</button>` : ''}</div>
     <div class="modal-body">${body}</div>
     ${foot ? html`<div class="modal-foot">${foot}</div>` : ''}
   </div>`);
   document.body.appendChild(ov);
-  const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
+  const close = () => { if (!ov.isConnected) return; ov.remove(); document.removeEventListener('keydown', onKey); onClose?.(); };
   const onKey = (e) => { if (e.key === 'Escape' && dismissable) close(); };
   document.addEventListener('keydown', onKey);
   ov.addEventListener('mousedown', (e) => { if (e.target === ov && dismissable) close(); });

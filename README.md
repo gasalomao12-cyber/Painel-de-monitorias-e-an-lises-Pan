@@ -210,6 +210,37 @@ Marque as que quer tirar e exclua. Como funciona:
 - **Planilha de ações:** as linhas já enviadas continuam lá, sem o vínculo com a ligação.
 - **Auditoria:** a exclusão fica registrada.
 
+## Queda de ligação (força-tarefa)
+
+Aba **Queda de ligação** no menu lateral, para analisar à mão os atendimentos tabulados como queda
+(QUEDA LIGACAO CLIENTE, QUEDA DE LIGACAO…). Várias pessoas analisam ao mesmo tempo: quem abre um
+atendimento o reserva por 15 minutos ("em análise por…") e os números, gráficos e cards se atualizam
+sozinhos na tela de todos, mesmo com uma análise aberta.
+
+- **Capacity**: anexe o .xlsx do capacity (aba de ativos com OPERADOR, LOGIN, LIDERANÇA, CAMPANHA e
+  SEGMENTO). As abas de desligados, remanejados e afastados também são lidas. Cada capacity novo
+  troca a base: quem saiu fica inativo, mas continua nas análises antigas. Admin e Qualidade atualizam.
+- **Gerência**: o capacity não traz a gerência. Ela vem dos operadores já cadastrados na plataforma e
+  pode ser ajustada por liderança na janela Capacity; o ajuste vale também para os atendimentos já lançados.
+- **Operador**: digite o login ou o nome completo, com ou sem acento (ou escolha na lista suspensa).
+  Liderança, gerência, campanha/setor e segmento vêm sozinhos.
+- **CSV de metadados (opcional)**: o CSV do discador (IdContato, Campanha, Login, DataHoraLigacao,
+  Duracao, FINALIZACAO, NomeDoArquivo, TIPO DE DESCONEXÃO) vira a fila de atendimentos. Por padrão
+  só entram as tabulações de queda. Telefone e CPF não são guardados.
+- **Áudio e transcrição**: o botão "Pasta de áudios" abre a pasta do SharePoint (o link é salvo pela
+  própria aba, só no banco). Na análise dá para colar o link do arquivo, anexar o áudio (bucket privado
+  `px-quedas`, até 50 MB, ouvido por link assinado de 10 minutos) e anexar ou colar a transcrição.
+- **Resultado**: cliente desligou, operador desligou, queda técnica, ligação muda, atendimento seguiu
+  ou inconclusivo. "Operador desligou" é sempre desvio de conduta e gera o card do operador.
+  A tabulação de queda procede só quando o cliente ou a linha derrubou a ligação.
+- **Desconexão interna** é destacada nos números e na análise: a ligação foi encerrada do nosso lado,
+  então confirme no áudio se o cliente realmente abandonou.
+- **Permissões**: todos os perfis analisam os pendentes. Só a Qualidade e o admin alteram a análise de
+  outra pessoa, trocam o capacity e a gerência. Só o admin exclui análises feitas.
+
+Migração: `supabase/migrations/20261101120000_px_quedas.sql` (rode no SQL Editor se o deploy não
+aplicar migrações).
+
 ## Versão nova da plataforma
 
 Cada publicação gera `version.json`. Com a plataforma aberta, ela confere a cada 5 minutos e quando a aba volta a ficar ativa. Se houver versão nova, aparece **Atualizar agora**.

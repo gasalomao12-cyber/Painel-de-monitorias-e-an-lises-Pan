@@ -172,6 +172,30 @@ export async function parseSheetFile(file) {
   return out;
 }
 
+// Todas as abas de uma planilha (ex.: capacity com ATIVOS, DESLIGAMENTO, REMANEJADOS), cada uma com o cabeçalho
+// na primeira linha que tiver pelo menos duas colunas preenchidas
+export async function parseWorkbook(file) {
+  const ext = extOf(file.name);
+  if (ext === 'csv' || ext === 'txt') return [{ name: file.name, rows: parseCsv(await decodeText(file)) }];
+  if (ext !== 'xlsx') throw new Error('Envie um arquivo .xlsx ou .csv.');
+  const ExcelJS = await excel();
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await file.arrayBuffer());
+  return wb.worksheets.map((ws) => {
+    let head = null;
+    const rows = [];
+    ws.eachRow((r) => {
+      const cells = [];
+      r.eachCell({ includeEmpty: true }, (c, i) => { cells[i] = cellValue(c.value); });
+      if (!head) { if (cells.filter((v) => v !== null && v !== '').length >= 2) head = cells.map((v) => String(v ?? '').trim()); return; }
+      const o = {}; let any = false;
+      head.forEach((h, i) => { if (!h) return; const v = cells[i] ?? null; if (v !== null && v !== '') any = true; o[h] = v; });
+      if (any) rows.push(o);
+    });
+    return { name: ws.name, rows };
+  });
+}
+
 const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF141A33' } };
 function styleHeader(ws) {
   ws.getRow(1).eachCell((c) => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = HEADER_FILL; c.alignment = { vertical: 'middle' }; });
