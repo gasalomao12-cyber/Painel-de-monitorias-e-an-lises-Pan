@@ -1042,6 +1042,62 @@ router.get('/agv/data', h(async (req, res) => {
   });
 }));
 
+// Análises AGV importadas, por roteiro e análise (período do arquivo importado ou dia da ligação), para
+// o administrador conferir e excluir o que não quer mais na plataforma
+const AGV_ORIGIN = { discador: 'Lista do discador', speech: 'Relatório do speech', dash_agv: 'Dashboard por gerência (speech)', dash_agv_cmp: 'Dashboard comparativo', dash_agv_esf: 'Dashboard de esforço por carteira' };
+async function agvAnalysisRows() {
+  const crit = await must(sb().from('px_criteria').select('id, product').in('product', ['AGV', 'AGV2']));
+  if (!crit.length) return [];
+  const prodOf = new Map(crit.map((c) => [c.id, c.product]));
+  const items = await fetchAll(() => sb().from('px_evaluation_items').select('evaluation_id, criterion_id').in('criterion_id', crit.map((c) => c.id)).order('id'));
+  const rot = new Map();
+  for (const i of items) rot.set(i.evaluation_id, prodOf.get(i.criterion_id));
+  const ids = [...rot.keys()];
+  const evs = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    evs.push(...await must(sb().from('px_evaluations')
+      .select('id, call_date, source, status, created_at, transcript_name, periodo:details->esforco->>periodo, kit:details->feedback_kit->>mail, fonte:details->agv_source->>kind, speech_at:details->speech_agv->>at')
+      .in('id', ids.slice(i, i + 300))));
+  }
+  return evs.map((e) => {
+    const key = e.periodo ? `a:${e.periodo}` : e.call_date ? `d:${e.call_date}` : 'sem-data';
+    return { ...e, roteiro: rot.get(e.id), group: `${rot.get(e.id)}|${key}`, key, origem: AGV_ORIGIN[e.fonte] || (e.speech_at ? AGV_ORIGIN.speech : AGV_ORIGIN[e.source] || e.source || 'Outra') };
+  });
+}
+
+router.get('/agv/analyses', ADMIN, h(async (_req, res) => {
+  const rows = await agvAnalysisRows();
+  const G = new Map();
+  for (const r of rows) {
+    const g = G.get(r.group) || { group: r.group, roteiro: r.roteiro, key: r.key, label: r.key.startsWith('a:') ? r.key.slice(2) : r.key.startsWith('d:') ? r.key.slice(2) : 'Sem data', kind: r.key.startsWith('a:') ? 'periodo' : 'dia',
+      calls: 0, from: null, to: null, origins: {}, transcripts: 0, kits: 0, feedbacks: 0, pending: 0, imported_at: null };
+    g.calls++;
+    if (r.call_date && (!g.from || r.call_date < g.from)) g.from = r.call_date;
+    if (r.call_date && (!g.to || r.call_date > g.to)) g.to = r.call_date;
+    g.origins[r.origem] = (g.origins[r.origem] || 0) + 1;
+    if (r.transcript_name) g.transcripts++;
+    if (r.kit) g.kits++;
+    if (r.status === 'feedback_aplicado') g.feedbacks++;
+    if (r.status === 'pendente') g.pending++;
+    if (!g.imported_at || r.created_at > g.imported_at) g.imported_at = r.created_at;
+    G.set(r.group, g);
+  }
+  res.json([...G.values()].sort((a, b) => String(b.to || '').localeCompare(String(a.to || '')) || a.roteiro.localeCompare(b.roteiro)));
+}));
+
+router.post('/agv/analyses/delete', ADMIN, h(async (req, res) => {
+  const groups = new Set((Array.isArray(req.body?.groups) ? req.body.groups : []).map(String));
+  if (!groups.size) return res.status(400).json({ error: 'Escolha ao menos uma análise.' });
+  const keepFeedback = req.body?.keep_feedback !== false;
+  const rows = (await agvAnalysisRows()).filter((r) => groups.has(r.group));
+  const kept = keepFeedback ? rows.filter((r) => r.status === 'feedback_aplicado') : [];
+  const del = rows.filter((r) => !kept.includes(r)).map((r) => r.id);
+  // Itens, feedbacks e contestações saem junto (cascata); a linha da planilha de ações fica, sem o vínculo
+  for (let i = 0; i < del.length; i += 200) await must(sb().from('px_evaluations').delete().in('id', del.slice(i, i + 200)));
+  await audit(req.user.id, 'analise_agv_excluida', 'import', null, { analises: [...groups], ligacoes_excluidas: del.length, mantidas_com_feedback: kept.length });
+  res.json({ deleted: del.length, kept: kept.length });
+}));
+
 router.get('/reports/data', h(async (req, res) => {
   const q = req.query;
   const { evals, items } = await loadStatsRows(req, q);

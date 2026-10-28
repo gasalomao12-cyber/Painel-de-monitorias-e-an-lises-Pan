@@ -1,5 +1,5 @@
 import { api, qs } from '../api.js';
-import { html, raw, icon, $, $$, toast, modal, busy, fmtScore, fmtPct, fmtInt, fmtDate, deltaTag, band, emptyState, PRODUCT, ALERT, multiSelect, bindMultiSelect } from '../ui.js';
+import { html, raw, icon, $, $$, toast, modal, busy, fmtScore, fmtPct, fmtInt, fmtDate, deltaTag, band, emptyState, PRODUCT, ALERT, multiSelect, bindMultiSelect, confirmDialog } from '../ui.js';
 import { lineChart, barChart, radarChart, palette, legendHtml } from '../charts.js';
 import { parseSheetFile } from '../files.js';
 import { mapCalls, readDashboard } from './import.js';
@@ -133,6 +133,7 @@ export async function render(el, _p, ctx) {
       <p>Ligações das campanhas AGV: a assistente virtual atende e transfere para o operador. Cada ligação é avaliada no roteiro AGV, só pelo que o operador fez depois da transferência.</p></div>
       <div class="grow"></div>
       <button class="btn" id="agv-list">${icon('headset')}Ver ligações AGV</button>
+      ${ctx.can('admin') ? html`<button class="btn" id="agv-manage">${icon('trash')}Gerenciar análises</button>` : ''}
       ${quality ? html`<button class="btn primary" id="agv-import">${icon('upload')}Importar ligações e speech</button>` : ''}
     </div>
     <div class="filters" id="agv-filters"></div>
@@ -142,6 +143,7 @@ export async function render(el, _p, ctx) {
     ctx.navigate('atendimentos');
   };
   $('#agv-import')?.addEventListener('click', () => openImport(el, ctx));
+  $('#agv-manage')?.addEventListener('click', () => openManage(el, ctx));
   await load(el, ctx);
 }
 
@@ -520,5 +522,65 @@ function openImport(el, ctx) {
     }
     busy(btnEl, false);
     go.disabled = !files.calls && !files.speech && !files.dash.length;
+  };
+}
+
+// ------------------------------------------------------------------ Gerenciar análises (admin)
+// Lista as análises AGV importadas (por roteiro e por período do arquivo ou dia) e exclui as escolhidas
+const ROT_LABEL = { AGV2: 'Esforço negocial', AGV: 'Perguntas do speech' };
+async function openManage(el, ctx) {
+  let rows = [];
+  const m = modal({
+    title: 'Gerenciar análises AGV', wide: true,
+    body: html`<p class="small t2" style="margin-top:0">Cada linha é uma análise importada: o período do arquivo (ex.: “23 a 26/10”) ou o dia das ligações. Marque as que não quer mais na plataforma. As ligações saem junto com o roteiro, os feedbacks e as contestações delas; as linhas já enviadas à planilha de ações continuam lá.</p>
+      <div id="am-list"><div class="skeleton" style="height:160px"></div></div>
+      <label class="check mt"><input type="checkbox" id="am-keep" checked> Manter as ligações que já têm feedback aplicado</label>`,
+    foot: html`<span class="small t2" id="am-sum" style="margin-right:auto"></span><button class="btn ghost" data-close>Fechar</button><button class="btn danger" id="am-del" disabled>${icon('trash')}Excluir selecionadas</button>`,
+  });
+  const root = m.el;
+  const list = $('#am-list', root), sum = $('#am-sum', root), del = $('#am-del', root);
+  const chosen = () => $$('#am-list input[data-g]:checked', root).map((i) => i.dataset.g);
+  const refresh = () => {
+    const sel = new Set(chosen());
+    const pick = rows.filter((r) => sel.has(r.group));
+    const calls = pick.reduce((a, r) => a + r.calls, 0), fb = pick.reduce((a, r) => a + r.feedbacks, 0);
+    const keep = $('#am-keep', root).checked;
+    sum.textContent = pick.length ? `${pick.length} análise(s) · ${fmtInt(keep ? calls - fb : calls)} ligação(ões) serão excluídas${keep && fb ? ` · ${fb} com feedback ficam` : ''}` : '';
+    del.disabled = !pick.length;
+  };
+  const draw = () => {
+    if (!rows.length) { list.innerHTML = String(emptyState('zap', 'Nenhuma análise AGV na plataforma', 'As análises aparecem aqui depois de importar ligações AGV.')); return; }
+    const per = (r) => (r.kind === 'periodo' ? `Análise de ${r.label}` : `Dia ${fmtDate(r.label)}`);
+    list.innerHTML = String(html`<div class="table-wrap" style="max-height:440px;overflow:auto"><table class="tbl"><thead><tr>
+      <th style="width:30px"><input type="checkbox" id="am-all" aria-label="Marcar todas"></th><th>Análise</th><th>Roteiro</th><th class="right">Ligações</th><th>Datas</th><th>Origem</th><th class="right">Transcrição / material</th><th class="right">Com feedback</th><th>Importada em</th></tr></thead>
+      <tbody>${rows.map((r) => html`<tr>
+        <td><input type="checkbox" data-g="${r.group}" aria-label="Selecionar ${per(r)}"></td>
+        <td><b>${per(r)}</b></td><td><span class="chip ${r.roteiro === 'AGV2' ? 'brand' : 'outline'}">${ROT_LABEL[r.roteiro] || r.roteiro}</span></td>
+        <td class="right num">${fmtInt(r.calls)}</td>
+        <td class="small">${r.from === r.to ? fmtDate(r.from) : `${fmtDate(r.from)} a ${fmtDate(r.to)}`}</td>
+        <td class="small t2">${Object.entries(r.origins).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} (${v})`).join(' · ')}</td>
+        <td class="right num">${r.transcripts || r.kits ? `${fmtInt(Math.max(r.transcripts, r.kits))}` : html`<span class="muted">sem</span>`}</td>
+        <td class="right num">${r.feedbacks ? html`<span class="chip ok">${r.feedbacks}</span>` : '—'}</td>
+        <td class="small">${fmtDate(r.imported_at, true)}</td></tr>`)}</tbody></table></div>`);
+    $('#am-all', root).onchange = (e) => { $$('#am-list input[data-g]', root).forEach((i) => { i.checked = e.target.checked; }); refresh(); };
+    $$('#am-list input[data-g]', root).forEach((i) => i.addEventListener('change', refresh));
+    refresh();
+  };
+  $('#am-keep', root).onchange = refresh;
+  try { rows = await api.get('/agv/analyses'); draw(); } catch (ex) { list.innerHTML = ''; toast(ex.message, 'err'); }
+  del.onclick = async () => {
+    const sel = chosen();
+    const pick = rows.filter((r) => sel.includes(r.group));
+    const keep = $('#am-keep', root).checked;
+    const calls = pick.reduce((a, r) => a + r.calls - (keep ? r.feedbacks : 0), 0);
+    if (!(await confirmDialog('Excluir análises', `Vai excluir ${fmtInt(calls)} ligação(ões) de ${pick.length} análise(s), com o roteiro, os feedbacks e as contestações delas. Isso não pode ser desfeito.`, { ok: 'Excluir', danger: true }))) return;
+    busy(del, true, 'Excluindo');
+    try {
+      const r = await api.post('/agv/analyses/delete', { groups: sel, keep_feedback: keep });
+      rows = await api.get('/agv/analyses'); draw(); busy(del, false); refresh();
+      toast(`${fmtInt(r.deleted)} ligação(ões) excluída(s)${r.kept ? ` · ${r.kept} com feedback mantida(s)` : ''}.`, 'ok', 6000);
+      await ctx.refreshMeta();
+      if (ctx.isCurrent()) await load(el, ctx);
+    } catch (ex) { toast(ex.message, 'err', 7000); busy(del, false); }
   };
 }
