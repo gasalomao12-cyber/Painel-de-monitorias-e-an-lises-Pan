@@ -25,6 +25,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Versão publicada: a plataforma compara com a que está aberta e avisa quando há uma nova
+      - run: echo "{\"v\":\"${GITHUB_SHA}\",\"at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > public/version.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public

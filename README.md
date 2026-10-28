@@ -195,6 +195,25 @@ fica no campo desfecho da ligação.
 - **Telas:** Análises AGV e Esforço negocial filtram e comparam por análise, dia e semana.
 - **Migração:** `supabase/migrations/20261031120000_px_agv_analise_diaria.sql` tira da quinzena as ligações AGV que já estavam lá.
 
+## Excluir análises AGV (administrador)
+
+Na tela Análises AGV, o botão **Gerenciar análises** lista cada análise importada por roteiro (período do arquivo, ex.: "23 a 26/10", ou dia das ligações). Para cada uma mostra:
+- quantidade de ligações;
+- datas;
+- origem;
+- quantas têm transcrição ou material de feedback;
+- quantas já têm feedback aplicado.
+
+Marque as que quer tirar e exclua. Como funciona:
+- **Feedback aplicado:** por padrão, as ligações que já têm feedback ficam.
+- **O que sai junto:** roteiro, feedbacks e contestações da ligação.
+- **Planilha de ações:** as linhas já enviadas continuam lá, sem o vínculo com a ligação.
+- **Auditoria:** a exclusão fica registrada.
+
+## Versão nova da plataforma
+
+Cada publicação gera `version.json`. Com a plataforma aberta, ela confere a cada 5 minutos e quando a aba volta a ficar ativa. Se houver versão nova, aparece **Atualizar agora**.
+
 ## Filtros de seleção múltipla
 
 Todos os filtros de lista aceitam várias escolhas, por caixa de seleção, com busca, "Marcar todos", "Limpar" e "Aplicar":

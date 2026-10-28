@@ -16,6 +16,28 @@ export function applyTheme(t) {
 }
 applyTheme(localStorage.getItem('px_theme'));
 
+// ---------------- Versão nova ----------------
+// Cada publicação gera version.json; com a plataforma aberta, conferimos de tempos em tempos e ao voltar para a aba
+let loadedVersion = null;
+async function checkVersion() {
+  try {
+    const r = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+    if (!r.ok) return;
+    const { v } = await r.json();
+    if (!loadedVersion) { loadedVersion = v; return; }
+    if (v && v !== loadedVersion && !document.getElementById('new-version')) {
+      const bar = document.createElement('div');
+      bar.id = 'new-version'; bar.className = 'new-version';
+      bar.innerHTML = '<span>Há uma versão nova da plataforma.</span><button class="btn sm primary" type="button">Atualizar agora</button>';
+      bar.querySelector('button').onclick = () => location.reload();
+      document.body.appendChild(bar);
+    }
+  } catch { /* sem rede ou ambiente local sem version.json */ }
+}
+checkVersion();
+setInterval(checkVersion, 5 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkVersion(); });
+
 // ---------------- Navegação ----------------
 const NAV = [
   { sec: 'Visão geral' },

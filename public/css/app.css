@@ -647,3 +647,6 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .ms-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--border); margin-top: 6px; padding-top: 6px; }
 .ms-ok { background: var(--brand); color: #fff; padding: 6px 14px; }
 @media (max-width: 700px) { .ms, .ms-btn { max-width: 100%; } .ms-pop { min-width: 0; width: min(320px, calc(100vw - 32px)); } }
+
+/* Aviso de versão nova */
+.new-version { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 120; display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 18px; border-radius: 14px; background: var(--surface); border: 1px solid var(--brand); box-shadow: var(--shadow-lg, 0 18px 40px -12px rgba(0,0,0,.45)); font-size: 13.5px; font-weight: 600; color: var(--text); }
