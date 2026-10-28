@@ -122,7 +122,6 @@ const inList = (r) => (state.list === 'todos' ? true : state.list === 'desvio' ?
 
 function draw() {
   destroyAll();
-  const can = D.can_manage;
   const opts = (id, get, label = (v) => v) => {
     const m = new Map();
     for (const r of D.rows) { const v = String(get(r) ?? ''); if (v) m.set(v, (m.get(v) || 0) + 1); }
@@ -138,7 +137,7 @@ function draw() {
         <button class="btn sm" id="qd-cap">${icon('users')}Capacity${D.roster.length ? '' : html` <b class="qd-dot"></b>`}</button>
         <button class="btn sm primary" id="qd-new">${icon('plus')}Nova análise</button>
       </div></div>
-    ${!D.roster.length ? html`<div class="banner warn">${icon('alert')}<div><b>Anexe o capacity</b> para a plataforma trazer liderança, gerência e campanha ao digitar o login ou o nome do operador. ${can ? html`<button class="btn sm" id="qd-cap2">Anexar capacity</button>` : 'Peça para a Qualidade anexar.'}</div></div>` : ''}
+    ${!D.roster.length ? html`<div class="banner warn">${icon('alert')}<div><b>Anexe o capacity</b> para a plataforma trazer liderança, gerência e campanha ao digitar o login ou o nome do operador. <button class="btn sm" id="qd-cap2">Anexar capacity</button></div></div>` : ''}
     <div class="filters qd-filters" id="qd-filters">
       ${FILTERS.map(([id, all, noun, get]) => multiSelect({ id: `qf-${id}`, allLabel: all, noun, options: opts(id, get, labelOf[id]), selected: state.f[id] || [], cls: 'sm' }))}
       <input class="input sm" type="date" id="qd-from" value="${state.from}" aria-label="De"><input class="input sm" type="date" id="qd-to" value="${state.to}" aria-label="Até">
@@ -394,32 +393,63 @@ function folderDialog() {
 const hk = (s) => key(s).replace(/ /g, '');
 const col = (row, ...names) => { for (const [k, v] of Object.entries(row)) { const kk = hk(k); if (names.some((n) => (n.endsWith('*') ? kk.startsWith(n.slice(0, -1)) : kk === n))) return v; } return null; };
 
+// Colunas do capacity pelo sentido do cabeçalho (cada carteira usa nomes diferentes)
+const CAP_COLS = {
+  login: (k) => /login|usuario|^user/.test(k) && !/supervis|lider|gerent|coord/.test(k),
+  name: (k) => /^(operador|colaborador|nome|funcionario|agente|atendente|consultor|assessor)/.test(k) && !/supervis|lider|gerent|coord|cliente|destino|login/.test(k),
+  leader: (k) => /lider|supervis|coordena|^gestor|^sup$/.test(k) && !/destino|gerent/.test(k),
+  manager: (k) => /gerent|gerencia/.test(k),
+  campaign: (k) => /^(campanha|fila|celula|operacao|ilha)/.test(k),
+  segment: (k) => /^(segmento|carteira|produto)/.test(k) && !/destino/.test(k),
+  status: (k) => /^(situacao|status)/.test(k),
+  shift: (k) => /^(turno|horario)/.test(k),
+  registration: (k) => /^(nc|matricula|re|bpm|chapa)$/.test(k),
+  dest: (k) => /carteiradestino/.test(k),
+};
+const cleanLogin = (v) => String(v ?? '').trim().replace(/^.*\\/, '').replace(/@.*$/, '').replace(/\s+/g, '').toLowerCase();
+
 export function capacityRows(sheets) {
   const out = [];
   const summary = [];
-  for (const { name, rows } of sheets) {
-    if (!rows.length || col(rows[0], 'login') === undefined || !Object.keys(rows[0]).some((k) => hk(k) === 'login')) continue;
-    const kind = /deslig/i.test(name) ? 'DESLIGADO' : /remanej/i.test(name) ? 'REMANEJADO' : /afast/i.test(name) ? 'AFASTADO' : null;
+  const skipped = [];
+  for (const { name, matrix } of sheets) {
+    // Cabeçalho: a primeira linha (entre as 30 primeiras) com login e nome do operador
+    let hi = -1, map = null;
+    for (let i = 0; i < Math.min(matrix.length, 30) && hi < 0; i++) {
+      const keys = matrix[i].map((v) => hk(v));
+      const pick = (f) => keys.findIndex((k) => k && f(k));
+      const m = Object.fromEntries(Object.entries(CAP_COLS).map(([c, f]) => [c, pick(f)]));
+      if (m.login >= 0 && m.name >= 0) { hi = i; map = m; }
+    }
+    if (hi < 0) { skipped.push([name, (matrix.find((r) => r.filter((v) => v != null && v !== '').length >= 2) || []).filter((v) => v != null && v !== '').slice(0, 8).join(', ')]); continue; }
+    const head = matrix[hi];
+    const kind = /deslig|demit/i.test(name) ? 'DESLIGADO' : /remanej|transfer/i.test(name) ? 'REMANEJADO' : /afast/i.test(name) ? 'AFASTADO' : null;
+    const get = (r, c) => (map[c] >= 0 && r[map[c]] != null && String(r[map[c]]).trim() !== '' ? String(r[map[c]]).trim() : null);
     let n = 0;
-    for (const r of rows) {
-      const login = String(col(r, 'login') || '').trim();
-      const nm = String(col(r, 'operador', 'nome', 'colaborador', 'nomecompleto') || '').trim();
-      if (!login || !nm) continue;
-      const dest = col(r, 'carteiradestino');
+    for (const r of matrix.slice(hi + 1)) {
+      const login = cleanLogin(get(r, 'login'));
+      const nm = get(r, 'name');
+      if (!login || !nm || hk(nm) === hk(head[map.name])) continue;
+      const st = get(r, 'status');
+      const gone = kind === 'DESLIGADO' || kind === 'REMANEJADO' || /deslig|demit|remanej|transfer/i.test(st || '');
+      const dest = get(r, 'dest');
       out.push({
-        login, name: nm, registration: col(r, 'nc', 'matricula', 'bpm') != null ? String(col(r, 'nc', 'matricula', 'bpm')) : null,
-        shift: col(r, 'turno'), status: kind ? (kind === 'REMANEJADO' && dest ? `REMANEJADO · ${dest}` : kind) : String(col(r, 'situacao', 'status') || 'ATIVO'),
-        campaign: kind ? null : col(r, 'campanha*'), segment: kind ? null : col(r, 'segmento*', 'carteira'),
-        leader: col(r, 'lideranca', 'lider', 'supervisor', 'supervisao', 'coordenador'), active: !kind,
+        login, name: nm, registration: get(r, 'registration'), shift: get(r, 'shift'),
+        status: kind ? (kind === 'REMANEJADO' && dest ? `REMANEJADO · ${dest}` : kind) : (st || 'ATIVO'),
+        campaign: kind ? null : get(r, 'campaign'), segment: kind ? null : get(r, 'segment'),
+        leader: get(r, 'leader'), manager: kind ? null : get(r, 'manager'), active: !gone && kind !== 'AFASTADO',
       });
       n++;
     }
-    summary.push([name, n, kind]);
+    const used = Object.entries(map).filter(([c, i]) => i >= 0 && c !== 'dest').map(([c, i]) => `${CAP_LABEL[c]}: ${head[i]}`);
+    summary.push([name, n, kind, used]);
   }
-  return { rows: out, summary };
+  return { rows: out, summary, skipped };
 }
+const CAP_LABEL = { login: 'login', name: 'operador', leader: 'liderança', manager: 'gerência', campaign: 'campanha', segment: 'segmento', status: 'situação', shift: 'turno', registration: 'matrícula' };
 
 function openCapacity() {
+  // Cada um anexa o próprio capacity; gerências e pasta seguem a regra da carteira
   const canEdit = D.can_manage;
   const active = D.roster.filter((r) => r.active);
   const leaders = [...new Set(active.map((r) => r.leader).filter(Boolean))].sort();
@@ -433,10 +463,10 @@ function openCapacity() {
         <div><b>${D.roster_updated_at ? fmtRel(D.roster_updated_at) : '—'}</b><span>${D.roster_file || 'nenhum capacity anexado'}</span></div>
       </div>
       <p class="tiny muted" style="margin:-4px 0 12px">${D.roster_own ? 'Você está usando o seu próprio capacity.' : D.roster.length ? `Você está usando o capacity de outra pessoa da carteira ${D.portfolio}. Anexe o seu para usar só o seu.` : ''} O capacity que você anexar vale só para você${D.portfolio !== 'PAN' ? ` (e como reserva para a carteira ${D.portfolio})` : ' (e como reserva para a carteira PAN)'}: não muda o de outros usuários nem o de outras carteiras.</p>
-      ${canEdit ? html`<label class="qd-drop" id="qd-capdrop">${icon('upload')}<span><b>Anexar capacity atualizado</b><small>.xlsx com a aba de ativos (OPERADOR, LOGIN, LIDERANÇA, CAMPANHA, SEGMENTO). Abas de desligados e remanejados também são lidas.</small></span><input type="file" accept=".xlsx,.csv" id="qd-capfile" hidden></label>
-        <div id="qd-cappv"></div>` : ''}
+      <label class="qd-drop" id="qd-capdrop">${icon('upload')}<span><b>Anexar capacity atualizado</b><small>.xlsx ou .csv com login e nome do operador (e, se tiver, liderança, gerência, campanha e segmento). Vale só para você; abas de desligados e remanejados também são lidas.</small></span><input type="file" accept=".xlsx,.xlsm,.xls,.csv" id="qd-capfile" hidden></label>
+        <div id="qd-cappv"></div>
       <h4 class="qd-h4">Gerência de cada liderança</h4>
-      <p class="tiny muted" style="margin-top:-4px">O capacity não traz a gerência.${D.portfolio === 'PAN' ? ' Ela vem dos operadores já cadastrados na plataforma; ajuste aqui quando precisar.' : ' Preencha a gerência de cada liderança da carteira.'} Vale também para os atendimentos já lançados.</p>
+      <p class="tiny muted" style="margin-top:-4px">Quando o capacity tem a coluna de gerência, ela entra sozinha.${D.portfolio === 'PAN' ? ' Sem ela, a gerência vem dos operadores já cadastrados na plataforma; ajuste aqui quando precisar.' : ' Sem ela, preencha a gerência de cada liderança da carteira.'} Vale também para os atendimentos já lançados.</p>
       ${leaders.length ? html`<div class="qd-leaders">${leaders.map((l) => html`<div class="qd-leader"><span><b>${title(l)}</b><small>${active.filter((r) => r.leader === l).length} operador(es) · ${[...new Set(active.filter((r) => r.leader === l).map((r) => title(r.segment)).filter(Boolean))].join(', ')}</small></span>
         <input class="input sm" list="qd-mgrs" data-leader="${l}" value="${managerOf(l)}" placeholder="Gerência" ${canEdit ? '' : 'disabled'}></div>`)}</div><datalist id="qd-mgrs">${mgrs.map((m) => html`<option value="${m}">`)}</datalist>` : html`<p class="qd-none">Anexe o capacity para listar as lideranças.</p>`}
       ${canEdit ? html`<h4 class="qd-h4">Pasta de áudios da carteira ${D.portfolio}</h4><div class="row" style="gap:8px"><input class="input sm" id="qd-furl2" value="${D.folder || ''}" placeholder="Link da pasta no SharePoint" style="flex:1"><button class="btn sm" id="qd-fsave2">Salvar link</button></div>` : ''}`,
@@ -455,15 +485,22 @@ function openCapacity() {
         const pv = $('#qd-cappv', m);
         pv.innerHTML = '<p class="qd-none">Lendo o capacity…</p>';
         try {
-          const { rows, summary } = capacityRows(await parseWorkbook(file));
+          const { rows, summary, skipped } = capacityRows(await parseWorkbook(file));
           const act = rows.filter((r) => r.active);
-          if (!act.length) throw new Error('Não encontrei a aba de ativos com as colunas OPERADOR e LOGIN.');
-          const cur = new Set(D.roster.filter((r) => r.active && (D.roster_own ? r.scope === D.me : true)).map((r) => r.login));
+          if (!act.length) {
+            pv.innerHTML = String(html`<div class="qd-pv qd-pv-err"><p><b>Não encontrei operadores ativos em ${file.name}.</b> O capacity precisa ter uma coluna de login (LOGIN, LOGIN OLOS, USUÁRIO…) e uma de nome (OPERADOR, NOME, COLABORADOR…), em qualquer linha do topo.</p>
+              <ul>${[...summary.map(([n, c, k, used]) => html`<li>${n}: ${c} linha(s)${k ? ` (${k.toLowerCase()})` : ''} · ${used.join(' · ')}</li>`), ...skipped.map(([n, h]) => html`<li>${n}: colunas não reconhecidas${h ? html` · começa com <i>${h}</i>` : ' · aba vazia'}</li>`)]}</ul></div>`);
+            return;
+          }
+          const cur = new Set(D.roster.filter((r) => r.active && r.scope === D.me).map((r) => r.login));
           const nw = new Set(act.map((r) => r.login.toLowerCase()));
           const added = [...nw].filter((l) => !cur.has(l)).length;
           const left = [...cur].filter((l) => !nw.has(l)).length;
-          pv.innerHTML = String(html`<div class="qd-pv"><p><b>${file.name}</b></p><ul>${summary.map(([n, c, k]) => html`<li>${n}: <b>${c}</b> ${k ? `(${k.toLowerCase()})` : 'ativos'}</li>`)}</ul>
-            ${D.roster.length ? html`<p class="tiny">${added} entram, ${left} saem do ativo (continuam nas análises antigas).</p>` : ''}
+          const sample = act.slice(0, 3).map((r) => `${title(r.name)} · ${r.login}${r.leader ? ` · ${short(r.leader)}` : ''}${r.campaign ? ` · ${r.campaign}` : ''}`);
+          pv.innerHTML = String(html`<div class="qd-pv"><p><b>${file.name}</b></p><ul>${summary.map(([n, c, k, used]) => html`<li>${n}: <b>${c}</b> ${k ? `(${k.toLowerCase()})` : 'operador(es)'}<small class="qd-cols">${used.join(' · ')}</small></li>`)}${skipped.map(([n]) => html`<li class="muted">${n}: ignorada (sem login e nome)</li>`)}</ul>
+            <p class="tiny">Exemplo: ${sample.join(' | ')}</p>
+            ${act.some((r) => !r.leader) ? html`<p class="tiny" style="color:var(--warn-ink)">${act.filter((r) => !r.leader).length} operador(es) sem liderança no arquivo.</p>` : ''}
+            ${D.roster_own ? html`<p class="tiny">No seu capacity: ${added} entram, ${left} saem do ativo (continuam nas análises antigas).</p>` : ''}
             <button class="btn primary sm" id="qd-capgo">${icon('check')}Atualizar ${act.length} operadores ativos</button></div>`);
           $('#qd-capgo', pv).onclick = async (ev) => {
             const btnEl = ev.currentTarget;

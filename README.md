@@ -217,9 +217,12 @@ Aba **Queda de ligação** no menu lateral, para analisar à mão os atendimento
 atendimento o reserva por 15 minutos ("em análise por…") e os números, gráficos e cards se atualizam
 sozinhos na tela de todos, mesmo com uma análise aberta.
 
-- **Capacity**: anexe o .xlsx do capacity (aba de ativos com OPERADOR, LOGIN, LIDERANÇA, CAMPANHA e
-  SEGMENTO). As abas de desligados, remanejados e afastados também são lidas. Cada capacity novo
-  troca a base: quem saiu fica inativo, mas continua nas análises antigas. Admin e Qualidade atualizam.
+- **Capacity**: anexe o .xlsx ou .csv do capacity. A plataforma acha sozinha a linha do cabeçalho (mesmo com
+  título em cima) e reconhece as colunas pelo sentido: login (LOGIN, LOGIN OLOS, USUÁRIO…), nome (OPERADOR,
+  NOME DO OPERADOR, COLABORADOR…), liderança (LIDERANÇA, SUPERVISOR(A), COORDENADOR…), gerência (GERENTE),
+  campanha, segmento/carteira, situação e turno. Logins com domínio ou e-mail são limpos. A prévia mostra as
+  colunas usadas e, se não reconhecer o arquivo, o que encontrou. Abas de desligados e remanejados também são
+  lidas. Qualquer perfil anexa o próprio capacity; .xls antigo precisa ser salvo como .xlsx.
 - **Gerência**: o capacity não traz a gerência. Ela vem dos operadores já cadastrados na plataforma e
   pode ser ajustada por liderança na janela Capacity; o ajuste vale também para os atendimentos já lançados.
 - **Operador**: digite o login ou o nome completo, com ou sem acento (ou escolha na lista suspensa).
