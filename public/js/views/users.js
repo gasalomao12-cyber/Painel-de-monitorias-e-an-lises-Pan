@@ -14,10 +14,11 @@ export async function render(el, _p, ctx) {
     <div class="page-head"><div><h2>Usuários &amp; acessos</h2><p>Crie acessos para Qualidade e Supervisão. A senha temporária é trocada no primeiro login.</p></div><div class="grow"></div>
       <button class="btn primary" id="u-new">${icon('plus')}Novo acesso</button></div>
     <div class="grid g-3 mb">${Object.entries(ROLE).map(([k, v]) => html`<div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon(k === 'admin' ? 'shield' : k === 'qualidade' ? 'edit' : 'users')}</span><div><b>${v}</b> <span class="chip">${users.filter((u) => u.role === k && u.active).length}</span><div class="small t2">${ROLE_DESC[k]}</div></div></div>`)}</div>
-    <div class="card"><div class="table-wrap"><table class="tbl"><thead><tr><th>Usuário</th><th>E-mail (login)</th><th>Perfil</th><th>Status</th><th>Último acesso</th><th></th></tr></thead>
+    <div class="card"><div class="table-wrap"><table class="tbl"><thead><tr><th>Usuário</th><th>E-mail (login)</th><th>Perfil</th><th>Carteira</th><th>Status</th><th>Último acesso</th><th></th></tr></thead>
       <tbody>${users.map((u) => html`<tr style="${u.active ? '' : 'opacity:.55'}">
         <td><div class="who">${avatar(u.display_name || u.name, 'sm')}<div><b>${u.name}</b><span>${u.display_name ? `chamado de “${u.display_name}”` : ''}</span></div></div></td>
         <td class="small">${u.email}</td><td><span class="chip ${u.role === 'admin' ? 'brand' : u.role === 'qualidade' ? 'info' : ''}">${ROLE[u.role]}</span></td>
+        <td>${u.portfolio ? html`<span class="chip warn">${u.portfolio}</span>` : html`<span class="chip outline">PAN</span>`}</td>
         <td>${u.active ? (u.must_change_password ? html`<span class="chip warn">Aguardando 1º acesso</span>` : html`<span class="chip ok">Ativo</span>`) : html`<span class="chip">Inativo</span>`}</td>
         <td class="small muted">${u.last_login ? fmtRel(u.last_login) : 'nunca'}</td>
         <td class="right nowrap"><button class="btn sm ghost" data-reset="${u.id}">${icon('key')}Resetar senha</button><button class="btn-icon" data-e="${u.id}" aria-label="Editar">${icon('edit')}</button></td></tr>`)}</tbody></table></div></div>`);
@@ -51,6 +52,8 @@ function edit(u, done, ctx) {
       <div class="field"><label for="u-name">Nome completo</label><input class="input" id="u-name" name="name" required value="${u?.name || ''}"></div>
       <div class="field"><label for="u-email">E-mail corporativo (usado no login)</label><input class="input" id="u-email" name="email" type="email" required value="${u?.email || ''}" placeholder="nome.sobrenome@paschoalotto.com.br"></div>
       <div class="field"><span class="lbl">Perfil de acesso</span><div class="stack" style="gap:8px">${Object.entries(ROLE).map(([k, v]) => html`<label class="theme-opt ${(u?.role || 'supervisor') === k ? 'on' : ''}" style="align-items:flex-start"><input type="radio" name="role" value="${k}" ${(u?.role || 'supervisor') === k ? 'checked' : ''} style="accent-color:var(--brand);margin-top:3px"><div><b>${v}</b><div class="tiny muted">${ROLE_DESC[k]}</div></div></label>`)}</div></div>
+      <div class="field"><label for="u-pf">Carteira</label><input class="input" id="u-pf" name="portfolio" list="u-pfs" value="${u?.portfolio || 'PAN'}" placeholder="PAN"><datalist id="u-pfs"><option value="PAN"><option value="SAFRA"></datalist>
+        <span class="hint">Na força-tarefa de queda de ligação, cada carteira tem o próprio capacity e as análises saem marcadas com a carteira de quem analisou.</span></div>
       ${u ? html`<label class="switch"><input type="checkbox" name="active" ${u.active ? 'checked' : ''} ${u.id === ctx.store.user.id ? 'disabled' : ''}> Acesso ativo</label>` : ''}
     </form>`,
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="u-ok">${u ? 'Salvar' : 'Criar acesso'}</button>`,
@@ -59,7 +62,7 @@ function edit(u, done, ctx) {
       $('#u-ok', m).onclick = async (e) => {
         const btnEl = e.currentTarget;
         const f = $('#u-form', m); if (!f.reportValidity()) return;
-        const body = { name: f.name.value, email: f.email.value, role: f.role.value };
+        const body = { name: f.name.value, email: f.email.value, role: f.role.value, portfolio: f.portfolio.value };
         busy(btnEl, true);
         try {
           if (u) { await api.put(`/users/${u.id}`, { ...body, active: f.active.checked }); toast('Usuário atualizado.'); close(); }

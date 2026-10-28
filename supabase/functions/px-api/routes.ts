@@ -1241,6 +1241,8 @@ router.post('/notifications/read', h(async (req, res) => {
 }));
 
 // --------------------------------------------------------------- Usuários (Supabase Auth + px_profiles)
+// Carteira do usuário na força-tarefa de queda (vazio ou PAN = PAN)
+const portfolioField = (v) => { const p = String(v || '').trim().toUpperCase().replace(/[^A-Z0-9 _-]/g, '').slice(0, 30); return p && p !== 'PAN' ? p : null; };
 router.get('/users', ADMIN, h(async (req, res) => {
   const rows = await must(sb().from('px_profiles').select('*').order('active', { ascending: false }).order('name'));
   res.json(rows.map(auth.publicUser));
@@ -1262,7 +1264,7 @@ router.post('/users', ADMIN, h(async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     user = data.user;
   }
-  const profile = await must(sb().from('px_profiles').insert({ id: user.id, email, name: String(b.name).trim(), role: b.role, must_change_password: !!temp }).select().single());
+  const profile = await must(sb().from('px_profiles').insert({ id: user.id, email, name: String(b.name).trim(), role: b.role, must_change_password: !!temp, portfolio: portfolioField(b.portfolio) }).select().single());
   await audit(req.user.id, 'usuario_criado', 'user', null, { email, perfil: b.role, conta_existente: !temp });
   res.json({ user: auth.publicUser(profile), temp_password: temp, existing_account: !temp });
 }));
@@ -1287,8 +1289,9 @@ router.put('/users/:id', ADMIN, h(async (req, res) => {
     const { error } = await sb().auth.admin.updateUserById(id, authPatch);
     if (error) return res.status(400).json({ error: error.message });
   }
-  const saved = await must(sb().from('px_profiles').update({ name: String(b.name || u.name).trim(), email, role, active }).eq('id', id).select().single());
-  await audit(req.user.id, 'usuario_editado', 'user', null, { email, perfil: role, ativo: active });
+  const portfolio = b.portfolio === undefined ? u.portfolio : portfolioField(b.portfolio);
+  const saved = await must(sb().from('px_profiles').update({ name: String(b.name || u.name).trim(), email, role, active, portfolio }).eq('id', id).select().single());
+  await audit(req.user.id, 'usuario_editado', 'user', null, { email, perfil: role, ativo: active, carteira: portfolio || 'PAN' });
   res.json(auth.publicUser(saved));
 }));
 

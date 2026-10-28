@@ -238,8 +238,20 @@ sozinhos na tela de todos, mesmo com uma análise aberta.
 - **Permissões**: todos os perfis analisam os pendentes. Só a Qualidade e o admin alteram a análise de
   outra pessoa, trocam o capacity e a gerência. Só o admin exclui análises feitas.
 
-Migração: `supabase/migrations/20261101120000_px_quedas.sql` (rode no SQL Editor se o deploy não
-aplicar migrações).
+**Carteiras (ex.: SAFRA)**: em Usuários & acessos, o campo **Carteira** separa quem analisa outra carteira
+(vazio = PAN).
+- Cada usuário anexa o próprio capacity: ele vale só para quem anexou e não muda o de outras pessoas nem o
+  de outras carteiras. Quem ainda não anexou usa o capacity mais recente de alguém da mesma carteira.
+- Os atendimentos importados ou lançados ficam com a carteira de quem importou. O mesmo IdContato pode
+  existir em carteiras diferentes.
+- O painel soma todas as carteiras para todo mundo. Cada atendimento, analista, card de desvio e liderança
+  mostra a carteira, e o filtro **Carteira** separa as análises.
+- Cada carteira altera só os próprios atendimentos; os das outras abrem só para consulta (o admin pode tudo).
+- Gerências e pasta de áudios são por carteira. Nas carteiras fora da PAN, as próprias analistas cuidam do
+  capacity, das gerências e da pasta; na PAN, continuam a Qualidade e o admin.
+
+Migrações: `supabase/migrations/20261101120000_px_quedas.sql` e `20261102120000_px_quedas_carteiras.sql`
+(rode no SQL Editor se o deploy não aplicar migrações).
 
 ## Versão nova da plataforma
 
