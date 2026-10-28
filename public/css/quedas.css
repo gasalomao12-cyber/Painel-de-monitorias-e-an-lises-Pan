@@ -115,7 +115,7 @@
 .qd-fgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 12px; }
 .qd-fgrid .field { margin-bottom: 12px; min-width: 0; }
 .qd-sec .input, .qd-sec .select, .qd-sec .textarea { padding: 8px 10px; font-size: 13px; }
-.qd-sec .seg { align-self: flex-start; }
+.qd-sec .seg { align-self: flex-start; max-width: 100%; flex-wrap: wrap; }
 .qd-sec .seg button { padding: 6px 10px; font-size: 12px; }
 .qd-ro { font-size: 12.5px; color: var(--text-2); padding: 8px 0; }
 .qd-hint { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; margin: -2px 0 12px; padding: 8px 10px; border-radius: var(--radius-xs); }
@@ -177,3 +177,9 @@
   .qd-leader { grid-template-columns: 1fr; }
   .qd-cap-top { grid-template-columns: 1fr; }
 }
+
+/* Carteira (PAN, SAFRA…) em cada análise */
+.chip.qd-pf { padding: 0 6px; font-size: 9.5px; letter-spacing: .04em; vertical-align: 1px; }
+.qd-pf-me { font-size: 11px; vertical-align: 4px; margin-left: 6px; }
+.qd-ro-f { opacity: .75; cursor: default; }
+.qd-vd.qd-ro-f:hover { border-color: var(--border-strong); }

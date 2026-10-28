@@ -40,7 +40,7 @@ export function publicUser(u) {
   return {
     id: u.id, email: u.email, name: u.name, display_name: u.display_name, role: u.role,
     must_change_password: !!u.must_change_password, onboarded: !!u.onboarded, active: !!u.active,
-    theme: u.theme, created_at: u.created_at, last_login: u.last_login,
+    theme: u.theme, created_at: u.created_at, last_login: u.last_login, portfolio: u.portfolio || null,
   };
 }
 

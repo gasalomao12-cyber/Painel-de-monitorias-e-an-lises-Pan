@@ -32,6 +32,7 @@ const mmss = (s) => { const m = String(s || '').trim().match(/^(?:(\d+):)?(\d{1,
 
 const state = { f: {}, from: '', to: '', q: '', list: 'todos', page: 0 };
 const FILTERS = [
+  ['portfolio', 'Todas as carteiras', 'carteiras', (r) => r.portfolio || 'PAN'],
   ['manager', 'Todas as gerências', 'gerências', (r) => r.manager],
   ['leader', 'Todas as lideranças', 'lideranças', (r) => r.leader],
   ['login', 'Todos os operadores', 'operadores', (r) => r.login],
@@ -78,6 +79,10 @@ async function fetchData() {
   roster = new Map(D.roster.map((r) => [r.login, r]));
 }
 
+// Carteira: aparece em cada análise quando há mais de uma na força-tarefa
+const multi = () => new Set(D.rows.map((r) => r.portfolio || 'PAN')).size > 1 || D.portfolio !== 'PAN';
+const pfChip = (pf, force = false) => ((force || multi()) ? html`<span class="chip qd-pf ${(pf || 'PAN') === 'PAN' ? 'outline' : 'warn'}">${pf || 'PAN'}</span>` : '');
+const mine = (r) => (r.portfolio || 'PAN') === D.portfolio;
 const managerOf = (leader) => D.leaders.find((l) => key(l.leader) === key(leader))?.manager || '';
 const managers = () => [...new Set([...D.leaders.map((l) => l.manager), ...(CTX.store.meta.operators || []).map((o) => o.manager_name)].filter(Boolean))].sort();
 
@@ -117,7 +122,7 @@ const inList = (r) => (state.list === 'todos' ? true : state.list === 'desvio' ?
 
 function draw() {
   destroyAll();
-  const can = CTX.can('admin', 'qualidade');
+  const can = D.can_manage;
   const opts = (id, get, label = (v) => v) => {
     const m = new Map();
     for (const r of D.rows) { const v = String(get(r) ?? ''); if (v) m.set(v, (m.get(v) || 0) + 1); }
@@ -125,7 +130,7 @@ function draw() {
   };
   const labelOf = { login: (v) => `${title(roster.get(v)?.name || D.rows.find((r) => r.login === v)?.operator_name || v)} · ${v}`, verdict: (v) => VERDICT[v]?.[0] || 'Pendente', leader: title, manager: title, analyst: (v) => v };
   ROOT.innerHTML = String(html`<div class="qd">
-    <div class="page-head qd-head"><div><h2>Queda de ligação</h2><p>Força-tarefa: ouça o áudio, confirme quem encerrou a ligação e se a tabulação de queda procede. Os números atualizam sozinhos para todo mundo.</p></div>
+    <div class="page-head qd-head"><div><h2>Queda de ligação ${D.portfolio !== 'PAN' || multi() ? html`<span class="chip qd-pf-me ${D.portfolio === 'PAN' ? 'outline' : 'warn'}" title="Sua carteira">${D.portfolio}</span>` : ''}</h2><p>Força-tarefa: ouça o áudio, confirme quem encerrou a ligação e se a tabulação de queda procede. Os números atualizam sozinhos para todo mundo.</p></div>
       <div class="grow"></div>
       <div class="qd-actions">
         <button class="btn sm" id="qd-folder">${icon('folder')}Pasta de áudios</button>
@@ -147,7 +152,7 @@ function draw() {
   $('#qd-to', ROOT).onchange = (e) => { state.to = e.target.value; state.page = 0; draw(); };
   $('#qd-q', ROOT).addEventListener('input', debounce((e) => { state.q = e.target.value; state.page = 0; drawBody(); }, 250));
   $('#qd-clear', ROOT)?.addEventListener('click', () => { state.f = {}; state.from = ''; state.to = ''; state.q = ''; state.page = 0; draw(); });
-  $('#qd-folder', ROOT).onclick = openFolder;
+  $('#qd-folder', ROOT).onclick = () => openFolder();
   $('#qd-csv', ROOT).onclick = openImport;
   $('#qd-cap', ROOT).onclick = openCapacity;
   $('#qd-cap2', ROOT)?.addEventListener('click', openCapacity);
@@ -232,9 +237,10 @@ function discBlock(rows) {
 function byOperator(rows) {
   const m = new Map();
   for (const r of rows) {
-    const k = r.login || key(r.operator_name);
-    if (!k) continue;
-    const o = m.get(k) || m.set(k, { login: r.login, name: r.operator_name || roster.get(r.login)?.name || r.login, leader: r.leader, manager: r.manager, campaign: r.campaign, rows: [] }).get(k);
+    const k0 = r.login || key(r.operator_name);
+    if (!k0) continue;
+    const k = `${r.portfolio || 'PAN'}|${k0}`;
+    const o = m.get(k) || m.set(k, { portfolio: r.portfolio || 'PAN', login: r.login, name: r.operator_name || roster.get(r.login)?.name || r.login, leader: r.leader, manager: r.manager, campaign: r.campaign, rows: [] }).get(k);
     o.rows.push(r);
   }
   return [...m.values()];
@@ -246,7 +252,7 @@ function offenders(done) {
   if (!ops.length) return html`<p class="qd-none">${done.length ? 'Nenhum desvio ou tabulação incorreta até agora.' : 'Os ofensores aparecem conforme as análises são salvas.'}</p>`;
   const max = Math.max(...ops.map((o) => o.conduct + o.wrong));
   return html`<ol class="qd-off">${ops.map((o) => html`<li><button data-op="${o.login || ''}">
-    <span class="qd-off-n"><b>${short(o.name)}</b><small>${o.login || ''} · ${short(o.leader) || 'sem liderança'}</small></span>
+    <span class="qd-off-n"><b>${short(o.name)} ${pfChip(o.portfolio)}</b><small>${o.login || ''} · ${short(o.leader) || 'sem liderança'}</small></span>
     <span class="qd-off-bar"><i class="c" style="width:${(o.conduct / max) * 100}%"></i><i class="w" style="width:${((o.wrong - Math.min(o.wrong, o.conduct)) / max) * 100}%"></i></span>
     <span class="qd-off-v num">${o.conduct ? html`<em class="bad">${o.conduct}</em>` : ''}${o.wrong}/${o.rows.length}</span></button></li>`)}</ol>
     <p class="qd-foot"><i class="dot bad"></i>desvio de conduta · <i class="dot warn"></i>tabulação incorreta · número = incorretas/analisadas</p>`;
@@ -277,7 +283,7 @@ function drawScatter(done, rows) {
 function conductCards(conduct) {
   if (!conduct.length) return '';
   const ops = byOperator(conduct).sort((a, b) => b.rows.length - a.rows.length);
-  const totalOf = (o) => D.rows.filter((r) => r.login === o.login && r.status === 'analisada').length;
+  const totalOf = (o) => D.rows.filter((r) => r.login === o.login && (r.portfolio || 'PAN') === o.portfolio && r.status === 'analisada').length;
   return html`<section class="qd-conduct"><div class="qd-ch"><h3>${icon('alert')}Desvios de conduta</h3><span class="sub">operadores que desligaram com o cliente na linha</span></div>
     <div class="qd-cards">${ops.map((o) => {
       const types = {};
@@ -285,7 +291,7 @@ function conductCards(conduct) {
       const last = o.rows.map((r) => r.call_at || r.analyzed_at).sort().pop();
       const int = o.rows.filter((r) => r.disconnect === 'Interna').length;
       return html`<article class="qd-op">
-        <header>${avatar(title(o.name), 'sm')}<div><b>${title(o.name)}</b><small>${o.login || '—'} · ${title(o.leader) || 'sem liderança'}${o.manager ? ` · ${title(o.manager)}` : ''}</small></div><span class="qd-op-n num" title="desvios / analisados">${o.rows.length}<small>/${totalOf(o)}</small></span></header>
+        <header>${avatar(title(o.name), 'sm')}<div><b>${title(o.name)} ${pfChip(o.portfolio)}</b><small>${o.login || '—'} · ${title(o.leader) || 'sem liderança'}${o.manager ? ` · ${title(o.manager)}` : ''}</small></div><span class="qd-op-n num" title="desvios / analisados">${o.rows.length}<small>/${totalOf(o)}</small></span></header>
         <div class="qd-op-tags">${Object.entries(types).map(([t, n]) => html`<span class="chip bad">${t}${n > 1 ? ` · ${n}` : ''}</span>`)}${int ? html`<span class="chip outline">${int} interna(s)</span>` : ''}</div>
         <footer><span>Último: ${dt(last)}</span><button class="btn sm ghost" data-op="${o.login || ''}" data-list="desvio">Ver atendimentos${icon('chevRight')}</button></footer>
       </article>`;
@@ -295,13 +301,13 @@ function conductCards(conduct) {
 function byLeader(rows) {
   const m = new Map();
   for (const r of rows) {
-    const k = r.leader || '—';
-    const o = m.get(k) || m.set(k, { leader: r.leader, manager: r.manager, rows: [] }).get(k);
+    const k = `${r.portfolio || 'PAN'}|${r.leader || '—'}`;
+    const o = m.get(k) || m.set(k, { portfolio: r.portfolio || 'PAN', leader: r.leader, manager: r.manager, rows: [] }).get(k);
     o.rows.push(r);
   }
   const list = [...m.values()].map((o) => { const s = stats(o.rows); return { ...o, s }; }).sort((a, b) => b.s.conduct.length - a.s.conduct.length || b.rows.length - a.rows.length);
   return html`<div class="table-wrap qd-tbl-wrap"><table class="tbl qd-tbl"><thead><tr><th>Liderança</th><th class="right">Quedas</th><th class="right">Analisadas</th><th class="right">Desvios</th><th class="right">Incorreta</th><th class="right">Interna</th></tr></thead>
-    <tbody>${list.map((o) => html`<tr class="click" data-ld="${o.leader || ''}"><td><b>${short(o.leader) || 'Sem liderança'}</b><small>${title(o.manager) || 'gerência a definir'}</small></td>
+    <tbody>${list.map((o) => html`<tr class="click" data-ld="${o.leader || ''}"><td><b>${short(o.leader) || 'Sem liderança'}</b> ${pfChip(o.portfolio)}<small>${title(o.manager) || 'gerência a definir'}</small></td>
       <td class="right num">${o.rows.length}</td><td class="right num">${o.s.done.length}</td>
       <td class="right num">${o.s.conduct.length ? html`<span class="chip bad">${o.s.conduct.length}</span>` : '0'}</td>
       <td class="right num">${pctTxt(o.s.wrong.length, o.s.wrong.length + o.s.ok.length)}</td><td class="right num">${pctTxt(o.s.int.length, o.rows.length)}</td></tr>`)}</tbody></table></div>`;
@@ -311,8 +317,8 @@ function progress(rows, locks) {
   const m = new Map();
   const today = new Date().toISOString().slice(0, 10);
   for (const r of rows.filter((x) => x.status === 'analisada')) {
-    const k = r.analyst_name || '—';
-    const o = m.get(k) || m.set(k, { name: k, n: 0, today: 0, conduct: 0 }).get(k);
+    const k = r.analyst_id || r.analyst_name || '—';
+    const o = m.get(k) || m.set(k, { name: r.analyst_name || '—', pf: D.analyst_portfolio?.[r.analyst_id] || r.portfolio || 'PAN', n: 0, today: 0, conduct: 0 }).get(k);
     o.n++; if ((r.analyzed_at || '').slice(0, 10) === today) o.today++; if (r.conduct) o.conduct++;
   }
   const list = [...m.values()].sort((a, b) => b.n - a.n);
@@ -321,7 +327,7 @@ function progress(rows, locks) {
     <div class="qd-prog-bar"><i style="width:${pct(done, rows.length) || 0}%"></i></div>
     <p class="qd-foot">${done} de ${rows.length} analisados · ${rows.length - done} na fila</p>
     ${locks.length ? html`<div class="qd-live">${locks.slice(0, 6).map((r) => html`<span class="chip brand"><i class="qd-pulse"></i>${r.locked_name} · ${r.contact_id || short(r.operator_name)}</span>`)}</div>` : ''}
-    ${list.length ? html`<ul class="qd-people">${list.map((o) => html`<li>${avatar(o.name, 'sm')}<b>${o.name}</b><span class="num">${o.n}<small>${o.today ? ` · ${o.today} hoje` : ''}</small></span></li>`)}</ul>` : html`<p class="qd-none">Ninguém analisou ainda.</p>`}
+    ${list.length ? html`<ul class="qd-people">${list.map((o) => html`<li>${avatar(o.name, 'sm')}<b>${o.name} ${pfChip(o.pf)}</b><span class="num">${o.n}<small>${o.today ? ` · ${o.today} hoje` : ''}</small></span></li>`)}</ul>` : html`<p class="qd-none">Ninguém analisou ainda.</p>`}
   </div>`;
 }
 
@@ -336,7 +342,7 @@ function drawList(rows) {
   box.innerHTML = String(html`<div class="table-wrap"><table class="tbl qd-tbl qd-list"><thead><tr>${admin ? html`<th><input type="checkbox" id="qd-all" aria-label="Selecionar todos"></th>` : ''}<th>Ligação</th><th>Operador</th><th>Liderança</th><th class="right">Duração</th><th>Tabulação</th><th>Desconexão</th><th>Resultado</th><th>Anexos</th><th>Analista</th></tr></thead>
     <tbody>${pg.map((r) => html`<tr class="click ${r.conduct ? 'qd-row-bad' : ''}" data-open="${r.id}">
       ${admin ? html`<td data-nocl><input type="checkbox" class="qd-sel" value="${r.id}" aria-label="Selecionar"></td>` : ''}
-      <td><b class="num">${r.contact_id || '—'}</b><small>${dt(r.call_at)}</small></td>
+      <td><b class="num">${r.contact_id || '—'}</b> ${pfChip(r.portfolio)}<small>${dt(r.call_at)}</small></td>
       <td><b>${short(r.operator_name) || r.login || '—'}</b><small>${r.login || ''}${r.campaign ? ` · ${title(r.campaign)}` : ''}</small></td>
       <td><span>${short(r.leader) || '—'}</span><small>${short(r.manager)}</small></td>
       <td class="right num">${fmtDur(r.duration_sec)}</td>
@@ -361,15 +367,16 @@ function drawList(rows) {
 }
 
 // ---------------------------------------------------------------- Pasta de áudios
-async function openFolder() {
-  if (D.folder) { window.open(D.folder, '_blank', 'noopener'); return; }
-  if (!CTX.can('admin', 'qualidade')) { toast('A pasta de áudios ainda não foi configurada. Peça para a Qualidade colar o link em Capacity.', 'err', 5000); return; }
+async function openFolder(pf = D.portfolio) {
+  const url = pf === D.portfolio ? D.folder : D.folders?.[pf];
+  if (url) { window.open(url, '_blank', 'noopener'); return; }
+  if (pf !== D.portfolio || !D.can_manage) { toast(`A pasta de áudios da carteira ${pf} ainda não foi configurada.`, 'err', 5000); return; }
   folderDialog();
 }
 function folderDialog() {
   modal({
-    title: 'Pasta de áudios',
-    body: html`<p class="t2" style="margin-top:0">Cole o link da pasta do SharePoint/OneDrive com os áudios da força-tarefa. O botão “Pasta de áudios” abre esse link para todos os analistas. O link fica só no banco da plataforma.</p>
+    title: `Pasta de áudios · ${D.portfolio}`,
+    body: html`<p class="t2" style="margin-top:0">Cole o link da pasta do SharePoint/OneDrive com os áudios da carteira ${D.portfolio}. O botão “Pasta de áudios” abre esse link para quem analisa essa carteira. O link fica só no banco da plataforma.</p>
       <div class="field"><label for="qd-furl">Link da pasta</label><input class="input" id="qd-furl" value="${D.folder || ''}" placeholder="https://paschoalotto-my.sharepoint.com/…"></div>`,
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="qd-fsave">Salvar</button>`,
     onMount: (m, close) => {
@@ -413,29 +420,30 @@ export function capacityRows(sheets) {
 }
 
 function openCapacity() {
-  const canEdit = CTX.can('admin', 'qualidade');
+  const canEdit = D.can_manage;
   const active = D.roster.filter((r) => r.active);
   const leaders = [...new Set(active.map((r) => r.leader).filter(Boolean))].sort();
   const mgrs = managers();
   modal({
-    title: 'Capacity e gerências', wide: true, cls: 'qd-modal',
+    title: `Capacity e gerências · carteira ${D.portfolio}`, wide: true, cls: 'qd-modal',
     body: html`
       <div class="qd-cap-top">
         <div><b class="num">${active.length}</b><span>operadores ativos</span></div>
         <div><b class="num">${leaders.length}</b><span>lideranças</span></div>
         <div><b>${D.roster_updated_at ? fmtRel(D.roster_updated_at) : '—'}</b><span>${D.roster_file || 'nenhum capacity anexado'}</span></div>
       </div>
+      <p class="tiny muted" style="margin:-4px 0 12px">${D.roster_own ? 'Você está usando o seu próprio capacity.' : D.roster.length ? `Você está usando o capacity de outra pessoa da carteira ${D.portfolio}. Anexe o seu para usar só o seu.` : ''} O capacity que você anexar vale só para você${D.portfolio !== 'PAN' ? ` (e como reserva para a carteira ${D.portfolio})` : ' (e como reserva para a carteira PAN)'}: não muda o de outros usuários nem o de outras carteiras.</p>
       ${canEdit ? html`<label class="qd-drop" id="qd-capdrop">${icon('upload')}<span><b>Anexar capacity atualizado</b><small>.xlsx com a aba de ativos (OPERADOR, LOGIN, LIDERANÇA, CAMPANHA, SEGMENTO). Abas de desligados e remanejados também são lidas.</small></span><input type="file" accept=".xlsx,.csv" id="qd-capfile" hidden></label>
         <div id="qd-cappv"></div>` : ''}
       <h4 class="qd-h4">Gerência de cada liderança</h4>
-      <p class="tiny muted" style="margin-top:-4px">O capacity não traz a gerência. Ela vem dos operadores já cadastrados na plataforma; ajuste aqui quando precisar. Vale também para os atendimentos já lançados.</p>
+      <p class="tiny muted" style="margin-top:-4px">O capacity não traz a gerência.${D.portfolio === 'PAN' ? ' Ela vem dos operadores já cadastrados na plataforma; ajuste aqui quando precisar.' : ' Preencha a gerência de cada liderança da carteira.'} Vale também para os atendimentos já lançados.</p>
       ${leaders.length ? html`<div class="qd-leaders">${leaders.map((l) => html`<div class="qd-leader"><span><b>${title(l)}</b><small>${active.filter((r) => r.leader === l).length} operador(es) · ${[...new Set(active.filter((r) => r.leader === l).map((r) => title(r.segment)).filter(Boolean))].join(', ')}</small></span>
         <input class="input sm" list="qd-mgrs" data-leader="${l}" value="${managerOf(l)}" placeholder="Gerência" ${canEdit ? '' : 'disabled'}></div>`)}</div><datalist id="qd-mgrs">${mgrs.map((m) => html`<option value="${m}">`)}</datalist>` : html`<p class="qd-none">Anexe o capacity para listar as lideranças.</p>`}
-      ${canEdit ? html`<h4 class="qd-h4">Pasta de áudios</h4><div class="row" style="gap:8px"><input class="input sm" id="qd-furl2" value="${D.folder || ''}" placeholder="Link da pasta no SharePoint" style="flex:1"><button class="btn sm" id="qd-fsave2">Salvar link</button></div>` : ''}`,
+      ${canEdit ? html`<h4 class="qd-h4">Pasta de áudios da carteira ${D.portfolio}</h4><div class="row" style="gap:8px"><input class="input sm" id="qd-furl2" value="${D.folder || ''}" placeholder="Link da pasta no SharePoint" style="flex:1"><button class="btn sm" id="qd-fsave2">Salvar link</button></div>` : ''}`,
     foot: html`<button class="btn" data-close>Fechar</button>`,
     onMount: (m) => {
       $$('[data-leader]', m).forEach((inp) => inp.addEventListener('change', async () => {
-        try { await api.put('/quedas/leaders', { leader: inp.dataset.leader, manager: inp.value }); const l = D.leaders.find((x) => x.leader === inp.dataset.leader); if (l) l.manager = inp.value; else D.leaders.push({ leader: inp.dataset.leader, manager: inp.value }); toast(`Gerência de ${short(inp.dataset.leader)} salva.`); }
+        try { await api.put('/quedas/leaders', { leader: inp.dataset.leader, manager: inp.value }); const l = D.leaders.find((x) => x.leader === inp.dataset.leader); if (l) l.manager = inp.value; else D.leaders.push({ portfolio: D.portfolio, leader: inp.dataset.leader, manager: inp.value }); toast(`Gerência de ${short(inp.dataset.leader)} salva.`); }
         catch (ex) { toast(ex.message, 'err'); }
       }));
       $('#qd-fsave2', m)?.addEventListener('click', async () => {
@@ -450,7 +458,7 @@ function openCapacity() {
           const { rows, summary } = capacityRows(await parseWorkbook(file));
           const act = rows.filter((r) => r.active);
           if (!act.length) throw new Error('Não encontrei a aba de ativos com as colunas OPERADOR e LOGIN.');
-          const cur = new Set(D.roster.filter((r) => r.active).map((r) => r.login));
+          const cur = new Set(D.roster.filter((r) => r.active && (D.roster_own ? r.scope === D.me : true)).map((r) => r.login));
           const nw = new Set(act.map((r) => r.login.toLowerCase()));
           const added = [...nw].filter((l) => !cur.has(l)).length;
           const left = [...cur].filter((l) => !nw.has(l)).length;
@@ -491,7 +499,7 @@ function openImport() {
   let fileName = '';
   modal({
     title: 'Importar CSV de metadados', wide: true, cls: 'qd-modal',
-    body: html`<p class="t2" style="margin-top:0">Opcional: o CSV do discador traz IdContato, login, data, duração, finalização, arquivo do áudio e o tipo de desconexão (Interna/Externa). Cada linha vira um atendimento para análise, já com liderança, gerência e campanha do capacity. Telefone e CPF não são guardados.</p>
+    body: html`<p class="t2" style="margin-top:0">Opcional: o CSV do discador traz IdContato, login, data, duração, finalização, arquivo do áudio e o tipo de desconexão (Interna/Externa). Cada linha vira um atendimento da carteira <b>${D.portfolio}</b>, já com liderança, gerência e campanha do seu capacity. Telefone e CPF não são guardados.</p>
       <label class="qd-drop">${icon('upload')}<span><b>Escolher o CSV</b><small>Modelo: colunas IdContato; Campanha; Login; DataHoraLigacao; Duracao; FINALIZACAO; NomeDoArquivo; TIPO DE DESCONEXÃO</small></span><input type="file" accept=".csv,.xlsx,.txt" id="qd-csvf" hidden></label>
       <div id="qd-csvpv"></div>`,
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="qd-csvgo" disabled>${icon('upload')}Importar</button>`,
@@ -511,7 +519,7 @@ function openImport() {
           const drops = parsed.filter((r) => isDrop(r.tabulation)).length;
           const int = parsed.filter((r) => key(r.disconnect).startsWith('intern')).length;
           const unknown = [...new Set(parsed.map((r) => String(r.login || '').toLowerCase()).filter((l) => l && !roster.has(l)))];
-          const known = new Set(D.rows.map((r) => r.contact_id));
+          const known = new Set(D.rows.filter(mine).map((r) => r.contact_id));
           const again = parsed.filter((r) => known.has(r.contact_id)).length;
           $('#qd-csvpv', m).innerHTML = String(html`<div class="qd-pv">
             <p><b>${file.name}</b> · ${parsed.length} linha(s) · ${drops} com tabulação de queda · ${int} desconexão interna${again ? ` · ${again} já na força-tarefa (só os dados do discador são atualizados)` : ''}</p>
@@ -546,6 +554,10 @@ async function openReview(id, queue = null) {
   let lockTimer = null;
   if (id) {
     try { row = await api.get(`/quedas/${id}`); } catch (ex) { toast(ex.message, 'err'); return; }
+  }
+  // Atendimento de outra carteira (ou análise de outra pessoa sem permissão): só leitura
+  const ro = !!id && !canEditRow(row);
+  if (id && !ro) {
     const lk = await api.post(`/quedas/${id}/lock`).catch(() => ({ ok: true }));
     if (!lk.ok && !(await confirmDialog('Atendimento em análise', `${lk.by} está analisando este atendimento agora. Quer abrir mesmo assim? Quem salvar por último fica valendo.`, { ok: 'Abrir mesmo assim' }))) return;
     if (!lk.ok) await api.post(`/quedas/${id}/lock`, { force: true }).catch(() => {});
@@ -563,11 +575,13 @@ async function openReview(id, queue = null) {
   let transcriptName = row.transcript_name || '';
   const callLocal = row.call_at ? row.call_at.slice(0, 16) : '';
   const v = row.verdict || '';
-  const next = () => (queue || []).find((r) => r.id !== id && r.status === 'pendente' && !(r.locked_by && r.locked_by !== D.me));
+  const pf = row.portfolio || D.portfolio;
+  const next = () => (queue || []).find((r) => r.id !== id && mine(r) && r.status === 'pendente' && !(r.locked_by && r.locked_by !== D.me));
 
   const { el: m, close } = modal({
-    title: id ? `Análise do atendimento ${row.contact_id || `#${id}`}` : 'Nova análise de queda', wide: true, cls: 'qd-modal qd-rev',
+    title: `${id ? `Análise do atendimento ${row.contact_id || `#${id}`}` : 'Nova análise de queda'} · ${pf}`, wide: true, cls: 'qd-modal qd-rev',
     body: html`
+      ${ro ? html`<div class="banner warn">${icon('lock')}<div>${pf !== D.portfolio ? html`Atendimento da carteira <b>${pf}</b>: só quem analisa essa carteira altera. Você pode consultar e ouvir o áudio.` : html`Análise de <b>${row.analyst_name}</b>: só a Qualidade altera.`}</div></div>` : ''}
       ${row.analyst_name ? html`<div class="banner info">${icon('info')}<div>Analisado por <b>${row.analyst_name}</b> ${fmtRel(row.analyzed_at)}.</div></div>` : ''}
       <div class="qd-sec"><h4>${icon('headset')}Atendimento</h4>
         <div class="qd-fgrid">
@@ -575,7 +589,7 @@ async function openReview(id, queue = null) {
           <div class="field"><label for="r-at">Data e hora</label><input class="input" type="datetime-local" id="r-at" value="${callLocal}"></div>
           <div class="field"><label for="r-dur">Duração</label><input class="input" id="r-dur" value="${row.duration_sec != null ? fmtDur(row.duration_sec) : ''}" placeholder="m:ss"></div>
           <div class="field"><label for="r-tab">Tabulação do operador</label><input class="input" id="r-tab" list="r-tabs" value="${row.tabulation || ''}" placeholder="QUEDA LIGACAO CLIENTE"><datalist id="r-tabs">${['QUEDA LIGACAO CLIENTE', 'QUEDA DE LIGACAO', ...tabs].filter((t, i, a) => a.indexOf(t) === i).map((t) => html`<option value="${t}">`)}</datalist></div>
-          <div class="field"><label>Tipo de desconexão</label><div class="seg" id="r-disc">${['Interna', 'Externa', ''].map((d) => html`<button type="button" data-v="${d}" class="${(row.disconnect || '') === d ? 'on' : ''}">${d || 'Não informado'}</button>`)}</div></div>
+          <div class="field span-2"><label>Tipo de desconexão</label><div class="seg" id="r-disc">${['Interna', 'Externa', ''].map((d) => html`<button type="button" data-v="${d}" class="${(row.disconnect || '') === d ? 'on' : ''}">${d || 'Não informado'}</button>`)}</div></div>
           ${row.dialer_campaign || row.operation ? html`<div class="field"><label>Discador</label><div class="qd-ro">${[row.dialer_campaign, row.operation].filter(Boolean).join(' · ')}</div></div>` : ''}
         </div>
         ${row.disconnect === 'Interna' ? html`<p class="qd-hint warn">${icon('alert')}Desconexão <b>interna</b>: a ligação foi encerrada do nosso lado. Confirme no áudio se o cliente realmente abandonou antes de validar a queda.</p>` : ''}
@@ -617,7 +631,7 @@ async function openReview(id, queue = null) {
         </div>
         <div class="field"><label for="r-notes">Observação / evidência</label><textarea class="textarea" id="r-notes" rows="3" placeholder="O que aconteceu na ligação (ex.: cliente pediu para aguardar e o operador encerrou aos 2:10)">${row.notes || ''}</textarea></div>
       </div>`,
-    foot: html`${canDelete ? html`<button class="btn ghost danger" id="r-del">${icon('trash')}Excluir</button>` : ''}<div class="grow"></div>
+    foot: ro ? html`<button class="btn" data-close>Fechar</button>` : html`${canDelete ? html`<button class="btn ghost danger" id="r-del">${icon('trash')}Excluir</button>` : ''}<div class="grow"></div>
       <button class="btn ghost" data-close>Cancelar</button>
       ${queue ? html`<button class="btn" id="r-savenext">Salvar e próximo${icon('chevRight')}</button>` : ''}
       <button class="btn primary" id="r-save">${icon('check')}Salvar</button>`,
@@ -672,15 +686,20 @@ async function openReview(id, queue = null) {
   };
   $('#r-op', m).addEventListener('input', debounce(() => { const o = findOperator(val('#r-op')); if (o && (val('#r-op').includes('·') || o.login === val('#r-op').toLowerCase())) applyOp(true); else applyOp(false); }, 200));
   $('#r-op', m).addEventListener('change', () => applyOp(true));
-  if (val('#r-op')) applyOp(false);
+  // O capacity carregado é o da carteira do usuário: em atendimento de outra carteira não confere o operador
+  if (val('#r-op') && pf === D.portfolio) applyOp(false);
   $('#r-ld', m).addEventListener('change', () => { if (!val('#r-mg') || D.leaders.some((l) => l.manager === val('#r-mg'))) $('#r-mg', m).value = managerOf(val('#r-ld')) || val('#r-mg'); });
 
+  let reopening = false;
   $('#r-cid', m).addEventListener('change', () => {
-    const dup = D.rows.find((r) => r.contact_id && r.contact_id === val('#r-cid') && r.id !== id);
-    if (dup && !id) { toast(`O atendimento ${dup.contact_id} já está na força-tarefa: abrindo.`); close(); openReview(dup.id, queue); }
+    if (reopening) return;
+    const dup = D.rows.find((r) => (r.portfolio || 'PAN') === pf && r.contact_id && r.contact_id === val('#r-cid') && r.id !== id);
+    // Fecha fora do evento de blur (o campo ainda está saindo de foco)
+    if (dup && !id) { reopening = true; toast(`O atendimento ${dup.contact_id} já está na força-tarefa: abrindo.`); setTimeout(() => { close(); openReview(dup.id, queue); }, 0); }
     else if (dup) toast(`O ID ${dup.contact_id} já é de outro atendimento da força-tarefa.`, 'err');
   });
-  $('#r-folder', m).onclick = () => openFolder();
+  $('#r-folder', m).onclick = () => openFolder(pf);
+  if (ro) $$('input, select, textarea, .qd-vd, .seg button, .qd-file, .qd-trbar label', m).forEach((x) => { x.disabled = true; x.classList.add('qd-ro-f'); });
   $('#r-copy', m)?.addEventListener('click', async () => { try { await navigator.clipboard.writeText(row.audio_original || row.audio_file); toast('Nome do arquivo copiado: busque na pasta com Ctrl+F.'); } catch { toast('Não foi possível copiar.', 'err'); } });
   $('#r-afile', m).onchange = (e) => {
     const f = e.target.files[0];
@@ -741,13 +760,15 @@ async function openReview(id, queue = null) {
       close();
       toast(verdict ? `Análise salva${conduct ? ' · desvio de conduta registrado' : ''}.` : 'Atendimento salvo como pendente.');
       await fetchData(); if (ROOT?.isConnected) draw();
-      if (goNext) { const n = next(); if (n) openReview(n.id, filtered().filter(inList)); else toast('Não há mais pendentes nesta lista.'); }
+      if (goNext) { const n = next(); if (n) openReview(n.id, filtered().filter(inList)); else toast('Não há mais pendentes da sua carteira nesta lista.'); }
     } catch (ex) { toast(ex.message, 'err', 5000); busy(btnEl, false); }
   };
-  $('#r-save', m).onclick = (e) => save(e.currentTarget, false);
+  $('#r-save', m)?.addEventListener('click', (e) => save(e.currentTarget, false));
   $('#r-savenext', m)?.addEventListener('click', (e) => save(e.currentTarget, true));
 }
 
 function canEditRow(r) {
-  return CTX.can('admin', 'qualidade') || r.status === 'pendente' || r.analyst_id === CTX.store.user.id || r.created_by === CTX.store.user.id;
+  if (CTX.can('admin')) return true;
+  if ((r.portfolio || 'PAN') !== D.portfolio) return false;
+  return CTX.can('qualidade') || r.status === 'pendente' || r.analyst_id === CTX.store.user.id || r.created_by === CTX.store.user.id;
 }
