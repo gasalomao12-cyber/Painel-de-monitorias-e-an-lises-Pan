@@ -253,7 +253,20 @@ sozinhos na tela de todos, mesmo com uma análise aberta.
 - Gerências e pasta de áudios são por carteira. Nas carteiras fora da PAN, as próprias analistas cuidam do
   capacity, das gerências e da pasta; na PAN, continuam a Qualidade e o admin.
 
-Migrações: `supabase/migrations/20261101120000_px_quedas.sql` e `20261102120000_px_quedas_carteiras.sql`
+**Carteira analisada, visão e exportação**
+- Cada análise (e cada CSV importado) informa a carteira: SAFRA BS, SAFRA ADM, PAN CONTACT, PAN MASSIFICADOS,
+  PAN ATIVAS E AJUIZADOS ou PORTO. A última escolhida já vem marcada.
+- O seletor **Consolidada / PAN / SAFRA / PORTO** muda todos os números, gráficos e a lista; o filtro
+  **Carteira** separa uma carteira específica.
+- **Exportar CSV** gera o arquivo nas colunas da planilha de controle (Nome, Login, Contrato, Telefone, Data,
+  Tempo Ligação, Classificação Operador, Classificação Correta, Status Classificação, Desconexão, Prestou
+  Atendimento?, Segurou Ligação?, Observação), seguidas de carteira, ID, liderança, gerência, resultado,
+  desvio e analista. Dá para exportar a visão consolidada, um grupo (PAN, SAFRA, PORTO) ou uma carteira, só os
+  analisados ou todos, e com ou sem os filtros da tela. O arquivo abre direto no Excel (";" e UTF-8).
+- Na análise entram também Telefone, Contrato, "Prestou atendimento?" e "Segurou a ligação?".
+
+Migrações: `supabase/migrations/20261101120000_px_quedas.sql`, `20261102120000_px_quedas_carteiras.sql` e
+`20261103120000_px_quedas_export.sql`
 (rode no SQL Editor se o deploy não aplicar migrações).
 
 ## Versão nova da plataforma
