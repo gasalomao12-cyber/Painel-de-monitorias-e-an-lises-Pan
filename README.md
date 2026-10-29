@@ -282,6 +282,33 @@ sozinhos na tela de todos, mesmo com uma análise aberta.
   (sem a parte ?e=… que muda a cada compartilhamento), o nome do arquivo e o IdContato contido no nome. Dá para
   abrir a análise existente ou continuar mesmo assim.
 
+**Formulário de análise**
+- Campos obrigatórios (marcados com *): carteira, telefone, contrato/CPF, data e hora, tabulação do operador, tipo de
+  desconexão, login ou nome completo, segmento, gerência, resultado da análise, "A tabulação de queda procede?",
+  "Segurou a ligação?" e "Houve desvio de conduta?". O que falta fica destacado em vermelho.
+- **Desvio de conduta**: Sim/Não. Com Sim, escolha o motivo (desligou na cara do cliente, omissão de atendimento,
+  tabulação incorreta, interromper ou faltar com respeito com o cliente, outro tipo de desvio) e descreva o desvio
+  na observação, que passa a ser obrigatória. "Operador desligou" já marca Sim.
+- **Tempos**: os ":" entram sozinhos ao digitar (hh:mm:ss) em Duração e Momento da queda, e a data e hora vira
+  dd/mm/aaaa hh:mm:ss. Colar do Mosaic funciona: "00:05:17.520" vira 00:05:17, "2026-10-27 16:06:56" vira
+  27/10/2026 16:06:56, e colar data e hora seguidas da duração preenche os dois campos.
+- **Liderança, gerência, segmento e carteira puxam um ao outro**: o operador preenche liderança, gerência, campanha
+  e segmento; a liderança puxa gerência e segmento; a gerência (ou o segmento) puxa a carteira mais usada; e a
+  carteira limita as sugestões de gerência, liderança e segmento.
+- **Enter salva**: Enter (ou "Salvar análise") confere os obrigatórios e abre um card de confirmação com o resumo.
+  "Confirmar e salvar" (ou Enter de novo) grava; o X ou "Voltar à edição" volta para a análise.
+- **Sair sem salvar**: clicar fora, Esc, X ou Cancelar não fecha direto. Um aviso informa que a análise não será
+  salva e pergunta se quer sair ou continuar editando.
+
+**Filtros**
+- Primeira linha: visão (Consolidada/PAN/SAFRA/PORTO), **período** e busca. O período filtra pela **data da análise**
+  (dia em que o atendimento foi analisado; os pendentes ficam de fora) ou pela **data da ligação**, com atalhos Hoje,
+  Ontem, 7 dias e Mês, ou De/Até à mão.
+- Segunda linha: carteira, gerência, liderança, operador, resultado e analista. Campanha, segmento, tabulação e
+  desconexão ficam em **Mais filtros**.
+- **Exportar CSV** tem os próprios **dias do relatório** (começa igual ao período da tela): um dia, um intervalo ou
+  tudo, pela data da análise ou da ligação, para a visão consolidada ou por carteira. O nome do arquivo leva os dias.
+
 Migrações: `supabase/migrations/20261101120000_px_quedas.sql`, `20261102120000_px_quedas_carteiras.sql` e
 `20261103120000_px_quedas_export.sql`
 (rode no SQL Editor se o deploy não aplicar migrações).
