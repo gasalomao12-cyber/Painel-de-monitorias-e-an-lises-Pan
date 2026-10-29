@@ -121,7 +121,8 @@ function reviewPatch(b) {
   if (b.verdict !== undefined) p.verdict = VERDICTS.includes(b.verdict) ? b.verdict : null;
   if (b.conduct !== undefined) p.conduct = !!b.conduct;
   if (b.tab_correct !== undefined) p.tab_correct = b.tab_correct === null || b.tab_correct === '' ? null : !!b.tab_correct;
-  else if (p.verdict) p.tab_correct = TAB_OK[p.verdict];
+  // Na tabulação LIGAÇÃO MUDA, ela procede quando a análise conclui que a ligação estava muda
+  else if (p.verdict) p.tab_correct = /\bmud[ao]\b/.test(nameKey(b.tabulation)) ? (p.verdict === 'mudo' ? true : p.verdict === 'inconclusivo' ? null : false) : TAB_OK[p.verdict];
   return p;
 }
 
