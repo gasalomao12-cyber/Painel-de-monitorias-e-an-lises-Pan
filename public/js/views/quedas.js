@@ -1,4 +1,4 @@
-import { api, saveBlob } from '../api.js';
+import { api, qs, saveBlob } from '../api.js';
 import { html, icon, $, $$, toast, modal, busy, debounce, emptyState, confirmDialog, multiSelect, bindMultiSelect, fmtDur, fmtRel, avatar } from '../ui.js';
 import { scatterChart, palette, destroyAll } from '../charts.js';
 import { parseSheetFile, parseWorkbook, readTranscriptFile } from '../files.js';
@@ -735,10 +735,11 @@ async function openReview(id, queue = null) {
       <div class="qd-sec"><h4>${icon('audio')}Áudio e transcrição</h4>
         <div class="qd-audio">
           <button type="button" class="btn sm" id="r-folder">${icon('folder')}Abrir pasta de áudios${icon('external')}</button>
-          ${row.audio_file || row.audio_original ? html`<button type="button" class="btn sm ghost" id="r-copy" title="${row.audio_file || row.audio_original}">${icon('copy')}Copiar nome do arquivo</button><span class="qd-fname" title="${row.audio_file || ''}">${row.audio_original || row.audio_file}</span>` : ''}
+          ${row.audio_file || row.audio_original ? html`<button type="button" class="btn sm ghost" id="r-copy" title="${row.audio_file || row.audio_original}">${icon('copy')}Copiar nome do arquivo</button>` : ''}
         </div>
         <div class="qd-fgrid">
           <div class="field span-2"><label for="r-aurl">Link do áudio analisado</label><input class="input" id="r-aurl" value="${row.audio_url || ''}" placeholder="Cole o link do arquivo na pasta (Copiar link)"></div>
+          <div class="field span-2"><label for="r-afname">Nome do áudio</label><input class="input qd-mono" id="r-afname" value="${row.audio_original || row.audio_file || ''}" placeholder="ex.: asp-t2-epro202610271619_43514503.wav"></div>
           <div class="field span-2"><label>Arquivo do áudio</label><label class="qd-file">${icon('upload')}<span id="r-aname">${row.audio_name || 'Anexar áudio (.wav, .mp3…)'}</span><input type="file" accept="audio/*,.wav,.mp3,.gsm,.ogg,.opus,.m4a" id="r-afile" hidden></label>
             ${row.audio_path ? html`<div class="qd-player" id="r-player"><button type="button" class="btn sm" id="r-play">${icon('play')}Ouvir áudio anexado</button>${canEditRow(row) ? html`<button type="button" class="btn-icon" id="r-adel" aria-label="Remover áudio">${icon('trash')}</button>` : ''}</div>` : ''}</div>
         </div>
@@ -838,7 +839,46 @@ async function openReview(id, queue = null) {
     if (!f) return;
     if (f.size > 50 * 1024 * 1024) { toast('Áudio acima de 50 MB.', 'err'); e.target.value = ''; return; }
     audioFile = f; $('#r-aname', m).textContent = `${f.name} · será anexado ao salvar`;
+    if (!val('#r-afname')) $('#r-afname', m).value = f.name;
+    checkAudio();
   };
+  // Áudio já analisado por alguém (qualquer carteira ou usuário): avisa assim que o link ou o nome é informado
+  let lastAudioCheck = `${row.audio_url || ''}|${row.audio_original || row.audio_file || ''}`;
+  const checkAudio = async () => {
+    const url = val('#r-aurl');
+    const name = audioFile?.name || val('#r-afname');
+    const sig = `${/^https:\/\//i.test(url) ? url : ''}|${name.length >= 5 ? name : ''}`;
+    if (sig === '|' || sig === lastAudioCheck || ro) return;
+    lastAudioCheck = sig;
+    try {
+      const { matches } = await api.get(`/quedas/check-audio${qs({ id: id || '', url: sig.split('|')[0], name: sig.split('|')[1] })}`);
+      if (matches.length && m.isConnected) alreadyAnalyzed(matches);
+    } catch { /* a checagem nunca impede a análise */ }
+  };
+  const alreadyAnalyzed = (matches) => {
+    const pop = modal({
+      title: matches.some((x) => x.status === 'analisada') ? 'Este atendimento já foi analisado' : 'Este atendimento está em análise', dismissable: false, cls: 'qd-modal qd-dup',
+      body: html`<div class="banner warn">${icon('alert')}<div>O áudio informado já pertence a ${matches.length > 1 ? `${matches.length} atendimentos` : 'um atendimento'} da força-tarefa. Confira antes de analisar de novo.</div></div>
+        <div class="qd-dups">${matches.map((x) => html`<article class="qd-dupc">
+          <div><b>${x.contact_id ? `Atendimento ${x.contact_id}` : `Lançamento #${x.id}`}</b> ${pfChip(x.carteira || x.portfolio, true)}
+            <small>${title(x.operator_name) || x.login || '—'}${x.login ? ` · ${x.login}` : ''}${x.call_at ? ` · ligação ${dt(x.call_at)}` : ''}</small></div>
+          <p>${x.status === 'analisada' ? html`Analisado por <b>${x.analyst_name || '—'}</b> ${x.analyzed_at ? fmtRel(x.analyzed_at) : ''} · <span class="chip ${VERDICT[x.verdict]?.[1] || ''}">${VERDICT[x.verdict]?.[0] || 'Analisado'}</span>${x.conduct ? html` <span class="chip bad">Desvio de conduta</span>` : ''}` : ''}
+            ${x.live ? html`<span class="chip brand"><i class="qd-pulse"></i>Em análise agora por ${x.locked_name}</span>` : ''}</p>
+          <small class="muted">Mesmo ${x.why}</small>
+          <button type="button" class="btn sm" data-dup="${x.id}">${icon('eye')}Abrir esta análise</button>
+        </article>`)}</div>`,
+      foot: html`<button class="btn" id="dup-go">Continuar mesmo assim</button>`,
+      onMount: (pm, pclose) => {
+        $('#dup-go', pm).onclick = pclose;
+        $$('[data-dup]', pm).forEach((b) => b.addEventListener('click', () => { pclose(); close(); openReview(Number(b.dataset.dup)); }));
+      },
+    });
+    return pop;
+  };
+  $('#r-aurl', m).addEventListener('input', debounce(checkAudio, 700));
+  $('#r-aurl', m).addEventListener('change', checkAudio);
+  $('#r-afname', m).addEventListener('input', debounce(checkAudio, 900));
+  $('#r-afname', m).addEventListener('change', checkAudio);
   $('#r-play', m)?.addEventListener('click', async (e) => {
     const btnEl = e.currentTarget;
     busy(btnEl, true, 'Carregando');
@@ -879,6 +919,7 @@ async function openReview(id, queue = null) {
       tabulation: val('#r-tab'), disconnect: segVal('#r-disc'),
       login: o ? o.login : /^[\w.-]+$/.test(opText) ? opText : '', operator_name: o ? o.name : /\s/.test(opText) ? opText.replace(/\s*·.*$/, '') : (row.operator_name || ''),
       leader: val('#r-ld'), manager: val('#r-mg'), campaign: val('#r-cp'), segment: val('#r-sg'),
+      ...(val('#r-afname') !== (row.audio_original || row.audio_file || '') ? { audio_file: val('#r-afname') } : {}),
       audio_url: val('#r-aurl'), transcript: $('#r-tr', m).value, transcript_name: transcriptName,
       verdict, conduct, conduct_type: conduct ? $('#r-ctype', m).value : '', tab_correct: tabOk === '' ? null : tabOk === '1',
       correct_tab: tabOk === '0' ? val('#r-ctab') : '', drop_moment: val('#r-mom'), notes: val('#r-notes'), force: true,

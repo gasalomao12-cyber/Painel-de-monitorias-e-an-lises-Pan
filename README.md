@@ -264,6 +264,11 @@ sozinhos na tela de todos, mesmo com uma análise aberta.
   desvio e analista. Dá para exportar a visão consolidada, um grupo (PAN, SAFRA, PORTO) ou uma carteira, só os
   analisados ou todos, e com ou sem os filtros da tela. O arquivo abre direto no Excel (";" e UTF-8).
 - Na análise entram também Telefone, Contrato, "Prestou atendimento?" e "Segurou a ligação?".
+- **Aviso de atendimento já analisado**: ao colar o link do áudio, digitar o nome do áudio ou anexar o arquivo, a
+  plataforma confere em todas as carteiras e de todos os usuários se aquele áudio já pertence a um atendimento
+  analisado (ou em análise agora por outra pessoa) e mostra quem analisou, quando e o resultado. Compara o link
+  (sem a parte ?e=… que muda a cada compartilhamento), o nome do arquivo e o IdContato contido no nome. Dá para
+  abrir a análise existente ou continuar mesmo assim.
 
 Migrações: `supabase/migrations/20261101120000_px_quedas.sql`, `20261102120000_px_quedas_carteiras.sql` e
 `20261103120000_px_quedas_export.sql`

@@ -46,6 +46,11 @@ function seconds(v) {
   if (p.some((x) => Number.isNaN(x))) return null;
   return Math.round(p.reduce((a, x) => a * 60 + x, 0));
 }
+// Link sem a parte variável (?e=…), nome do arquivo sem caminho/extensão e IdContato contido no nome
+const urlKey = (v) => { const u = String(v || '').trim(); if (!/^https?:\/\//i.test(u)) return ''; return u.split(/[?#]/)[0].replace(/\/+$/, '').toLowerCase(); };
+const audioKey = (v) => { const n = String(v || '').trim().split(/[\\/]/).pop().replace(/\.(wav|mp3|gsm|ogg|opus|m4a|wma|flac|amr)$/i, '').toLowerCase(); return n.length >= 5 ? n : ''; };
+const fileFromUrl = (v) => { try { const p = decodeURIComponent(new URL(String(v)).pathname); return /\.(wav|mp3|gsm|ogg|opus|m4a|wma|flac|amr)$/i.test(p) ? p : ''; } catch { return ''; } };
+const idsFromName = (n) => { const out = []; const a = n.match(/_(\d{6,10})$/); if (a) out.push(a[1]); const b = n.match(/^(\d{6,10})_/); if (b) out.push(b[1]); if (/^\d{6,10}$/.test(n)) out.push(n); return out; };
 const disconnectOf = (v) => { const k = nameKey(v); return k.startsWith('intern') ? 'Interna' : k.startsWith('extern') ? 'Externa' : null; };
 
 async function managers(portfolio) {
@@ -258,6 +263,31 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
     for (let i = 0; i < again.length; i += 500) await must(sb().from('px_drop_reviews').upsert(again.slice(i, i + 500).map(({ batch: _b, ...r }) => r), { onConflict: 'portfolio,contact_id' }));
     await audit(req.user.id, 'quedas_importadas', 'drop_review', null, { carteira: pf, lote: batch, novos: fresh.length, atualizados: again.length });
     res.json({ created: fresh.length, updated: again.length, unknown_logins: [...new Set(rows.filter((r) => r.login && !r.leader).map((r) => r.login))] });
+  }));
+
+  // O áudio informado (link da pasta ou nome do arquivo) já pertence a um atendimento analisado ou em análise?
+  // Vale para todas as carteiras e todos os usuários; compara o link, o nome do arquivo e o IdContato do nome.
+  router.get('/quedas/check-audio', h(async (req, res) => {
+    const self = Number(req.query.id) || 0;
+    const url = urlKey(req.query.url);
+    const names = [audioKey(req.query.name), audioKey(fileFromUrl(req.query.url))].filter(Boolean);
+    const ids = [...new Set([req.query.contact_id, ...names.flatMap(idsFromName)].map((v) => String(v || '').trim()).filter((v) => /^\d{5,12}$/.test(v)))];
+    if (!url && !names.length && !ids.length) return res.json({ matches: [] });
+    // Valores entre aspas para o filtro aceitar ":" e "," dos links; a conferência exata vem depois
+    const quoted = (v) => `"${String(v).replace(/["\\*]/g, '')}"`;
+    const ors = [];
+    if (url) ors.push(`audio_url.ilike.${quoted(url).slice(0, -1)}*"`);
+    for (const nm of names) for (const c of ['audio_name', 'audio_file', 'audio_original']) ors.push(`${c}.ilike."*${quoted(nm).slice(1, -1)}*"`);
+    if (ids.length) ors.push(`contact_id.in.(${ids.join(',')})`);
+    const found = await must(sb().from('px_drop_reviews').select('id, portfolio, carteira, contact_id, call_at, login, operator_name, status, verdict, conduct, analyst_name, analyzed_at, audio_url, audio_name, audio_file, audio_original, locked_by, locked_name, locked_at').or(ors.join(',')).limit(50));
+    const matches = found.filter((r) => r.id !== self).map((r) => {
+      const why = url && urlKey(r.audio_url) === url ? 'link do áudio'
+        : names.some((nm) => [r.audio_name, r.audio_file, r.audio_original].some((x) => audioKey(x) === nm)) ? 'nome do arquivo'
+          : ids.includes(String(r.contact_id)) ? 'IdContato do arquivo' : null;
+      const live = lockAlive(r) && r.locked_by !== req.user.id;
+      return why && (r.status === 'analisada' || live) ? { ...r, why, live, locked_name: live ? r.locked_name : null } : null;
+    }).filter(Boolean);
+    res.json({ matches });
   }));
 
   router.get('/quedas/:id', h(async (req, res) => {
