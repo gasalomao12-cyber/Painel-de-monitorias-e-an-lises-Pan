@@ -1,7 +1,7 @@
 import { api, qs, saveBlob } from '../api.js';
 import { html, icon, $, $$, toast, modal, busy, debounce, emptyState, confirmDialog, multiSelect, bindMultiSelect, fmtDur, fmtRel, avatar } from '../ui.js';
 import { scatterChart, palette, destroyAll } from '../charts.js';
-import { parseSheetFile, parseWorkbook, readTranscriptFile } from '../files.js';
+import { parseSheetFile, parseWorkbook, readTranscriptFile, readTranscriptLines } from '../files.js';
 
 // Força-tarefa de queda de ligação: análise manual, em conjunto e em tempo real, dos atendimentos
 // tabulados como queda. O capacity traz liderança/gerência/campanha pelo login ou nome do operador.
@@ -143,6 +143,7 @@ function draw() {
       <div class="qd-actions">
         <button class="btn sm" id="qd-folder">${icon('folder')}Pasta de áudios</button>
         <button class="btn sm" id="qd-csv">${icon('upload')}Importar CSV</button>
+        <button class="btn sm" id="qd-trs">${icon('file')}Transcrições</button>
         <button class="btn sm" id="qd-export">${icon('download')}Exportar CSV</button>
         <button class="btn sm" id="qd-cap">${icon('users')}Capacity${D.roster.length ? '' : html` <b class="qd-dot"></b>`}</button>
         <button class="btn sm primary" id="qd-new">${icon('plus')}Nova análise</button>
@@ -165,6 +166,7 @@ function draw() {
   $('#qd-folder', ROOT).onclick = () => openFolder();
   $('#qd-csv', ROOT).onclick = openImport;
   $('#qd-export', ROOT).onclick = openExport;
+  $('#qd-trs', ROOT).onclick = openTranscripts;
   $$('#qd-view button', ROOT).forEach((b) => b.addEventListener('click', () => { state.view = b.dataset.v; state.page = 0; draw(); }));
   $('#qd-cap', ROOT).onclick = openCapacity;
   $('#qd-cap2', ROOT)?.addEventListener('click', openCapacity);
@@ -602,6 +604,109 @@ function openExport() {
         const label = v === 'todas' ? 'consolidado' : (v.slice(2) || 'a-definir').toLowerCase().replace(/\s+/g, '-');
         saveBlob(new Blob([dropsCsv(rowsNow())], { type: 'text/csv;charset=utf-8' }), `quedas_${label}_${new Date().toISOString().slice(0, 10)}.csv`);
         close(); toast('CSV gerado.');
+      };
+    },
+  });
+}
+
+// ---------------------------------------------------------------- Transcrições em lote
+// Um documento com várias transcrições: cada uma começa no nome do arquivo de áudio (que traz o IdContato)
+const AUDIO_NAME = /[\w\-.()]+\.(?:wav|mp3|gsm|ogg|opus|m4a|wma|flac|amr)\b/i;
+export function splitByAudio(lines) {
+  const out = [];
+  let cur = null;
+  for (const { text, heading } of lines) {
+    const t = String(text || '').trim();
+    const m = t.match(AUDIO_NAME);
+    const starts = m && t.length < 300 && (heading || t === m[0] || /^(arquivo|[aá]udio|grava[cç][aã]o)\b/i.test(t) || t.replace(m[0], '').trim().length < 3);
+    if (starts) { cur = { audio: m[0], lines: [] }; out.push(cur); continue; }
+    if (cur) cur.lines.push(t);
+  }
+  return out.map((x) => ({ ...x, ...audioMeta(x.audio), transcript: x.lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() })).filter((x) => x.contact_id && x.transcript);
+}
+// O nome do arquivo do discador: IdContato_Telefone_CPF_CLIENTE_Contrato_…_login_ddmmaa_hhmm.wav (ou …_IdContato.wav)
+export function audioMeta(name) {
+  const base = String(name || '').replace(/\.[a-z0-9]+$/i, '');
+  const parts = base.split('_');
+  const id = (base.match(/^(\d{6,10})_/) || base.match(/_(\d{6,10})$/) || [])[1] || (/^\d{6,10}$/.test(base) ? base : '');
+  const dm = base.match(/_([a-z][\w.]{2,30})_(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})$/i);
+  return {
+    contact_id: id, audio_file: name,
+    login: dm ? dm[1].toLowerCase() : '',
+    call_at: dm ? `20${dm[4]}-${dm[3]}-${dm[2]} ${dm[5]}:${dm[6]}` : '',
+    phone: /^\d{10,11}$/.test(parts[1] || '') ? parts[1] : '',
+  };
+}
+
+function openTranscripts() {
+  let items = null, meta = null, docName = '';
+  modal({
+    title: 'Importar transcrições', wide: true, cls: 'qd-modal',
+    body: html`<p class="t2" style="margin-top:0">Documento com várias transcrições (.docx ou .txt), uma por áudio, cada uma começando pelo nome do arquivo de áudio. Cada transcrição é anexada ao atendimento do mesmo IdContato; os que ainda não estão na plataforma são criados, com o operador e a desconexão do CSV de metadados (opcional, mas recomendado).</p>
+      <label class="qd-drop">${icon('file')}<span><b>Documento com as transcrições</b><small id="tr-docname">.docx ou .txt</small></span><input type="file" accept=".docx,.txt" id="tr-doc" hidden></label>
+      <label class="qd-drop">${icon('upload')}<span><b>CSV de metadados do discador (opcional)</b><small id="tr-metaname">Traz login, data, duração, finalização e o tipo de desconexão (Interna/Externa)</small></span><input type="file" accept=".csv,.xlsx,.txt" id="tr-meta" hidden></label>
+      <div class="field"><label for="tr-cart">Carteira</label><select class="select" id="tr-cart"><option value="">Escolha a carteira…</option>${CARTEIRAS.map((c) => html`<option ${lastCarteira() === c ? 'selected' : ''}>${c}</option>`)}</select></div>
+      <div id="tr-pv"></div>`,
+    foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="tr-go" disabled>${icon('check')}Importar</button>`,
+    onMount: (m, close) => {
+      const go = $('#tr-go', m);
+      const merged = () => (items || []).map((x) => {
+        const r = meta?.get(x.contact_id);
+        return { ...x, ...(r ? { login: r.login || x.login, call_at: r.call_at || x.call_at, duration: r.duration, phone: r.phone || x.phone, tabulation: r.tabulation, disconnect: r.disconnect, dialer_campaign: r.dialer_campaign, operation: r.operation, contract: r.contract, customer: r.customer, audio_original: r.audio_original } : {}), _meta: !!r };
+      });
+      const preview = () => {
+        if (!items) return;
+        const list = merged();
+        const mineIds = new Set(D.rows.filter(mine).map((r) => r.contact_id));
+        const known = list.filter((x) => mineIds.has(x.contact_id)).length;
+        const withMeta = list.filter((x) => x._meta).length;
+        const int = list.filter((x) => /^intern/i.test(String(x.disconnect || ''))).length;
+        const ext = list.filter((x) => /^extern/i.test(String(x.disconnect || ''))).length;
+        const logins = [...new Set(list.map((x) => String(x.login || '').toLowerCase()).filter(Boolean))];
+        const out = logins.filter((l) => !roster.has(l));
+        $('#tr-pv', m).innerHTML = String(html`<div class="qd-pv">
+          <p><b>${docName}</b> · ${list.length} transcrição(ões) · ${logins.length} operador(es)</p>
+          <ul><li><b>${known}</b> já na plataforma: a transcrição é anexada</li><li><b>${list.length - known}</b> novo(s): o atendimento é criado</li>
+            <li>${meta ? html`<b>${withMeta}</b> com metadados · desconexão <b>${int}</b> interna e <b>${ext}</b> externa${list.length - withMeta ? html` · ${list.length - withMeta} sem linha no CSV (ficam com o login e a data do nome do arquivo)` : ''}` : 'Sem CSV de metadados: login e data vêm do nome do arquivo; a desconexão fica em branco.'}</li></ul>
+          ${out.length ? html`<p class="tiny" style="color:var(--warn-ink)">${out.length} login(s) fora do seu capacity: ${out.join(', ')}. Eles entram sem liderança; anexe o capacity da carteira deles para completar.</p>` : ''}
+        </div>`);
+        go.disabled = !list.length || !$('#tr-cart', m).value;
+        go.lastChild.textContent = `Importar ${list.length} transcrição(ões)`;
+      };
+      $('#tr-cart', m).onchange = preview;
+      $('#tr-doc', m).onchange = async (e) => {
+        const f = e.target.files[0];
+        if (!f) return;
+        try {
+          const { name, lines } = await readTranscriptLines(f);
+          items = splitByAudio(lines); docName = name;
+          if (!items.length) throw new Error('Não encontrei transcrições começando pelo nome do arquivo de áudio com o IdContato (ex.: 43516759_…wav).');
+          $('#tr-docname', m).textContent = `${name} · ${items.length} transcrição(ões)`;
+          preview();
+        } catch (ex) { items = null; toast(ex.message, 'err', 6000); }
+      };
+      $('#tr-meta', m).onchange = async (e) => {
+        const f = e.target.files[0];
+        if (!f) return;
+        try {
+          const rows = metadataRows(await parseSheetFile(f));
+          if (!rows.length) throw new Error('Não encontrei a coluna IdContato no CSV.');
+          meta = new Map(rows.map((r) => [r.contact_id, r]));
+          $('#tr-metaname', m).textContent = `${f.name} · ${rows.length} linha(s)`;
+          preview();
+        } catch (ex) { meta = null; toast(ex.message, 'err', 6000); }
+      };
+      go.onclick = async (e) => {
+        const btnEl = e.currentTarget;
+        busy(btnEl, true, 'Importando');
+        try {
+          const carteira = $('#tr-cart', m).value;
+          try { localStorage.setItem('px_qd_carteira', carteira); } catch { /* sem storage */ }
+          const r = await api.post('/quedas/import-transcripts', { items: merged().map(({ _meta, lines, audio, ...x }) => x), carteira, file: docName });
+          close();
+          toast(`${r.attached} transcrição(ões) anexada(s), ${r.created} atendimento(s) criado(s)${r.others ? ` · ${r.others} ignorado(s) (outra carteira/pessoa)` : ''}.`, 'ok', 8000);
+          await fetchData(); draw();
+        } catch (ex) { toast(ex.message, 'err', 6000); busy(btnEl, false); }
       };
     },
   });
