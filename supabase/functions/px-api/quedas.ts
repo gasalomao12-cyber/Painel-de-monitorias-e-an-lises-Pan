@@ -143,8 +143,8 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
   }));
 
   // Capacity novo: troca a base de operadores; quem saiu fica inativo (o histórico continua com o nome)
+  // Qualquer perfil anexa o próprio capacity (vale só para ele e como reserva da carteira)
   router.post('/quedas/roster', h(async (req, res) => {
-    if (!canManage(req)) throw httpError(403, MANAGE_MSG);
     const b = req.body || {};
     const pf = portfolioOf(req.user);
     const scope = req.user.id;
@@ -170,12 +170,24 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
     const gone = old.map((r) => r.login).filter((l) => !keep.has(l));
     for (let i = 0; i < gone.length; i += 200) await must(sb().from('px_roster').update({ active: false, status: 'FORA DO CAPACITY' }).eq('scope', scope).in('login', gone.slice(i, i + 200)));
     // O capacity da PAN de antes da separação por usuário é substituído pelo primeiro novo
-    if (pf === 'PAN') await must(sb().from('px_roster').delete().eq('scope', 'shared'));
+    if (pf === 'PAN' && canManage(req)) await must(sb().from('px_roster').delete().eq('scope', 'shared'));
 
     // Gerência de cada liderança: mantém o que já foi definido; as novas vêm dos operadores já cadastrados na plataforma
     const known = await managers(pf);
     const byLeader = new Map();
     for (const r of list) if (r.leader && r.active) (byLeader.get(r.leader) || byLeader.set(r.leader, []).get(r.leader)).push(r.login);
+    // Gerência que veio no próprio capacity (a mais frequente de cada liderança)
+    const fromFile = new Map();
+    for (const r of Array.isArray(b.rows) ? b.rows : []) {
+      const leader = txt(r.leader, 160), manager = txt(r.manager, 160);
+      if (!leader || !manager || r.active === false) continue;
+      const v = fromFile.get(leader) || fromFile.set(leader, {}).get(leader);
+      v[manager] = (v[manager] || 0) + 1;
+    }
+    const fileLeaders = [...fromFile].map(([leader, v]) => ({ portfolio: pf, leader, manager: Object.entries(v).sort((a, z) => z[1] - a[1])[0][0], updated_at: new Date().toISOString() }));
+    // Quem cuida da carteira atualiza a gerência pelo arquivo; os demais só preenchem o que falta
+    if (fileLeaders.length) await must(sb().from('px_roster_leaders').upsert(fileLeaders, { onConflict: 'portfolio,leader', ignoreDuplicates: !canManage(req) }));
+    for (const l of fileLeaders) if (canManage(req) || !known.get(nameKey(l.leader))) known.set(nameKey(l.leader), l.manager);
     const newLeaders = [];
     for (const [leader, logins] of byLeader) {
       if (known.get(nameKey(leader))) continue;

@@ -183,3 +183,5 @@
 .qd-pf-me { font-size: 11px; vertical-align: 4px; margin-left: 6px; }
 .qd-ro-f { opacity: .75; cursor: default; }
 .qd-vd.qd-ro-f:hover { border-color: var(--border-strong); }
+.qd-cols { display: block; font-size: 10.5px; color: var(--muted); }
+.qd-pv-err { border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: var(--warn-soft); }

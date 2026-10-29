@@ -172,27 +172,27 @@ export async function parseSheetFile(file) {
   return out;
 }
 
-// Todas as abas de uma planilha (ex.: capacity com ATIVOS, DESLIGAMENTO, REMANEJADOS), cada uma com o cabeçalho
-// na primeira linha que tiver pelo menos duas colunas preenchidas
+// Todas as abas de uma planilha (ex.: capacity com ATIVOS, DESLIGAMENTO, REMANEJADOS), linha a linha:
+// cada aba vem como matriz de células, para quem lê achar sozinho a linha do cabeçalho
 export async function parseWorkbook(file) {
   const ext = extOf(file.name);
-  if (ext === 'csv' || ext === 'txt') return [{ name: file.name, rows: parseCsv(await decodeText(file)) }];
-  if (ext !== 'xlsx') throw new Error('Envie um arquivo .xlsx ou .csv.');
+  if (ext === 'csv' || ext === 'txt') {
+    const rows = parseCsv(await decodeText(file));
+    return [{ name: file.name, matrix: rows.length ? [Object.keys(rows[0]), ...rows.map((r) => Object.values(r))] : [] }];
+  }
+  if (ext === 'xls' || ext === 'xlsb') throw new Error('Este arquivo está no formato antigo do Excel (.xls/.xlsb). Abra no Excel e use Arquivo › Salvar como › Pasta de Trabalho do Excel (.xlsx).');
+  if (ext !== 'xlsx' && ext !== 'xlsm') throw new Error('Envie um arquivo .xlsx ou .csv.');
   const ExcelJS = await excel();
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(await file.arrayBuffer());
   return wb.worksheets.map((ws) => {
-    let head = null;
-    const rows = [];
+    const matrix = [];
     ws.eachRow((r) => {
       const cells = [];
-      r.eachCell({ includeEmpty: true }, (c, i) => { cells[i] = cellValue(c.value); });
-      if (!head) { if (cells.filter((v) => v !== null && v !== '').length >= 2) head = cells.map((v) => String(v ?? '').trim()); return; }
-      const o = {}; let any = false;
-      head.forEach((h, i) => { if (!h) return; const v = cells[i] ?? null; if (v !== null && v !== '') any = true; o[h] = v; });
-      if (any) rows.push(o);
+      r.eachCell({ includeEmpty: true }, (c, i) => { cells[i - 1] = cellValue(c.value); });
+      if (cells.some((v) => v !== null && v !== '')) matrix.push(cells);
     });
-    return { name: ws.name, rows };
+    return { name: ws.name, matrix };
   });
 }
 
