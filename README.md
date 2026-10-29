@@ -264,6 +264,11 @@ sozinhos na tela de todos, mesmo com uma análise aberta.
   desvio e analista. Dá para exportar a visão consolidada, um grupo (PAN, SAFRA, PORTO) ou uma carteira, só os
   analisados ou todos, e com ou sem os filtros da tela. O arquivo abre direto no Excel (";" e UTF-8).
 - Na análise entram também Telefone, Contrato, "Prestou atendimento?" e "Segurou a ligação?".
+- **Transcrições em lote**: o botão **Transcrições** recebe um documento (.docx ou .txt) com várias transcrições,
+  cada uma começando pelo nome do arquivo de áudio (que traz o IdContato), e, opcionalmente, o CSV de metadados do
+  discador. Cada transcrição é anexada ao atendimento do mesmo IdContato; os que não existem são criados com login,
+  data, duração, finalização e tipo de desconexão do CSV (sem o CSV, login e data vêm do nome do arquivo), já com
+  liderança e gerência do capacity. Importar de novo só reanexa, sem duplicar.
 - **Planilha de análises de volta**: o CSV exportado (ou a planilha de controle, em .csv ou .xlsx), preenchido no
   Excel, entra pelo mesmo botão **Importar CSV**; a plataforma reconhece sozinha. Cada linha acha o atendimento pelo
   ID Contato (ou por login + data + duração, quando não há ID) e atualiza a análise; linhas que não existem viram

@@ -292,6 +292,50 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
     res.json(out);
   }));
 
+  // Documento com várias transcrições (uma por áudio), com ou sem o CSV de metadados do discador:
+  // anexa cada transcrição ao atendimento do mesmo IdContato e cria os que ainda não existem
+  router.post('/quedas/import-transcripts', h(async (req, res) => {
+    const b = req.body || {};
+    const pf = portfolioOf(req.user);
+    const carteira = carteiraOf(b.carteira);
+    const file = txt(b.file, 200) || 'Transcrições';
+    const items = (Array.isArray(b.items) ? b.items : []).slice(0, 2000).filter((x) => txt(x.contact_id, 40) && String(x.transcript || '').trim());
+    if (!items.length) throw httpError(400, 'Nenhuma transcrição com IdContato no documento.');
+    const out = { attached: 0, created: 0, others: 0 };
+    const ids = [...new Set(items.map((x) => txt(x.contact_id, 40)))];
+    const existing = new Map();
+    for (let i = 0; i < ids.length; i += 200) for (const r of await must(sb().from('px_drop_reviews').select('*').eq('portfolio', pf).in('contact_id', ids.slice(i, i + 200)))) existing.set(r.contact_id, r);
+    const metaOf = (x) => ({
+      login: loginOf(x.login), call_at: callAt(x.call_at), duration_sec: seconds(x.duration), phone: txt(String(x.phone ?? '').replace(/[^\d+]/g, ''), 20),
+      tabulation: txt(x.tabulation, 120), disconnect: disconnectOf(x.disconnect), dialer_campaign: txt(x.dialer_campaign, 80), operation: txt(x.operation, 80),
+      contract: txt(x.contract, 60), customer: txt(x.customer, 160), audio_file: txt(x.audio_file, 400), audio_original: txt(x.audio_original, 200),
+    });
+    const fresh = [];
+    for (const x of items) {
+      const cid = txt(x.contact_id, 40);
+      const meta = metaOf(x);
+      const transcript = String(x.transcript).replace(/\r\n/g, '\n').trim().slice(0, 400000);
+      const cur = existing.get(cid);
+      if (cur) {
+        if (!canEdit(req, cur)) { out.others++; continue; }
+        // Completa só o que estiver vazio; a transcrição é sempre a do documento
+        const upd = { transcript, transcript_name: file, updated_at: new Date().toISOString() };
+        for (const [k, v] of Object.entries(meta)) if (v != null && (cur[k] == null || cur[k] === '')) upd[k] = v;
+        if (carteira && !cur.carteira) upd.carteira = carteira;
+        if (upd.login && !cur.leader) Object.assign(upd, Object.fromEntries(Object.entries((await enrich([{ login: upd.login }], pf, req.user.id))[0]).filter(([k, v]) => k !== 'login' && v != null && cur[k] == null)));
+        await must(sb().from('px_drop_reviews').update(upd).eq('id', cur.id));
+        out.attached++;
+      } else {
+        fresh.push({ ...Object.fromEntries(Object.entries(meta).filter(([, v]) => v != null)), contact_id: cid, portfolio: pf, ...(carteira ? { carteira } : {}), transcript, transcript_name: file, created_by: req.user.id, batch: file });
+      }
+    }
+    const rows = await enrich(fresh, pf, req.user.id);
+    for (let i = 0; i < rows.length; i += 200) await must(sb().from('px_drop_reviews').insert(rows.slice(i, i + 200)));
+    out.created = rows.length;
+    await audit(req.user.id, 'transcricoes_quedas_importadas', 'drop_review', null, { arquivo: file, carteira: carteira || pf, ...out });
+    res.json(out);
+  }));
+
   router.post('/quedas/import', h(async (req, res) => {
     const b = req.body || {};
     const pf = portfolioOf(req.user);
