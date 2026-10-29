@@ -33,8 +33,8 @@ const MANAGE_MSG = 'Na carteira PAN, só a Qualidade e o administrador alteram o
 
 function callAt(v) {
   const s = String(v || '').trim();
-  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6] || '00'}`;
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}T${m[4] || '00'}:${m[5] || '00'}:${m[6] || '00'}`;
   m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
   if (m) return `${m[3]}-${m[2]}-${m[1]}T${m[4] || '00'}:${m[5] || '00'}:${m[6] || '00'}`;
   return null;
@@ -235,6 +235,62 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
   }));
 
   // CSV de metadados do discador (opcional): cria os atendimentos para análise
+  // Planilha de análises de volta (o CSV exportado pela plataforma ou a planilha de controle, já preenchidos):
+  // acha cada atendimento pelo IdContato ou por login + data + duração, atualiza a análise ou cria o atendimento
+  router.post('/quedas/import-analyses', h(async (req, res) => {
+    const b = req.body || {};
+    const pf = portfolioOf(req.user);
+    const fallbackCarteira = carteiraOf(b.carteira);
+    const list = (Array.isArray(b.rows) ? b.rows : []).slice(0, 5000);
+    if (!list.length) throw httpError(400, 'Nenhuma linha na planilha.');
+    const out = { updated: 0, created: 0, unchanged: 0, others: 0, locked: 0, invalid: 0 };
+    // Candidatos: pelos IdContato e pelos logins da planilha
+    const ids = [...new Set(list.map((r) => txt(r.contact_id, 40)).filter(Boolean))];
+    const logins = [...new Set(list.map((r) => loginOf(r.login)).filter(Boolean))];
+    const cands = [];
+    for (let i = 0; i < ids.length; i += 200) cands.push(...await must(sb().from('px_drop_reviews').select('*').in('contact_id', ids.slice(i, i + 200))));
+    for (let i = 0; i < logins.length; i += 200) cands.push(...await must(sb().from('px_drop_reviews').select('*').in('login', logins.slice(i, i + 200))));
+    const byId = new Map(cands.map((r) => [r.id, r]));
+    const day = (v) => String(callAt(v) || '').slice(0, 10);
+    const used = new Set();
+    for (const raw of list) {
+      const p = reviewPatch(raw);
+      const carteira = p.carteira || fallbackCarteira;
+      const cid = p.contact_id;
+      let pool = [...byId.values()].filter((r) => !used.has(r.id));
+      let match = null;
+      if (cid) {
+        const same = pool.filter((r) => r.contact_id === cid);
+        match = same.find((r) => carteira && r.carteira === carteira) || same.find((r) => (r.portfolio || 'PAN') === pf) || same[0] || null;
+      } else if (p.login && raw.call_at) {
+        const same = pool.filter((r) => r.login === p.login && day(r.call_at) === day(raw.call_at));
+        match = (p.duration_sec != null ? same.find((r) => Math.abs((r.duration_sec ?? -99) - p.duration_sec) <= 1) : null)
+          || (p.phone ? same.find((r) => r.phone === p.phone) : null) || (same.length === 1 ? same[0] : null);
+      }
+      if (match) {
+        used.add(match.id);
+        if (!canEdit(req, match)) { out.others++; continue; }
+        if (lockAlive(match) && match.locked_by !== req.user.id) { out.locked++; continue; }
+        // Na atualização, a planilha muda só a análise (identificação da ligação fica como está na plataforma)
+        const upd = {};
+        for (const k of ['carteira', 'phone', 'contract', 'disconnect', 'correct_tab', 'tab_correct', 'attended', 'held', 'notes', 'verdict', 'conduct', 'conduct_type', 'drop_moment']) if (p[k] !== undefined && p[k] !== null) upd[k] = p[k];
+        if (!upd.carteira && fallbackCarteira && !match.carteira) upd.carteira = fallbackCarteira;
+        const changed = Object.entries(upd).filter(([k, v]) => match[k] !== v);
+        if (!changed.length) { out.unchanged++; continue; }
+        Object.assign(upd, analysisMeta(req, { ...match, ...upd }, match), { updated_at: new Date().toISOString() });
+        await must(sb().from('px_drop_reviews').update(upd).eq('id', match.id));
+        out.updated++;
+      } else {
+        if (!p.login && !p.operator_name) { out.invalid++; continue; }
+        const [row] = await enrich([{ ...Object.fromEntries(Object.entries(p).filter(([, v]) => v !== null)), carteira, portfolio: pf, created_by: req.user.id, batch: txt(b.file, 120) || 'Planilha de análises' }], pf, req.user.id);
+        Object.assign(row, analysisMeta(req, row, null));
+        try { await must(sb().from('px_drop_reviews').insert(row)); out.created++; } catch { out.invalid++; }
+      }
+    }
+    await audit(req.user.id, 'planilha_quedas_importada', 'drop_review', null, { arquivo: txt(b.file, 120), carteira: pf, ...out });
+    res.json(out);
+  }));
+
   router.post('/quedas/import', h(async (req, res) => {
     const b = req.body || {};
     const pf = portfolioOf(req.user);

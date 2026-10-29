@@ -615,27 +615,101 @@ export function metadataRows(rows) {
   })).filter((r) => r.contact_id);
 }
 
+// Planilha de análises (o CSV exportado pela plataforma ou a planilha de controle, já preenchidos)
+export const isAnalysisSheet = (rows) => !!rows.length && Object.keys(rows[0]).some((k) => ['statusclassificacao', 'classificacaocorreta', 'resultadodaanalise', 'prestouatendimento'].includes(hk(k)));
+const yesNo = (v) => { const k = key(v); return !k || k === '—' ? undefined : /^(nao|n)\b/.test(k) || k.includes('nao prestou') ? false : /^(sim|s)\b/.test(k) || k.includes('prestou') ? true : undefined; };
+const VERDICT_BY_LABEL = Object.fromEntries(Object.entries(VERDICT).flatMap(([k, [l]]) => [[key(l), k], [k, k]]));
+export function analysisRows(rows) {
+  return rows.map((r) => {
+    const status = key(col(r, 'statusclassificacao'));
+    const tabOk = status.startsWith('correto') ? true : status.startsWith('incorreto') ? false : undefined;
+    const desvio = yesNo(col(r, 'desviodeconduta'));
+    let verdict = VERDICT_BY_LABEL[key(col(r, 'resultadodaanalise', 'resultado'))];
+    let inferred = false;
+    // Sem a coluna de resultado: deduz pela Status Classificação (e pelo desvio de conduta, quando houver)
+    if (!verdict && (tabOk !== undefined || desvio)) { verdict = desvio ? 'operador' : tabOk ? 'cliente' : 'concluido'; inferred = true; }
+    const type = String(col(r, 'tipodedesvio') || '').trim();
+    const cart = String(col(r, 'carteira') || '').trim().toUpperCase();
+    const date = String(col(r, 'data') || '').trim();
+    const hour = String(col(r, 'hora') || '').trim();
+    const out = {
+      contact_id: String(col(r, 'idcontato', 'idligacao') || '').trim() || undefined,
+      login: String(col(r, 'login') || '').trim() || undefined,
+      operator_name: String(col(r, 'nome', 'operador') || '').trim() || undefined,
+      contract: String(col(r, 'contrato') || '').trim() || undefined,
+      phone: String(col(r, 'telefone') || '').trim() || undefined,
+      call_at: date ? `${date}${hour ? ` ${hour}` : ''}` : undefined,
+      duration_sec: String(col(r, 'tempoligacao', 'duracao') || '').trim() || undefined,
+      tabulation: String(col(r, 'classificacaooperador', 'tabulacao') || '').trim() || undefined,
+      tab_correct: tabOk,
+      correct_tab: tabOk === false ? String(col(r, 'classificacaocorreta') || '').trim() || undefined : undefined,
+      disconnect: /^intern/.test(key(col(r, 'desconexao'))) ? 'Interna' : /^extern/.test(key(col(r, 'desconexao'))) ? 'Externa' : undefined,
+      attended: yesNo(col(r, 'prestouatendimento')),
+      held: yesNo(col(r, 'segurouligacao')),
+      notes: String(col(r, 'observacao') || '').trim() || undefined,
+      verdict,
+      conduct: verdict === 'operador' ? true : desvio,
+      conduct_type: (verdict === 'operador' || desvio) ? (CONDUCT.find((c) => key(c) === key(type)) || (type ? 'Outro desvio de conduta' : 'Desligou durante o atendimento')) : undefined,
+      drop_moment: String(col(r, 'momentodaqueda') || '').trim() || undefined,
+      carteira: CARTEIRAS.includes(cart) ? cart : undefined,
+      leader: String(col(r, 'lideranca') || '').trim() || undefined,
+      manager: String(col(r, 'gerencia') || '').trim() || undefined,
+      _inferred: inferred,
+    };
+    return out;
+  }).filter((r) => r.contact_id || r.login || r.operator_name);
+}
+
 function openImport() {
   let parsed = null;
   let fileName = '';
+  let mode = 'meta';
   modal({
-    title: 'Importar CSV de metadados', wide: true, cls: 'qd-modal',
-    body: html`<p class="t2" style="margin-top:0">Opcional: o CSV do discador traz IdContato, login, data, duração, finalização, arquivo do áudio e o tipo de desconexão (Interna/Externa). Cada linha vira um atendimento da carteira <b>${D.portfolio}</b>, já com liderança, gerência e campanha do seu capacity. O CPF não é guardado.</p>
-      <label class="qd-drop">${icon('upload')}<span><b>Escolher o CSV</b><small>Modelo: colunas IdContato; Campanha; Login; DataHoraLigacao; Duracao; FINALIZACAO; NomeDoArquivo; TIPO DE DESCONEXÃO</small></span><input type="file" accept=".csv,.xlsx,.txt" id="qd-csvf" hidden></label>
+    title: 'Importar CSV', wide: true, cls: 'qd-modal',
+    body: html`<p class="t2" style="margin-top:0"><b>Planilha de análises:</b> o CSV exportado pela plataforma (ou a planilha de controle) preenchido volta para cá e as análises são contabilizadas sozinhas. <b>CSV do discador:</b> o CSV de metadados traz IdContato, login, data, duração, finalização, arquivo do áudio e o tipo de desconexão (Interna/Externa). Cada linha vira um atendimento da carteira <b>${D.portfolio}</b>, já com liderança, gerência e campanha do seu capacity. O CPF não é guardado.</p>
+      <label class="qd-drop">${icon('upload')}<span><b>Escolher o arquivo (.csv ou .xlsx)</b><small>A plataforma reconhece sozinha se é a planilha de análises ou o CSV do discador (IdContato; Login; DataHoraLigacao; Duracao; FINALIZACAO; NomeDoArquivo; TIPO DE DESCONEXÃO).</small></span><input type="file" accept=".csv,.xlsx,.txt" id="qd-csvf" hidden></label>
       <div class="field" style="margin-top:4px"><label for="qd-csvcart">Carteira dos atendimentos</label><select class="select" id="qd-csvcart"><option value="">Escolha a carteira…</option>${CARTEIRAS.map((c) => html`<option ${lastCarteira() === c ? 'selected' : ''}>${c}</option>`)}</select></div>
       <div id="qd-csvpv"></div>`,
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="qd-csvgo" disabled>${icon('upload')}Importar</button>`,
     onMount: (m, close) => {
       const go = $('#qd-csvgo', m);
-      const chosen = () => (parsed ? ($('#qd-onlydrop', m)?.checked ? parsed.filter((r) => isDrop(r.tabulation)) : parsed) : []);
+      const chosen = () => (parsed ? (mode === 'meta' && $('#qd-onlydrop', m)?.checked ? parsed.filter((r) => isDrop(r.tabulation)) : parsed) : []);
       $('#qd-csvcart', m).onchange = () => sync();
-      const sync = () => { const n = chosen().length; go.disabled = !n || !$('#qd-csvcart', m).value; go.lastChild.textContent = n ? `Importar ${n} atendimento(s)` : 'Importar'; };
+      // Na planilha de análises, a carteira escolhida só vale para as linhas sem a coluna Carteira
+      const needCart = () => (mode === 'meta' ? true : chosen().some((r) => !r.carteira && !D.rows.some((x) => x.contact_id && x.contact_id === r.contact_id && x.carteira)));
+      const sync = () => { const n = chosen().length; go.disabled = !n || (needCart() && !$('#qd-csvcart', m).value); go.lastChild.textContent = n ? (mode === 'meta' ? `Importar ${n} atendimento(s)` : `Contabilizar ${n} análise(s)`) : 'Importar'; };
       $('#qd-csvf', m).onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
         fileName = file.name;
         try {
-          parsed = metadataRows(await parseSheetFile(file));
+          const raw = await parseSheetFile(file);
+          if (isAnalysisSheet(raw)) {
+            mode = 'analises';
+            parsed = analysisRows(raw);
+            if (!parsed.length) throw new Error('A planilha de análises não tem linhas com ID Contato, login ou nome.');
+            const byCid = new Map(D.rows.filter((x) => x.contact_id).map((x) => [x.contact_id, x]));
+            const known = parsed.filter((r) => r.contact_id && byCid.has(r.contact_id)).length;
+            const noId = parsed.filter((r) => !r.contact_id).length;
+            const inferred = parsed.filter((r) => r._inferred).length;
+            const desv = parsed.filter((r) => r.conduct).length;
+            const st = { c: parsed.filter((r) => r.tab_correct === true).length, i: parsed.filter((r) => r.tab_correct === false).length };
+            $('#qd-csvpv', m).innerHTML = String(html`<div class="qd-pv">
+              <p><b>${file.name}</b> · planilha de análises · ${parsed.length} linha(s)</p>
+              <ul><li><b>${known}</b> atendimento(s) já na plataforma pelo ID Contato: a análise é atualizada</li>
+                ${noId ? html`<li><b>${noId}</b> linha(s) sem ID Contato: procuradas por login + data + duração; se não existirem, entram como atendimento novo</li>` : ''}
+                ${parsed.length - known - noId ? html`<li><b>${parsed.length - known - noId}</b> com ID que ainda não está na plataforma: entram como atendimento novo</li>` : ''}
+                <li>${st.c} correta(s) · ${st.i} incorreta(s) · ${desv} com desvio de conduta</li></ul>
+              ${inferred ? html`<p class="tiny" style="color:var(--warn-ink)">${inferred} linha(s) sem a coluna "Resultado da Análise": o resultado é deduzido pela Status Classificação (Correto = cliente desligou, Incorreto = atendimento seguiu) e pela coluna "Desvio de Conduta" quando houver.</p>` : ''}
+              <p class="tiny muted">Só as colunas preenchidas mudam a análise. Linhas de outra carteira ou de análises de outra pessoa (sem permissão) são ignoradas.</p>
+            </div>`);
+            $('#qd-csvcart', m).closest('.field').querySelector('label').textContent = 'Carteira para as linhas sem a coluna Carteira';
+            sync();
+            return;
+          }
+          mode = 'meta';
+          $('#qd-csvcart', m).closest('.field').querySelector('label').textContent = 'Carteira dos atendimentos';
+          parsed = metadataRows(raw);
           if (!parsed.length) throw new Error('Não encontrei a coluna IdContato no arquivo.');
           const tabs = {};
           for (const r of parsed) tabs[r.tabulation || '—'] = (tabs[r.tabulation || '—'] || 0) + 1;
@@ -662,6 +736,14 @@ function openImport() {
         try {
           const carteira = $('#qd-csvcart', m).value;
           try { localStorage.setItem('px_qd_carteira', carteira); } catch { /* sem storage */ }
+          if (mode === 'analises') {
+            const r = await api.post('/quedas/import-analyses', { rows: rows.map(({ _inferred, ...x }) => x), file: fileName, carteira });
+            close();
+            const skip = [r.others ? `${r.others} de outra carteira/pessoa` : '', r.locked ? `${r.locked} em análise agora` : '', r.invalid ? `${r.invalid} inválida(s)` : ''].filter(Boolean).join(', ');
+            toast(`Planilha contabilizada: ${r.updated} análise(s) atualizada(s), ${r.created} nova(s)${r.unchanged ? `, ${r.unchanged} sem mudança` : ''}${skip ? ` · ignoradas: ${skip}` : ''}.`, 'ok', 8000);
+            await fetchData(); draw();
+            return;
+          }
           const r = await api.post('/quedas/import', { rows, batch: fileName, carteira });
           close();
           toast(`${r.created} atendimento(s) na fila${r.updated ? `, ${r.updated} atualizado(s)` : ''}.`, 'ok', 5000);

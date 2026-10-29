@@ -264,6 +264,13 @@ sozinhos na tela de todos, mesmo com uma análise aberta.
   desvio e analista. Dá para exportar a visão consolidada, um grupo (PAN, SAFRA, PORTO) ou uma carteira, só os
   analisados ou todos, e com ou sem os filtros da tela. O arquivo abre direto no Excel (";" e UTF-8).
 - Na análise entram também Telefone, Contrato, "Prestou atendimento?" e "Segurou a ligação?".
+- **Planilha de análises de volta**: o CSV exportado (ou a planilha de controle, em .csv ou .xlsx), preenchido no
+  Excel, entra pelo mesmo botão **Importar CSV**; a plataforma reconhece sozinha. Cada linha acha o atendimento pelo
+  ID Contato (ou por login + data + duração, quando não há ID) e atualiza a análise; linhas que não existem viram
+  atendimentos novos, com liderança e gerência do capacity. Só as colunas preenchidas mudam a análise, e importar o
+  mesmo arquivo de novo não duplica nada. Sem a coluna "Resultado da Análise", o resultado é deduzido pela Status
+  Classificação (Correto = cliente desligou, Incorreto = atendimento seguiu) e pela coluna "Desvio de Conduta".
+  Linhas de outra carteira, ou análises de outra pessoa sem permissão, são ignoradas e contadas no aviso.
 - **Aviso de atendimento já analisado**: ao colar o link do áudio, digitar o nome do áudio ou anexar o arquivo, a
   plataforma confere em todas as carteiras e de todos os usuários se aquele áudio já pertence a um atendimento
   analisado (ou em análise agora por outra pessoa) e mostra quem analisou, quando e o resultado. Compara o link
