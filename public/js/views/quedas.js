@@ -25,7 +25,11 @@ const LIST = { todos: 'Todos', pendente: 'Pendentes', analisada: 'Analisados', d
 const PAGE = 25;
 
 const key = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
-const isDrop = (t) => /queda|caiu|abandon/.test(key(t));
+// Tabulações que a força-tarefa analisa: queda de ligação e ligação muda
+const isMute = (t) => /\bmud[ao]\b/.test(key(t));
+const isDrop = (t) => /queda|caiu|abandon/.test(key(t)) || isMute(t);
+// A tabulação procede? Na queda, quando o cliente ou a linha derrubou; na ligação muda, quando estava muda
+const tabOkFor = (verdict, tab) => (!verdict ? null : isMute(tab) ? (verdict === 'mudo' ? true : verdict === 'inconclusivo' ? null : false) : TAB_OK[verdict]);
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
 const pctTxt = (a, b) => (b ? `${pct(a, b)}%` : '—');
 const dt = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)} ${s.slice(11, 16)}` : '—');
@@ -532,7 +536,7 @@ function openCapacity() {
 function lastCarteira() { try { return localStorage.getItem('px_qd_carteira') || ''; } catch { return ''; } }
 const hms = (s) => (s == null ? '' : [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map((x) => String(x).padStart(2, '0')).join(':'));
 const brDate = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
-const tabLabel = (t) => (isDrop(t) ? 'Queda de Ligação' : t || '');
+const tabLabel = (t) => (isMute(t) ? 'Ligação Muda' : isDrop(t) ? 'Queda de Ligação' : t || '');
 const CSV_COLS = [
   ['Nome', (r) => String(r.operator_name || '').toUpperCase()],
   ['Login', (r) => r.login || ''],
@@ -627,7 +631,7 @@ export function analysisRows(rows) {
     let verdict = VERDICT_BY_LABEL[key(col(r, 'resultadodaanalise', 'resultado'))];
     let inferred = false;
     // Sem a coluna de resultado: deduz pela Status Classificação (e pelo desvio de conduta, quando houver)
-    if (!verdict && (tabOk !== undefined || desvio)) { verdict = desvio ? 'operador' : tabOk ? 'cliente' : 'concluido'; inferred = true; }
+    if (!verdict && (tabOk !== undefined || desvio)) { verdict = desvio ? 'operador' : tabOk ? (isMute(col(r, 'classificacaooperador', 'tabulacao')) ? 'mudo' : 'cliente') : 'concluido'; inferred = true; }
     const type = String(col(r, 'tipodedesvio') || '').trim();
     const cart = String(col(r, 'carteira') || '').trim().toUpperCase();
     const date = String(col(r, 'data') || '').trim();
@@ -719,9 +723,9 @@ function openImport() {
           const known = new Set(D.rows.filter(mine).map((r) => r.contact_id));
           const again = parsed.filter((r) => known.has(r.contact_id)).length;
           $('#qd-csvpv', m).innerHTML = String(html`<div class="qd-pv">
-            <p><b>${file.name}</b> · ${parsed.length} linha(s) · ${drops} com tabulação de queda · ${int} desconexão interna${again ? ` · ${again} já na força-tarefa (só os dados do discador são atualizados)` : ''}</p>
+            <p><b>${file.name}</b> · ${parsed.length} linha(s) · ${drops} com tabulação de queda ou ligação muda · ${int} desconexão interna${again ? ` · ${again} já na força-tarefa (só os dados do discador são atualizados)` : ''}</p>
             <div class="qd-tabs">${Object.entries(tabs).sort((a, b) => b[1] - a[1]).map(([t, n]) => html`<span class="chip ${isDrop(t) ? 'warn' : 'outline'}">${t} · ${n}</span>`)}</div>
-            <label class="check"><input type="checkbox" id="qd-onlydrop" ${drops ? 'checked' : ''}> Importar só as tabulações de queda</label>
+            <label class="check"><input type="checkbox" id="qd-onlydrop" ${drops ? 'checked' : ''}> Importar só as tabulações de queda e ligação muda</label>
             ${unknown.length ? html`<p class="tiny" style="color:var(--warn-ink)">${unknown.length} login(s) fora do capacity: ${unknown.slice(0, 8).join(', ')}${unknown.length > 8 ? '…' : ''}. Eles entram sem liderança; atualize o capacity se precisar.</p>` : ''}
           </div>`);
           $('#qd-onlydrop', m).onchange = sync;
@@ -798,7 +802,7 @@ async function openReview(id, queue = null) {
           <div class="field"><label for="r-cid">ID do contato</label><input class="input" id="r-cid" value="${row.contact_id || ''}" placeholder="IdContato"></div>
           <div class="field"><label for="r-at">Data e hora</label><input class="input" type="datetime-local" id="r-at" value="${callLocal}"></div>
           <div class="field"><label for="r-dur">Duração</label><input class="input" id="r-dur" value="${row.duration_sec != null ? fmtDur(row.duration_sec) : ''}" placeholder="m:ss"></div>
-          <div class="field"><label for="r-tab">Tabulação do operador</label><input class="input" id="r-tab" list="r-tabs" value="${row.tabulation || ''}" placeholder="QUEDA LIGACAO CLIENTE"><datalist id="r-tabs">${['QUEDA LIGACAO CLIENTE', 'QUEDA DE LIGACAO', ...tabs].filter((t, i, a) => a.indexOf(t) === i).map((t) => html`<option value="${t}">`)}</datalist></div>
+          <div class="field"><label for="r-tab">Tabulação do operador</label><input class="input" id="r-tab" list="r-tabs" value="${row.tabulation || ''}" placeholder="QUEDA LIGACAO CLIENTE"><datalist id="r-tabs">${['QUEDA LIGACAO CLIENTE', 'QUEDA DE LIGACAO', 'LIGACAO MUDA', ...tabs].filter((t, i, a) => a.indexOf(t) === i).map((t) => html`<option value="${t}">`)}</datalist></div>
           <div class="field span-2"><label>Tipo de desconexão</label><div class="seg" id="r-disc">${['Interna', 'Externa', ''].map((d) => html`<button type="button" data-v="${d}" class="${(row.disconnect || '') === d ? 'on' : ''}">${d || 'Não informado'}</button>`)}</div></div>
           ${row.dialer_campaign || row.operation ? html`<div class="field"><label>Discador</label><div class="qd-ro">${[row.dialer_campaign, row.operation].filter(Boolean).join(' · ')}</div></div>` : ''}
         </div>
@@ -832,7 +836,7 @@ async function openReview(id, queue = null) {
       <div class="qd-sec"><h4>${icon('target')}Resultado da análise</h4>
         <div class="qd-verdicts" id="r-verdict">${Object.entries(VERDICT).map(([k, [l, tone, d]]) => html`<button type="button" class="qd-vd ${tone} ${v === k ? 'on' : ''}" data-v="${k}"><b>${l}</b><small>${d}</small></button>`)}</div>
         <div class="qd-fgrid">
-          <div class="field"><label>A tabulação de queda procede?</label><div class="seg" id="r-tabok">${[['1', 'Sim'], ['0', 'Não'], ['', 'Sem conclusão']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.tab_correct === true ? '1' : row.tab_correct === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
+          <div class="field"><label>A tabulação procede?</label><div class="seg" id="r-tabok">${[['1', 'Sim'], ['0', 'Não'], ['', 'Sem conclusão']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.tab_correct === true ? '1' : row.tab_correct === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
           <div class="field" id="r-ctab-f"><label for="r-ctab">Tabulação correta</label><input class="input" id="r-ctab" list="r-tabs" value="${row.correct_tab || ''}" placeholder="Qual deveria ser"></div>
           <div class="field"><label for="r-mom">Momento da queda</label><input class="input" id="r-mom" value="${row.drop_moment || ''}" placeholder="m:ss no áudio"></div>
           <div class="field span-2"><label>Prestou atendimento?</label><div class="seg" id="r-att">${[['1', 'Prestou atendimento'], ['0', 'Não prestou'], ['', '—']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.attended === true ? '1' : row.attended === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
@@ -870,7 +874,7 @@ async function openReview(id, queue = null) {
     const was = b.classList.contains('on');
     $$('#r-verdict .qd-vd', m).forEach((x) => x.classList.toggle('on', x === b && !was));
     const k = was ? '' : b.dataset.v;
-    const ok = k ? TAB_OK[k] : null;
+    const ok = tabOkFor(k, val('#r-tab'));
     $$('#r-tabok button', m).forEach((x) => x.classList.toggle('on', x.dataset.v === (ok === true ? '1' : ok === false ? '0' : '')));
     // "Operador desligou" é sempre desvio de conduta; ao trocar de resultado, desfaz só a marcação automática
     if (k === 'operador') {
