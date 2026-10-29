@@ -185,3 +185,4 @@
 .qd-vd.qd-ro-f:hover { border-color: var(--border-strong); }
 .qd-cols { display: block; font-size: 10.5px; color: var(--muted); }
 .qd-pv-err { border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: var(--warn-soft); }
+.qd-view button { padding: 5px 10px; font-size: 12px; }

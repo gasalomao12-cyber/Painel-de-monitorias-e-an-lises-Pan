@@ -10,10 +10,13 @@ const LOCK_MS = 15 * 60 * 1000;
 const MAX_AUDIO = 50 * 1024 * 1024;
 const VERDICTS = ['cliente', 'operador', 'tecnica', 'mudo', 'concluido', 'inconclusivo'];
 const DISCONNECT = ['Interna', 'Externa'];
+// Carteiras que a força-tarefa analisa
+export const CARTEIRAS = ['SAFRA BS', 'SAFRA ADM', 'PAN CONTACT', 'PAN MASSIFICADOS', 'PAN ATIVAS E AJUIZADOS', 'PORTO'];
+const carteiraOf = (v) => { const k = String(v || '').trim().toUpperCase(); return CARTEIRAS.includes(k) ? k : null; };
 // A queda procede quando o cliente (ou a linha) derrubou a ligação
 const TAB_OK = { cliente: true, tecnica: true, operador: false, mudo: false, concluido: false, inconclusivo: null };
 // Colunas da lista (a transcrição só vem ao abrir o atendimento)
-const LIST_COLS = 'id, portfolio, contact_id, call_at, duration_sec, login, operator_name, leader, manager, campaign, segment, dialer_campaign, operation, tabulation, disconnect, contract, customer, audio_file, audio_original, status, verdict, conduct, conduct_type, tab_correct, correct_tab, drop_moment, notes, audio_url, audio_path, audio_name, transcript_name, analyst_id, analyst_name, analyzed_at, locked_by, locked_name, locked_at, batch, created_at, updated_at';
+const LIST_COLS = 'id, portfolio, carteira, phone, attended, held, contact_id, call_at, duration_sec, login, operator_name, leader, manager, campaign, segment, dialer_campaign, operation, tabulation, disconnect, contract, customer, audio_file, audio_original, status, verdict, conduct, conduct_type, tab_correct, correct_tab, drop_moment, notes, audio_url, audio_path, audio_name, transcript_name, analyst_id, analyst_name, analyzed_at, locked_by, locked_name, locked_at, batch, created_at, updated_at';
 
 export const nameKey = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 const txt = (v, max = 300) => { const s = String(v ?? '').trim(); return s ? s.slice(0, max) : null; };
@@ -102,6 +105,9 @@ function reviewPatch(b) {
   set('audio_original', txt(b.audio_original, 200));
   set('audio_url', /^https:\/\//i.test(String(b.audio_url || '')) ? String(b.audio_url).trim().slice(0, 1500) : null);
   set('drop_moment', txt(b.drop_moment, 12));
+  set('carteira', carteiraOf(b.carteira));
+  set('phone', txt(String(b.phone ?? '').replace(/[^\d+]/g, ''), 20));
+  for (const k of ['attended', 'held']) if (b[k] !== undefined) p[k] = b[k] === null || b[k] === '' ? null : !!b[k];
   set('notes', txt(b.notes, 4000));
   if (b.transcript !== undefined) {
     p.transcript = String(b.transcript || '').replace(/\r\n/g, '\n').trim().slice(0, 400000) || null;
@@ -228,12 +234,13 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
     const b = req.body || {};
     const pf = portfolioOf(req.user);
     const batch = txt(b.batch, 120);
+    const carteira = carteiraOf(b.carteira);
     const byId = new Map();
     for (const r of Array.isArray(b.rows) ? b.rows.slice(0, 20000) : []) {
       const id = txt(r.contact_id, 40);
       if (!id) continue;
       byId.set(id, {
-        portfolio: pf, contact_id: id, call_at: callAt(r.call_at), duration_sec: seconds(r.duration), login: loginOf(r.login),
+        portfolio: pf, ...(carteira ? { carteira } : {}), phone: txt(String(r.phone ?? '').replace(/[^\d+]/g, ''), 20), contact_id: id, call_at: callAt(r.call_at), duration_sec: seconds(r.duration), login: loginOf(r.login),
         dialer_campaign: txt(r.dialer_campaign, 80), operation: txt(r.operation, 80), tabulation: txt(r.tabulation, 120),
         disconnect: disconnectOf(r.disconnect), contract: txt(r.contract, 60), customer: txt(r.customer, 160),
         audio_file: txt(r.audio_file, 400), audio_original: txt(r.audio_original, 200), batch,

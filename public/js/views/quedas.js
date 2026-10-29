@@ -1,4 +1,4 @@
-import { api } from '../api.js';
+import { api, saveBlob } from '../api.js';
 import { html, icon, $, $$, toast, modal, busy, debounce, emptyState, confirmDialog, multiSelect, bindMultiSelect, fmtDur, fmtRel, avatar } from '../ui.js';
 import { scatterChart, palette, destroyAll } from '../charts.js';
 import { parseSheetFile, parseWorkbook, readTranscriptFile } from '../files.js';
@@ -16,6 +16,10 @@ const VERDICT = {
 const VCOLOR = { cliente: '--ok', operador: '--bad', tecnica: '--s-refin', mudo: '--warn', concluido: '--s-entrega', inconclusivo: '--na' };
 // A queda procede quando o cliente (ou a linha) derrubou a ligação
 const TAB_OK = { cliente: true, tecnica: true, operador: false, mudo: false, concluido: false, inconclusivo: null };
+// Carteiras analisadas pela força-tarefa e o grupo de cada uma (visão apartada)
+const CARTEIRAS = ['SAFRA BS', 'SAFRA ADM', 'PAN CONTACT', 'PAN MASSIFICADOS', 'PAN ATIVAS E AJUIZADOS', 'PORTO'];
+const GROUPS = ['PAN', 'SAFRA', 'PORTO'];
+const groupOf = (r) => (r.carteira ? r.carteira.split(' ')[0] : r.portfolio || 'PAN');
 const CONDUCT = ['Desligou na cara do cliente', 'Desligou durante o atendimento', 'Encerrou sem retorno ao cliente', 'Outro desvio de conduta'];
 const LIST = { todos: 'Todos', pendente: 'Pendentes', analisada: 'Analisados', desvio: 'Com desvio', interna: 'Desconexão interna' };
 const PAGE = 25;
@@ -30,9 +34,9 @@ const title = (s) => String(s || '').toLowerCase().replace(/(^|\s)(\p{L})/gu, (m
 const short = (s) => { const p = title(s).split(' ').filter(Boolean); return p.length > 2 ? `${p[0]} ${p[p.length - 1]}` : p.join(' '); };
 const mmss = (s) => { const m = String(s || '').trim().match(/^(?:(\d+):)?(\d{1,2}):(\d{2})$/); return m ? (Number(m[1] || 0) * 3600 + Number(m[2]) * 60 + Number(m[3])) : /^\d+$/.test(String(s || '').trim()) ? Number(s) : null; };
 
-const state = { f: {}, from: '', to: '', q: '', list: 'todos', page: 0 };
+const state = { f: {}, from: '', to: '', q: '', list: 'todos', page: 0, view: 'todas' };
 const FILTERS = [
-  ['portfolio', 'Todas as carteiras', 'carteiras', (r) => r.portfolio || 'PAN'],
+  ['carteira', 'Todas as carteiras', 'carteiras', (r) => r.carteira || 'A definir'],
   ['manager', 'Todas as gerências', 'gerências', (r) => r.manager],
   ['leader', 'Todas as lideranças', 'lideranças', (r) => r.leader],
   ['login', 'Todos os operadores', 'operadores', (r) => r.login],
@@ -80,8 +84,8 @@ async function fetchData() {
 }
 
 // Carteira: aparece em cada análise quando há mais de uma na força-tarefa
-const multi = () => new Set(D.rows.map((r) => r.portfolio || 'PAN')).size > 1 || D.portfolio !== 'PAN';
-const pfChip = (pf, force = false) => ((force || multi()) ? html`<span class="chip qd-pf ${(pf || 'PAN') === 'PAN' ? 'outline' : 'warn'}">${pf || 'PAN'}</span>` : '');
+const multi = () => new Set(D.rows.map((r) => r.carteira || r.portfolio || 'PAN')).size > 1 || D.portfolio !== 'PAN';
+const pfChip = (pf, force = false) => ((force || multi()) ? html`<span class="chip qd-pf ${String(pf || 'PAN').startsWith('PAN') ? 'outline' : 'warn'}">${pf || 'PAN'}</span>` : '');
 const mine = (r) => (r.portfolio || 'PAN') === D.portfolio;
 const managerOf = (leader) => D.leaders.find((l) => key(l.leader) === key(leader))?.manager || '';
 const managers = () => [...new Set([...D.leaders.map((l) => l.manager), ...(CTX.store.meta.operators || []).map((o) => o.manager_name)].filter(Boolean))].sort();
@@ -111,6 +115,7 @@ function filtered() {
   const f = state.f;
   const q = key(state.q);
   return D.rows.filter((r) => {
+    if (state.view !== 'todas' && groupOf(r) !== state.view) return false;
     for (const [id, , , get] of FILTERS) if (f[id]?.length && !f[id].includes(String(get(r) ?? ''))) return false;
     if (state.from && dayOf(r.call_at) < state.from) return false;
     if (state.to && dayOf(r.call_at) > state.to) return false;
@@ -134,11 +139,13 @@ function draw() {
       <div class="qd-actions">
         <button class="btn sm" id="qd-folder">${icon('folder')}Pasta de áudios</button>
         <button class="btn sm" id="qd-csv">${icon('upload')}Importar CSV</button>
+        <button class="btn sm" id="qd-export">${icon('download')}Exportar CSV</button>
         <button class="btn sm" id="qd-cap">${icon('users')}Capacity${D.roster.length ? '' : html` <b class="qd-dot"></b>`}</button>
         <button class="btn sm primary" id="qd-new">${icon('plus')}Nova análise</button>
       </div></div>
     ${!D.roster.length ? html`<div class="banner warn">${icon('alert')}<div><b>Anexe o capacity</b> para a plataforma trazer liderança, gerência e campanha ao digitar o login ou o nome do operador. <button class="btn sm" id="qd-cap2">Anexar capacity</button></div></div>` : ''}
     <div class="filters qd-filters" id="qd-filters">
+      <div class="seg qd-view" id="qd-view" title="Visão consolidada ou apartada">${[['todas', 'Consolidada'], ...GROUPS.map((g) => [g, g])].map(([k, l]) => html`<button class="${state.view === k ? 'on' : ''}" data-v="${k}">${l}</button>`)}</div>
       ${FILTERS.map(([id, all, noun, get]) => multiSelect({ id: `qf-${id}`, allLabel: all, noun, options: opts(id, get, labelOf[id]), selected: state.f[id] || [], cls: 'sm' }))}
       <input class="input sm" type="date" id="qd-from" value="${state.from}" aria-label="De"><input class="input sm" type="date" id="qd-to" value="${state.to}" aria-label="Até">
       <input class="input sm qd-q" id="qd-q" placeholder="Buscar ID, login, observação…" value="${state.q}">
@@ -153,6 +160,8 @@ function draw() {
   $('#qd-clear', ROOT)?.addEventListener('click', () => { state.f = {}; state.from = ''; state.to = ''; state.q = ''; state.page = 0; draw(); });
   $('#qd-folder', ROOT).onclick = () => openFolder();
   $('#qd-csv', ROOT).onclick = openImport;
+  $('#qd-export', ROOT).onclick = openExport;
+  $$('#qd-view button', ROOT).forEach((b) => b.addEventListener('click', () => { state.view = b.dataset.v; state.page = 0; draw(); }));
   $('#qd-cap', ROOT).onclick = openCapacity;
   $('#qd-cap2', ROOT)?.addEventListener('click', openCapacity);
   $('#qd-new', ROOT).onclick = () => openReview(null);
@@ -341,7 +350,7 @@ function drawList(rows) {
   box.innerHTML = String(html`<div class="table-wrap"><table class="tbl qd-tbl qd-list"><thead><tr>${admin ? html`<th><input type="checkbox" id="qd-all" aria-label="Selecionar todos"></th>` : ''}<th>Ligação</th><th>Operador</th><th>Liderança</th><th class="right">Duração</th><th>Tabulação</th><th>Desconexão</th><th>Resultado</th><th>Anexos</th><th>Analista</th></tr></thead>
     <tbody>${pg.map((r) => html`<tr class="click ${r.conduct ? 'qd-row-bad' : ''}" data-open="${r.id}">
       ${admin ? html`<td data-nocl><input type="checkbox" class="qd-sel" value="${r.id}" aria-label="Selecionar"></td>` : ''}
-      <td><b class="num">${r.contact_id || '—'}</b> ${pfChip(r.portfolio)}<small>${dt(r.call_at)}</small></td>
+      <td><b class="num">${r.contact_id || '—'}</b> ${pfChip(r.carteira || r.portfolio)}<small>${dt(r.call_at)}</small></td>
       <td><b>${short(r.operator_name) || r.login || '—'}</b><small>${r.login || ''}${r.campaign ? ` · ${title(r.campaign)}` : ''}</small></td>
       <td><span>${short(r.leader) || '—'}</span><small>${short(r.manager)}</small></td>
       <td class="right num">${fmtDur(r.duration_sec)}</td>
@@ -519,13 +528,88 @@ function openCapacity() {
   });
 }
 
+// ---------------------------------------------------------------- Exportar CSV (modelo da planilha de controle)
+function lastCarteira() { try { return localStorage.getItem('px_qd_carteira') || ''; } catch { return ''; } }
+const hms = (s) => (s == null ? '' : [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map((x) => String(x).padStart(2, '0')).join(':'));
+const brDate = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
+const tabLabel = (t) => (isDrop(t) ? 'Queda de Ligação' : t || '');
+const CSV_COLS = [
+  ['Nome', (r) => String(r.operator_name || '').toUpperCase()],
+  ['Login', (r) => r.login || ''],
+  ['Contrato', (r) => r.contract || ''],
+  ['Telefone', (r) => r.phone || ''],
+  ['Data', (r) => brDate(r.call_at || r.analyzed_at)],
+  ['Tempo Ligação', (r) => hms(r.duration_sec)],
+  ['Classificação Operador', (r) => tabLabel(r.tabulation)],
+  ['Classificação Correta', (r) => (r.tab_correct === true ? tabLabel(r.tabulation) : r.tab_correct === false ? r.correct_tab || 'Desconhecido' : '')],
+  ['Status Classificação', (r) => (r.tab_correct === true ? 'Correto' : r.tab_correct === false ? 'Incorreto' : '')],
+  ['Desconexão', (r) => r.disconnect || ''],
+  ['Prestou Atendimento?', (r) => (r.attended === true ? 'Prestou Atendimento' : r.attended === false ? 'Não Prestou Atendimento' : '')],
+  ['Segurou Ligação?', (r) => (r.held === true ? 'Sim' : r.held === false ? 'Não' : '')],
+  ['Observação', (r) => r.notes || ''],
+  ['Carteira', (r) => r.carteira || ''],
+  ['ID Contato', (r) => r.contact_id || ''],
+  ['Hora', (r) => (r.call_at ? r.call_at.slice(11, 16) : '')],
+  ['Liderança', (r) => r.leader || ''],
+  ['Gerência', (r) => r.manager || ''],
+  ['Campanha', (r) => r.campaign || ''],
+  ['Resultado da Análise', (r) => (r.verdict ? VERDICT[r.verdict][0] : 'Pendente')],
+  ['Desvio de Conduta', (r) => (r.conduct ? 'Sim' : 'Não')],
+  ['Tipo de Desvio', (r) => (r.conduct ? r.conduct_type || '' : '')],
+  ['Momento da Queda', (r) => r.drop_moment || ''],
+  ['Analista', (r) => r.analyst_name || ''],
+  ['Data da Análise', (r) => brDate(r.analyzed_at)],
+];
+// CSV para o Excel brasileiro: separador ";", UTF-8 com BOM e todas as células entre aspas
+export function dropsCsv(rows) {
+  const q = (v) => `"${String(v ?? '').replace(/\r?\n/g, ' ').replace(/"/g, '""')}"`;
+  return '\uFEFF' + [CSV_COLS.map(([h]) => q(h)).join(';'), ...rows.map((r) => CSV_COLS.map(([, f]) => q(f(r))).join(';'))].join('\r\n');
+}
+
+function openExport() {
+  const views = [['todas', 'Consolidada (todas as carteiras)'], ...GROUPS.map((g) => [`g:${g}`, `${g} (todas as carteiras ${g})`]), ...CARTEIRAS.map((c) => [`c:${c}`, `Só ${c}`]), ['c:', 'Carteira a definir']];
+  const cur = state.view === 'todas' ? 'todas' : `g:${state.view}`;
+  const hasFilters = Object.values(state.f).some((v) => v?.length) || state.from || state.to || state.q;
+  const pick = (v, useFilters, onlyDone) => {
+    const base = useFilters ? filtered() : D.rows;
+    return base.filter((r) => (v === 'todas' ? true : v.startsWith('g:') ? groupOf(r) === v.slice(2) : (r.carteira || '') === v.slice(2)))
+      .filter((r) => !onlyDone || r.status === 'analisada')
+      .sort((a, b) => String(a.operator_name || '').localeCompare(String(b.operator_name || '')) || String(a.call_at || '').localeCompare(String(b.call_at || '')));
+  };
+  modal({
+    title: 'Exportar análises de queda (CSV)', cls: 'qd-modal',
+    body: html`<p class="t2" style="margin-top:0">Mesmas colunas da planilha de controle (Nome, Login, Contrato, Telefone, Data, Tempo Ligação, Classificação Operador e Correta, Status, Desconexão, Prestou Atendimento?, Segurou Ligação?, Observação), seguidas de carteira, liderança, gerência, resultado e analista.</p>
+      <div class="field"><label for="ex-view">Visão</label><select class="select" id="ex-view">${views.map(([k, l]) => html`<option value="${k}" ${k === cur ? 'selected' : ''}>${l}</option>`)}</select></div>
+      <label class="check"><input type="checkbox" id="ex-done" checked> Só atendimentos já analisados</label><br>
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="ex-filt" ${hasFilters ? 'checked' : ''} ${hasFilters ? '' : 'disabled'}> Aplicar os filtros da tela (período, operador, liderança…)</label>
+      <p class="tiny muted" id="ex-n" style="margin-top:12px"></p>`,
+    foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="ex-go">${icon('download')}Baixar CSV</button>`,
+    onMount: (m, close) => {
+      // A visão escolhida aqui vale por cima da visão da tela
+      const rowsNow = () => {
+        const saved = state.view; state.view = 'todas';
+        try { return pick($('#ex-view', m).value, $('#ex-filt', m).checked, $('#ex-done', m).checked); } finally { state.view = saved; }
+      };
+      const count = () => { const n = rowsNow().length; $('#ex-n', m).textContent = `${n} atendimento(s) no arquivo.`; $('#ex-go', m).disabled = !n; };
+      ['#ex-view', '#ex-done', '#ex-filt'].forEach((sel) => { $(sel, m).onchange = count; });
+      count();
+      $('#ex-go', m).onclick = () => {
+        const v = $('#ex-view', m).value;
+        const label = v === 'todas' ? 'consolidado' : (v.slice(2) || 'a-definir').toLowerCase().replace(/\s+/g, '-');
+        saveBlob(new Blob([dropsCsv(rowsNow())], { type: 'text/csv;charset=utf-8' }), `quedas_${label}_${new Date().toISOString().slice(0, 10)}.csv`);
+        close(); toast('CSV gerado.');
+      };
+    },
+  });
+}
+
 // ---------------------------------------------------------------- CSV de metadados
 export function metadataRows(rows) {
   return rows.map((r) => ({
     contact_id: String(col(r, 'idcontato', 'idligacao', 'idchamada', 'id') || '').trim(),
     dialer_campaign: col(r, 'campanha'), operation: col(r, 'operacao'), login: col(r, 'login', 'usuario'),
     call_at: col(r, 'datahoraligacao', 'datahora', 'data'), duration: col(r, 'duracao', 'tempo'),
-    tabulation: col(r, 'finalizacao', 'tabulacao'), contract: col(r, 'contrato'), customer: col(r, 'cliente', 'nomecliente'),
+    tabulation: col(r, 'finalizacao', 'tabulacao'), contract: col(r, 'contrato'), phone: col(r, 'telefone', 'fone', 'celular'), customer: col(r, 'cliente', 'nomecliente'),
     audio_file: col(r, 'nomedoarquivo', 'arquivo'), audio_original: col(r, 'nomeoriginaldoarquivo'),
     disconnect: col(r, 'tipodedesconexao', 'desconexao', 'tipodesconexao'),
   })).filter((r) => r.contact_id);
@@ -536,14 +620,16 @@ function openImport() {
   let fileName = '';
   modal({
     title: 'Importar CSV de metadados', wide: true, cls: 'qd-modal',
-    body: html`<p class="t2" style="margin-top:0">Opcional: o CSV do discador traz IdContato, login, data, duração, finalização, arquivo do áudio e o tipo de desconexão (Interna/Externa). Cada linha vira um atendimento da carteira <b>${D.portfolio}</b>, já com liderança, gerência e campanha do seu capacity. Telefone e CPF não são guardados.</p>
+    body: html`<p class="t2" style="margin-top:0">Opcional: o CSV do discador traz IdContato, login, data, duração, finalização, arquivo do áudio e o tipo de desconexão (Interna/Externa). Cada linha vira um atendimento da carteira <b>${D.portfolio}</b>, já com liderança, gerência e campanha do seu capacity. O CPF não é guardado.</p>
       <label class="qd-drop">${icon('upload')}<span><b>Escolher o CSV</b><small>Modelo: colunas IdContato; Campanha; Login; DataHoraLigacao; Duracao; FINALIZACAO; NomeDoArquivo; TIPO DE DESCONEXÃO</small></span><input type="file" accept=".csv,.xlsx,.txt" id="qd-csvf" hidden></label>
+      <div class="field" style="margin-top:4px"><label for="qd-csvcart">Carteira dos atendimentos</label><select class="select" id="qd-csvcart"><option value="">Escolha a carteira…</option>${CARTEIRAS.map((c) => html`<option ${lastCarteira() === c ? 'selected' : ''}>${c}</option>`)}</select></div>
       <div id="qd-csvpv"></div>`,
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="qd-csvgo" disabled>${icon('upload')}Importar</button>`,
     onMount: (m, close) => {
       const go = $('#qd-csvgo', m);
       const chosen = () => (parsed ? ($('#qd-onlydrop', m)?.checked ? parsed.filter((r) => isDrop(r.tabulation)) : parsed) : []);
-      const sync = () => { const n = chosen().length; go.disabled = !n; go.lastChild.textContent = n ? `Importar ${n} atendimento(s)` : 'Importar'; };
+      $('#qd-csvcart', m).onchange = () => sync();
+      const sync = () => { const n = chosen().length; go.disabled = !n || !$('#qd-csvcart', m).value; go.lastChild.textContent = n ? `Importar ${n} atendimento(s)` : 'Importar'; };
       $('#qd-csvf', m).onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -574,7 +660,9 @@ function openImport() {
         if (!rows.length) return;
         busy(btnEl, true, 'Importando');
         try {
-          const r = await api.post('/quedas/import', { rows, batch: fileName });
+          const carteira = $('#qd-csvcart', m).value;
+          try { localStorage.setItem('px_qd_carteira', carteira); } catch { /* sem storage */ }
+          const r = await api.post('/quedas/import', { rows, batch: fileName, carteira });
           close();
           toast(`${r.created} atendimento(s) na fila${r.updated ? `, ${r.updated} atualizado(s)` : ''}.`, 'ok', 5000);
           await fetchData(); draw();
@@ -622,6 +710,9 @@ async function openReview(id, queue = null) {
       ${row.analyst_name ? html`<div class="banner info">${icon('info')}<div>Analisado por <b>${row.analyst_name}</b> ${fmtRel(row.analyzed_at)}.</div></div>` : ''}
       <div class="qd-sec"><h4>${icon('headset')}Atendimento</h4>
         <div class="qd-fgrid">
+          <div class="field span-2"><label for="r-cart">Carteira analisada</label><select class="select" id="r-cart"><option value="">Escolha a carteira…</option>${CARTEIRAS.map((c) => html`<option ${(row.carteira || (!id ? lastCarteira() : '')) === c ? 'selected' : ''}>${c}</option>`)}</select></div>
+          <div class="field"><label for="r-phone">Telefone</label><input class="input" id="r-phone" value="${row.phone || ''}" inputmode="tel" placeholder="DDD + número"></div>
+          <div class="field"><label for="r-ctr">Contrato</label><input class="input" id="r-ctr" value="${row.contract || ''}"></div>
           <div class="field"><label for="r-cid">ID do contato</label><input class="input" id="r-cid" value="${row.contact_id || ''}" placeholder="IdContato"></div>
           <div class="field"><label for="r-at">Data e hora</label><input class="input" type="datetime-local" id="r-at" value="${callLocal}"></div>
           <div class="field"><label for="r-dur">Duração</label><input class="input" id="r-dur" value="${row.duration_sec != null ? fmtDur(row.duration_sec) : ''}" placeholder="m:ss"></div>
@@ -661,6 +752,8 @@ async function openReview(id, queue = null) {
           <div class="field"><label>A tabulação de queda procede?</label><div class="seg" id="r-tabok">${[['1', 'Sim'], ['0', 'Não'], ['', 'Sem conclusão']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.tab_correct === true ? '1' : row.tab_correct === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
           <div class="field" id="r-ctab-f"><label for="r-ctab">Tabulação correta</label><input class="input" id="r-ctab" list="r-tabs" value="${row.correct_tab || ''}" placeholder="Qual deveria ser"></div>
           <div class="field"><label for="r-mom">Momento da queda</label><input class="input" id="r-mom" value="${row.drop_moment || ''}" placeholder="m:ss no áudio"></div>
+          <div class="field span-2"><label>Prestou atendimento?</label><div class="seg" id="r-att">${[['1', 'Prestou atendimento'], ['0', 'Não prestou'], ['', '—']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.attended === true ? '1' : row.attended === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
+          <div class="field span-2"><label>Segurou a ligação?</label><div class="seg" id="r-held">${[['1', 'Sim'], ['0', 'Não'], ['', '—']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.held === true ? '1' : row.held === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
         </div>
         <div class="qd-conduct-box ${row.conduct ? 'on' : ''}" id="r-cbox">
           <label class="switch"><input type="checkbox" id="r-conduct" ${row.conduct ? 'checked' : ''}><span><b>Desvio de conduta</b> · o operador desligou com o cliente na linha</span></label>
@@ -679,6 +772,8 @@ async function openReview(id, queue = null) {
   const segVal = (s) => $(`${s} button.on`, m)?.dataset.v ?? '';
   const segBind = (s, cb) => $$(`${s} button`, m).forEach((b) => b.addEventListener('click', () => { $$(`${s} button`, m).forEach((x) => x.classList.toggle('on', x === b)); cb?.(b.dataset.v); }));
   segBind('#r-disc');
+  segBind('#r-att');
+  segBind('#r-held');
   segBind('#r-tabok', () => syncTab());
   const syncTab = () => { $('#r-ctab-f', m).hidden = segVal('#r-tabok') !== '0'; };
   const syncConduct = () => {
@@ -775,7 +870,11 @@ async function openReview(id, queue = null) {
     if (conduct && !$('#r-ctype', m).value) { toast('Escolha o tipo de desvio de conduta.', 'err'); $('#r-ctype', m).focus(); return; }
     const tabOk = segVal('#r-tabok');
     const dur = val('#r-dur');
+    const carteira = $('#r-cart', m).value;
+    if (verdict && !carteira) { toast('Escolha a carteira analisada.', 'err'); $('#r-cart', m).focus(); return; }
+    const yn = (s) => { const x = segVal(s); return x === '' ? null : x === '1'; };
     const body = {
+      carteira, phone: val('#r-phone'), contract: val('#r-ctr'), attended: yn('#r-att'), held: yn('#r-held'),
       contact_id: val('#r-cid'), call_at: val('#r-at') ? `${val('#r-at').replace('T', ' ')}:00` : '', duration_sec: dur ? mmss(dur) : '',
       tabulation: val('#r-tab'), disconnect: segVal('#r-disc'),
       login: o ? o.login : /^[\w.-]+$/.test(opText) ? opText : '', operator_name: o ? o.name : /\s/.test(opText) ? opText.replace(/\s*·.*$/, '') : (row.operator_name || ''),
@@ -794,6 +893,7 @@ async function openReview(id, queue = null) {
         catch (ex) { toast(`Análise salva, mas o áudio não foi anexado: ${ex.message}`, 'err', 6000); }
       }
       locked = false;
+      if (carteira) try { localStorage.setItem('px_qd_carteira', carteira); } catch { /* sem storage */ }
       close();
       toast(verdict ? `Análise salva${conduct ? ' · desvio de conduta registrado' : ''}.` : 'Atendimento salvo como pendente.');
       await fetchData(); if (ROOT?.isConnected) draw();
