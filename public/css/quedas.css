@@ -5,9 +5,21 @@
 .qd .qd-head p { font-size: 13px; max-width: 640px; }
 .qd-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .qd-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-left: 2px; }
-.qd-filters { gap: 8px; padding: 10px; margin-bottom: var(--qd-gap); }
+.qd-filters { display: grid; gap: 10px; padding: 10px 12px; margin-bottom: var(--qd-gap); }
+.qd-frow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 14px; }
+.qd-frow + .qd-frow { padding-top: 10px; border-top: 1px solid var(--border); gap: 8px; align-items: center; }
+.qd-fg { display: grid; gap: 4px; min-width: 0; }
+.qd-fg > small { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.qd-fg.grow { flex: 1; min-width: 200px; }
 .qd-filters .input.sm { min-width: 0; width: auto; }
-.qd-filters .qd-q { flex: 1; min-width: 180px; }
+.qd-filters .qd-q { width: 100%; }
+.qd-filters .ms-ct { font-style: normal; }
+.qd-period { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.qd-period .select.sm { width: auto; }
+.qd-period .seg button { padding: 5px 9px; font-size: 12px; }
+.qd-dt { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 650; color: var(--text-2); }
+.qd-dt .input.sm { width: 140px; }
+.qd-modal .qd-period { margin-bottom: 4px; }
 
 .qd-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--qd-gap); margin-bottom: var(--qd-gap); }
 .qd-kpi { position: relative; padding: 11px 13px 10px; border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow: hidden; }
@@ -196,3 +208,15 @@
 .qd-dupc > div small { width: 100%; font-size: 11.5px; color: var(--muted); }
 .qd-dupc p { margin: 0; font-size: 12.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .qd-dupc .btn { align-self: flex-start; }
+
+/* Formulário de análise: obrigatórios e desvio de conduta */
+.qd-rev .req { color: var(--bad); font-style: normal; font-weight: 700; margin-left: 2px; }
+.qd-rev .qd-miss > .input, .qd-rev .qd-miss > .select, .qd-rev .qd-miss > .textarea, .qd-rev .qd-miss > .seg, .qd-rev .qd-verdicts.qd-miss, .qd-rev .qd-conduct-box.qd-miss { border-color: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 22%, transparent); }
+.qd-rev .qd-verdicts.qd-miss { border: 1px solid var(--bad); border-radius: var(--radius-sm); padding: 4px; }
+.qd-rev .qd-miss > label { color: var(--bad); }
+.qd-conduct-box { flex-direction: column; align-items: stretch; }
+.qd-cq { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.qd-cwhy { display: grid; gap: 6px; }
+.qd-cwhy label { font-weight: 650; font-size: 12px; }
+.qd-cwhy .select { width: 100%; max-width: 420px; }
+.qd-cwhy small { color: var(--muted); }

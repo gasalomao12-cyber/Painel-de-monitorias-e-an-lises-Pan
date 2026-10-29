@@ -1,5 +1,5 @@
 import { api, qs, saveBlob } from '../api.js';
-import { html, icon, $, $$, toast, modal, busy, debounce, emptyState, confirmDialog, multiSelect, bindMultiSelect, fmtDur, fmtRel, avatar } from '../ui.js';
+import { html, icon, esc, $, $$, toast, modal, busy, debounce, emptyState, confirmDialog, multiSelect, bindMultiSelect, fmtDur, fmtRel, avatar } from '../ui.js';
 import { scatterChart, palette, destroyAll } from '../charts.js';
 import { parseSheetFile, parseWorkbook, readTranscriptFile, readTranscriptLines } from '../files.js';
 
@@ -20,7 +20,10 @@ const TAB_OK = { cliente: true, tecnica: true, operador: false, mudo: false, con
 const CARTEIRAS = ['SAFRA BS', 'SAFRA ADM', 'PAN CONTACT', 'PAN MASSIFICADOS', 'PAN ATIVAS E AJUIZADOS', 'PORTO'];
 const GROUPS = ['PAN', 'SAFRA', 'PORTO'];
 const groupOf = (r) => (r.carteira ? r.carteira.split(' ')[0] : r.portfolio || 'PAN');
-const CONDUCT = ['Desligou na cara do cliente', 'Desligou durante o atendimento', 'Encerrou sem retorno ao cliente', 'Outro desvio de conduta'];
+// Motivos de desvio de conduta (o analista descreve o caso na observação)
+const CONDUCT = ['Desligou na cara do cliente', 'Omissão de atendimento', 'Tabulação incorreta', 'Interromper ou faltar com respeito com o cliente', 'Outro tipo de desvio'];
+// Motivos usados antes desta lista continuam aparecendo nas análises antigas
+const CONDUCT_OLD = ['Desligou durante o atendimento', 'Encerrou sem retorno ao cliente', 'Outro desvio de conduta'];
 const LIST = { todos: 'Todos', pendente: 'Pendentes', analisada: 'Analisados', desvio: 'Com desvio', interna: 'Desconexão interna' };
 const PAGE = 25;
 
@@ -36,18 +39,61 @@ const dt = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)} ${s.slice(11, 16)}` :
 const dayOf = (s) => (s ? s.slice(0, 10) : '');
 const title = (s) => String(s || '').toLowerCase().replace(/(^|\s)(\p{L})/gu, (m) => m.toUpperCase()).replace(/\b(De|Da|Do|Dos|Das|E)\b/g, (w) => w.toLowerCase());
 const short = (s) => { const p = title(s).split(' ').filter(Boolean); return p.length > 2 ? `${p[0]} ${p[p.length - 1]}` : p.join(' '); };
+// Tempo hh:mm:ss: os ":" entram sozinhos enquanto a pessoa digita; colar "00:05:17.520" (Mosaic) também funciona
+// typed: formata só pelos dígitos (enquanto digita); sem typed, entende o texto colado
+export function timeMask(v, typed = false) {
+  const t = String(v || '').trim();
+  const m = !typed && t.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (m) return m[3] != null ? `${m[1].padStart(2, '0')}:${m[2]}:${m[3]}` : `00:${m[1].padStart(2, '0')}:${m[2]}`;
+  const d = t.replace(/\D/g, '').slice(0, 6);
+  return [d.slice(0, 2), d.slice(2, 4), d.slice(4, 6)].filter(Boolean).join(':');
+}
+// Data e hora dd/mm/aaaa hh:mm:ss; aceita colar "2026-10-27 16:06:56", "27/10/2026 16:06" ou "27/10/2026 16:06:56"
+export function dateTimeMask(v, typed = false) {
+  const t = String(v || '').trim();
+  let m = !typed && t.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}:${m[6] || '00'}`;
+  m = !typed && t.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (m) return `${m[1].padStart(2, '0')}/${m[2].padStart(2, '0')}/${m[3]} ${m[4].padStart(2, '0')}:${m[5]}:${m[6] || '00'}`;
+  const d = t.replace(/\D/g, '').slice(0, 14);
+  const parts = [[0, 2, ''], [2, 4, '/'], [4, 8, '/'], [8, 10, ' '], [10, 12, ':'], [12, 14, ':']];
+  return parts.reduce((out, [a, b, sep]) => (d.length > a ? out + (a ? sep : '') + d.slice(a, b) : out), '');
+}
+const isDateTime = (v) => /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}$/.test(v);
+const isTime = (v) => /^\d{2}:[0-5]\d:[0-5]\d$/.test(v);
+function bindMask(inp, fmt, onPasteExtra) {
+  inp.addEventListener('input', (e) => {
+    if (e.inputType && e.inputType.startsWith('delete')) return;
+    const atEnd = inp.selectionStart === inp.value.length;
+    const v = fmt(inp.value, true);
+    if (v !== inp.value && atEnd) inp.value = v;
+  });
+  inp.addEventListener('paste', (e) => {
+    const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+    if (!text) return;
+    e.preventDefault();
+    inp.value = fmt(text);
+    onPasteExtra?.(text);
+    inp.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  inp.addEventListener('blur', () => { if (inp.value) inp.value = fmt(inp.value, true); });
+}
+// Valor mais frequente de um campo entre as linhas que passam no filtro
+const topOf = (rows, pred, field) => { const c = new Map(); for (const r of rows) if (pred(r) && r[field]) c.set(r[field], (c.get(r[field]) || 0) + 1); return [...c].sort((a, b) => b[1] - a[1])[0]?.[0] || ''; };
+const brDateTime = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)} ${iso.slice(11, 19).padEnd(8, ':00').slice(0, 8)}` : '');
+
 const mmss = (s) => { const m = String(s || '').trim().match(/^(?:(\d+):)?(\d{1,2}):(\d{2})$/); return m ? (Number(m[1] || 0) * 3600 + Number(m[2]) * 60 + Number(m[3])) : /^\d+$/.test(String(s || '').trim()) ? Number(s) : null; };
 
-const state = { f: {}, from: '', to: '', q: '', list: 'todos', page: 0, view: 'todas' };
+const state = { f: {}, period: { by: 'analise', from: '', to: '' }, more: false, q: '', list: 'todos', page: 0, view: 'todas' };
 const FILTERS = [
   ['carteira', 'Todas as carteiras', 'carteiras', (r) => r.carteira || 'A definir'],
   ['manager', 'Todas as gerências', 'gerências', (r) => r.manager],
   ['leader', 'Todas as lideranças', 'lideranças', (r) => r.leader],
   ['login', 'Todos os operadores', 'operadores', (r) => r.login],
-  ['campaign', 'Todas as campanhas', 'campanhas', (r) => r.campaign],
-  ['segment', 'Todos os segmentos', 'segmentos', (r) => r.segment],
-  ['tabulation', 'Todas as tabulações', 'tabulações', (r) => r.tabulation],
-  ['disconnect', 'Interna e externa', 'tipos', (r) => r.disconnect || '—'],
+  ['campaign', 'Todas as campanhas', 'campanhas', (r) => r.campaign, true],
+  ['segment', 'Todos os segmentos', 'segmentos', (r) => r.segment, true],
+  ['tabulation', 'Todas as tabulações', 'tabulações', (r) => r.tabulation, true],
+  ['disconnect', 'Interna e externa', 'tipos', (r) => r.disconnect || '—', true],
   ['verdict', 'Todos os resultados', 'resultados', (r) => r.verdict || 'pendente'],
   ['analyst', 'Todos os analistas', 'analistas', (r) => r.analyst_name],
 ];
@@ -115,14 +161,47 @@ export function findOperator(q, rows = rosterRows) {
   return null;
 }
 
-function filtered() {
+// Período pela data da análise (dia em que foi analisado, no horário local) ou pela data da ligação
+const localDay = (iso) => { const d = iso ? new Date(iso) : null; return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString('sv-SE') : ''; };
+const dayAt = (off = 0) => { const d = new Date(); d.setDate(d.getDate() + off); return d.toLocaleDateString('sv-SE'); };
+const PRESETS = [['', 'Tudo'], ['hoje', 'Hoje'], ['ontem', 'Ontem'], ['7d', '7 dias'], ['mes', 'Mês']];
+const presetRange = (k) => (k === 'hoje' ? [dayAt(), dayAt()] : k === 'ontem' ? [dayAt(-1), dayAt(-1)] : k === '7d' ? [dayAt(-6), dayAt()] : k === 'mes' ? [`${dayAt().slice(0, 8)}01`, dayAt()] : ['', '']);
+const presetOf = (p) => PRESETS.find(([k]) => { const [a, b] = presetRange(k); return a === p.from && b === p.to; })?.[0] ?? null;
+const inPeriod = (r, p) => {
+  if (!p.from && !p.to) return true;
+  const d = p.by === 'ligacao' ? dayOf(r.call_at) : localDay(r.analyzed_at);
+  return !!d && (!p.from || d >= p.from) && (!p.to || d <= p.to);
+};
+const periodTxt = (p) => {
+  if (!p.from && !p.to) return '';
+  const br = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+  return `${p.by === 'ligacao' ? 'ligação' : 'análise'} ${p.from === p.to ? `em ${br(p.from)}` : `${p.from ? `de ${br(p.from)} ` : ''}${p.to ? `até ${br(p.to)}` : ''}`.trim()}`;
+};
+function periodBox(px, p) {
+  const k = presetOf(p);
+  return html`<div class="qd-period" id="${px}-period">
+    <select class="select sm" id="${px}-by" aria-label="Filtrar pela data" title="Data da análise: dia em que o atendimento foi analisado (pendentes ficam de fora)">
+      <option value="analise" ${p.by !== 'ligacao' ? 'selected' : ''}>Data da análise</option><option value="ligacao" ${p.by === 'ligacao' ? 'selected' : ''}>Data da ligação</option></select>
+    <div class="seg" id="${px}-pre">${PRESETS.map(([v, l]) => html`<button type="button" data-p="${v}" class="${k === v ? 'on' : ''}">${l}</button>`)}</div>
+    <label class="qd-dt"><span>De</span><input class="input sm" type="date" id="${px}-from" value="${p.from}"></label>
+    <label class="qd-dt"><span>Até</span><input class="input sm" type="date" id="${px}-to" value="${p.to}"></label>
+  </div>`;
+}
+function bindPeriod(root, px, p, onChange) {
+  const sync = () => { const k = presetOf(p); $$(`#${px}-pre button`, root).forEach((b) => b.classList.toggle('on', b.dataset.p === k)); $(`#${px}-from`, root).value = p.from; $(`#${px}-to`, root).value = p.to; };
+  $(`#${px}-by`, root).onchange = (e) => { p.by = e.target.value; onChange(); };
+  $$(`#${px}-pre button`, root).forEach((b) => b.addEventListener('click', () => { [p.from, p.to] = presetRange(b.dataset.p); sync(); onChange(); }));
+  $(`#${px}-from`, root).onchange = (e) => { p.from = e.target.value; if (p.from && p.to && p.from > p.to) p.to = p.from; sync(); onChange(); };
+  $(`#${px}-to`, root).onchange = (e) => { p.to = e.target.value; if (p.from && p.to && p.to < p.from) p.from = p.to; sync(); onChange(); };
+}
+
+function filtered({ period = state.period } = {}) {
   const f = state.f;
   const q = key(state.q);
   return D.rows.filter((r) => {
     if (state.view !== 'todas' && groupOf(r) !== state.view) return false;
     for (const [id, , , get] of FILTERS) if (f[id]?.length && !f[id].includes(String(get(r) ?? ''))) return false;
-    if (state.from && dayOf(r.call_at) < state.from) return false;
-    if (state.to && dayOf(r.call_at) > state.to) return false;
+    if (period && !inPeriod(r, period)) return false;
     if (q && !key([r.contact_id, r.login, r.operator_name, r.leader, r.tabulation, r.notes, r.audio_file].join(' ')).includes(q)) return false;
     return true;
   });
@@ -136,6 +215,9 @@ function draw() {
     for (const r of D.rows) { const v = String(get(r) ?? ''); if (v) m.set(v, (m.get(v) || 0) + 1); }
     return [...m].sort((a, b) => String(label(a[0])).localeCompare(String(label(b[0])))).map(([v, n]) => [v, label(v), n]);
   };
+  const moreOn = FILTERS.filter((x) => x[4] && state.f[x[0]]?.length).length;
+  const moreOpen = state.more || moreOn > 0;
+  const anyFilter = Object.values(state.f).some((v) => v?.length) || state.period.from || state.period.to || state.q;
   const labelOf = { login: (v) => `${title(roster.get(v)?.name || D.rows.find((r) => r.login === v)?.operator_name || v)} · ${v}`, verdict: (v) => VERDICT[v]?.[0] || 'Pendente', leader: title, manager: title, analyst: (v) => v };
   ROOT.innerHTML = String(html`<div class="qd">
     <div class="page-head qd-head"><div><h2>Queda de ligação ${D.portfolio !== 'PAN' || multi() ? html`<span class="chip qd-pf-me ${D.portfolio === 'PAN' ? 'outline' : 'warn'}" title="Sua carteira">${D.portfolio}</span>` : ''}</h2><p>Força-tarefa: ouça o áudio, confirme quem encerrou a ligação e se a tabulação de queda procede. Os números atualizam sozinhos para todo mundo.</p></div>
@@ -149,20 +231,26 @@ function draw() {
         <button class="btn sm primary" id="qd-new">${icon('plus')}Nova análise</button>
       </div></div>
     ${!D.roster.length ? html`<div class="banner warn">${icon('alert')}<div><b>Anexe o capacity</b> para a plataforma trazer liderança, gerência e campanha ao digitar o login ou o nome do operador. <button class="btn sm" id="qd-cap2">Anexar capacity</button></div></div>` : ''}
-    <div class="filters qd-filters" id="qd-filters">
-      <div class="seg qd-view" id="qd-view" title="Visão consolidada ou apartada">${[['todas', 'Consolidada'], ...GROUPS.map((g) => [g, g])].map(([k, l]) => html`<button class="${state.view === k ? 'on' : ''}" data-v="${k}">${l}</button>`)}</div>
-      ${FILTERS.map(([id, all, noun, get]) => multiSelect({ id: `qf-${id}`, allLabel: all, noun, options: opts(id, get, labelOf[id]), selected: state.f[id] || [], cls: 'sm' }))}
-      <input class="input sm" type="date" id="qd-from" value="${state.from}" aria-label="De"><input class="input sm" type="date" id="qd-to" value="${state.to}" aria-label="Até">
-      <input class="input sm qd-q" id="qd-q" placeholder="Buscar ID, login, observação…" value="${state.q}">
-      ${Object.values(state.f).some((v) => v?.length) || state.from || state.to || state.q ? html`<button class="btn sm ghost" id="qd-clear">${icon('x')}Limpar</button>` : ''}
+    <div class="card qd-filters" id="qd-filters">
+      <div class="qd-frow">
+        <div class="qd-fg"><small>Visão</small><div class="seg qd-view" id="qd-view" title="Visão consolidada ou apartada">${[['todas', 'Consolidada'], ...GROUPS.map((g) => [g, g])].map(([k, l]) => html`<button class="${state.view === k ? 'on' : ''}" data-v="${k}">${l}</button>`)}</div></div>
+        <div class="qd-fg"><small>Período</small>${periodBox('qd', state.period)}</div>
+        <div class="qd-fg grow"><small>Busca</small><input class="input sm qd-q" id="qd-q" placeholder="ID, login, observação…" value="${state.q}"></div>
+      </div>
+      <div class="qd-frow">
+        ${FILTERS.filter((x) => !x[4] || moreOpen).map(([id, all, noun, get]) => multiSelect({ id: `qf-${id}`, allLabel: all, noun, options: opts(id, get, labelOf[id]), selected: state.f[id] || [], cls: 'sm' }))}
+        <button class="btn sm ghost" id="qd-more">${icon('sliders')}${moreOpen ? 'Menos filtros' : 'Mais filtros'}${moreOn ? html` <em class="ms-ct">${moreOn}</em>` : ''}</button>
+        <div class="grow"></div>
+        ${anyFilter ? html`<button class="btn sm ghost" id="qd-clear">${icon('x')}Limpar filtros</button>` : ''}
+      </div>
     </div>
     <div id="qd-body"></div>
   </div>`);
   for (const [id] of FILTERS) bindMultiSelect(ROOT, `qf-${id}`, (v) => { state.f[id] = v; state.page = 0; draw(); });
-  $('#qd-from', ROOT).onchange = (e) => { state.from = e.target.value; state.page = 0; draw(); };
-  $('#qd-to', ROOT).onchange = (e) => { state.to = e.target.value; state.page = 0; draw(); };
+  bindPeriod(ROOT, 'qd', state.period, () => { state.page = 0; draw(); });
+  $('#qd-more', ROOT).onclick = () => { state.more = !moreOpen; if (!state.more) for (const x of FILTERS) if (x[4]) delete state.f[x[0]]; draw(); };
   $('#qd-q', ROOT).addEventListener('input', debounce((e) => { state.q = e.target.value; state.page = 0; drawBody(); }, 250));
-  $('#qd-clear', ROOT)?.addEventListener('click', () => { state.f = {}; state.from = ''; state.to = ''; state.q = ''; state.page = 0; draw(); });
+  $('#qd-clear', ROOT)?.addEventListener('click', () => { state.f = {}; state.period.from = ''; state.period.to = ''; state.q = ''; state.page = 0; draw(); });
   $('#qd-folder', ROOT).onclick = () => openFolder();
   $('#qd-csv', ROOT).onclick = openImport;
   $('#qd-export', ROOT).onclick = openExport;
@@ -575,10 +663,13 @@ export function dropsCsv(rows) {
 function openExport() {
   const views = [['todas', 'Consolidada (todas as carteiras)'], ...GROUPS.map((g) => [`g:${g}`, `${g} (todas as carteiras ${g})`]), ...CARTEIRAS.map((c) => [`c:${c}`, `Só ${c}`]), ['c:', 'Carteira a definir']];
   const cur = state.view === 'todas' ? 'todas' : `g:${state.view}`;
-  const hasFilters = Object.values(state.f).some((v) => v?.length) || state.from || state.to || state.q;
+  const hasFilters = Object.values(state.f).some((v) => v?.length) || state.q;
+  // O período do arquivo é escolhido aqui (começa igual ao da tela)
+  const per = { ...state.period };
   const pick = (v, useFilters, onlyDone) => {
-    const base = useFilters ? filtered() : D.rows;
-    return base.filter((r) => (v === 'todas' ? true : v.startsWith('g:') ? groupOf(r) === v.slice(2) : (r.carteira || '') === v.slice(2)))
+    const base = useFilters ? filtered({ period: null }) : D.rows;
+    return base.filter((r) => inPeriod(r, per))
+      .filter((r) => (v === 'todas' ? true : v.startsWith('g:') ? groupOf(r) === v.slice(2) : (r.carteira || '') === v.slice(2)))
       .filter((r) => !onlyDone || r.status === 'analisada')
       .sort((a, b) => String(a.operator_name || '').localeCompare(String(b.operator_name || '')) || String(a.call_at || '').localeCompare(String(b.call_at || '')));
   };
@@ -586,8 +677,9 @@ function openExport() {
     title: 'Exportar análises de queda (CSV)', cls: 'qd-modal',
     body: html`<p class="t2" style="margin-top:0">Mesmas colunas da planilha de controle (Nome, Login, Contrato, Telefone, Data, Tempo Ligação, Classificação Operador e Correta, Status, Desconexão, Prestou Atendimento?, Segurou Ligação?, Observação), seguidas de carteira, liderança, gerência, resultado e analista.</p>
       <div class="field"><label for="ex-view">Visão</label><select class="select" id="ex-view">${views.map(([k, l]) => html`<option value="${k}" ${k === cur ? 'selected' : ''}>${l}</option>`)}</select></div>
+      <div class="field"><label>Dias do relatório</label>${periodBox('ex', per)}<small class="tiny muted">Escolha um dia (De e Até iguais) ou um intervalo. “Data da análise” traz o que foi analisado nesses dias.</small></div>
       <label class="check"><input type="checkbox" id="ex-done" checked> Só atendimentos já analisados</label><br>
-      <label class="check" style="margin-top:8px"><input type="checkbox" id="ex-filt" ${hasFilters ? 'checked' : ''} ${hasFilters ? '' : 'disabled'}> Aplicar os filtros da tela (período, operador, liderança…)</label>
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="ex-filt" ${hasFilters ? 'checked' : ''} ${hasFilters ? '' : 'disabled'}> Aplicar os outros filtros da tela (carteira, operador, liderança…)</label>
       <p class="tiny muted" id="ex-n" style="margin-top:12px"></p>`,
     foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="ex-go">${icon('download')}Baixar CSV</button>`,
     onMount: (m, close) => {
@@ -596,13 +688,15 @@ function openExport() {
         const saved = state.view; state.view = 'todas';
         try { return pick($('#ex-view', m).value, $('#ex-filt', m).checked, $('#ex-done', m).checked); } finally { state.view = saved; }
       };
-      const count = () => { const n = rowsNow().length; $('#ex-n', m).textContent = `${n} atendimento(s) no arquivo.`; $('#ex-go', m).disabled = !n; };
+      const count = () => { const n = rowsNow().length; $('#ex-n', m).textContent = `${n} atendimento(s) no arquivo${periodTxt(per) ? ` · ${periodTxt(per)}` : ' · todos os dias'}.`; $('#ex-go', m).disabled = !n; };
       ['#ex-view', '#ex-done', '#ex-filt'].forEach((sel) => { $(sel, m).onchange = count; });
+      bindPeriod(m, 'ex', per, count);
       count();
       $('#ex-go', m).onclick = () => {
         const v = $('#ex-view', m).value;
         const label = v === 'todas' ? 'consolidado' : (v.slice(2) || 'a-definir').toLowerCase().replace(/\s+/g, '-');
-        saveBlob(new Blob([dropsCsv(rowsNow())], { type: 'text/csv;charset=utf-8' }), `quedas_${label}_${new Date().toISOString().slice(0, 10)}.csv`);
+        const days = per.from || per.to ? (per.from === per.to ? per.from : `${per.from || 'inicio'}_a_${per.to || dayAt()}`) : dayAt();
+        saveBlob(new Blob([dropsCsv(rowsNow())], { type: 'text/csv;charset=utf-8' }), `quedas_${label}_${days}.csv`);
         close(); toast('CSV gerado.');
       };
     },
@@ -758,7 +852,7 @@ export function analysisRows(rows) {
       notes: String(col(r, 'observacao') || '').trim() || undefined,
       verdict,
       conduct: verdict === 'operador' ? true : desvio,
-      conduct_type: (verdict === 'operador' || desvio) ? (CONDUCT.find((c) => key(c) === key(type)) || (type ? 'Outro desvio de conduta' : 'Desligou durante o atendimento')) : undefined,
+      conduct_type: (verdict === 'operador' || desvio) ? ([...CONDUCT, ...CONDUCT_OLD].find((c) => key(c) === key(type)) || (type ? 'Outro tipo de desvio' : verdict === 'operador' ? 'Desligou na cara do cliente' : 'Outro tipo de desvio')) : undefined,
       drop_moment: String(col(r, 'momentodaqueda') || '').trim() || undefined,
       carteira: CARTEIRAS.includes(cart) ? cart : undefined,
       leader: String(col(r, 'lideranca') || '').trim() || undefined,
@@ -882,14 +976,11 @@ async function openReview(id, queue = null) {
   }
   const canDelete = id && (CTX.can('admin') || (row.status === 'pendente' && row.created_by === CTX.store.user.id));
   const tabs = [...new Set(D.rows.map((r) => r.tabulation).filter(Boolean))].sort();
-  const leaders = [...new Set(rosterRows.map((r) => r.leader).filter(Boolean))].sort();
   const camps = [...new Set(rosterRows.map((r) => r.campaign).filter(Boolean))].sort();
-  const segs = [...new Set(rosterRows.map((r) => r.segment).filter(Boolean))].sort();
   const opList = rosterRows.filter((r) => r.active).sort((a, b) => a.name.localeCompare(b.name));
   let audioFile = null;
   let transcript = row.transcript || '';
   let transcriptName = row.transcript_name || '';
-  const callLocal = row.call_at ? row.call_at.slice(0, 16) : '';
   const v = row.verdict || '';
   const pf = row.portfolio || D.portfolio;
   const next = () => (queue || []).find((r) => r.id !== id && mine(r) && r.status === 'pendente' && !(r.locked_by && r.locked_by !== D.me));
@@ -901,26 +992,26 @@ async function openReview(id, queue = null) {
       ${row.analyst_name ? html`<div class="banner info">${icon('info')}<div>Analisado por <b>${row.analyst_name}</b> ${fmtRel(row.analyzed_at)}.</div></div>` : ''}
       <div class="qd-sec"><h4>${icon('headset')}Atendimento</h4>
         <div class="qd-fgrid">
-          <div class="field span-2"><label for="r-cart">Carteira analisada</label><select class="select" id="r-cart"><option value="">Escolha a carteira…</option>${CARTEIRAS.map((c) => html`<option ${(row.carteira || (!id ? lastCarteira() : '')) === c ? 'selected' : ''}>${c}</option>`)}</select></div>
-          <div class="field"><label for="r-phone">Telefone</label><input class="input" id="r-phone" value="${row.phone || ''}" inputmode="tel" placeholder="DDD + número"></div>
-          <div class="field"><label for="r-ctr">Contrato</label><input class="input" id="r-ctr" value="${row.contract || ''}"></div>
+          <div class="field span-2"><label for="r-cart">Carteira analisada <i class="req">*</i></label><select class="select" id="r-cart"><option value="">Escolha a carteira…</option>${CARTEIRAS.map((c) => html`<option ${(row.carteira || (!id ? lastCarteira() : '')) === c ? 'selected' : ''}>${c}</option>`)}</select></div>
+          <div class="field" data-req="r-phone"><label for="r-phone">Telefone <i class="req">*</i></label><input class="input" id="r-phone" value="${row.phone || ''}" inputmode="tel" placeholder="DDD + número"></div>
+          <div class="field" data-req="r-ctr"><label for="r-ctr">Contrato / CPF <i class="req">*</i></label><input class="input" id="r-ctr" value="${row.contract || ''}" placeholder="Contrato ou CPF do cliente"></div>
           <div class="field"><label for="r-cid">ID do contato</label><input class="input" id="r-cid" value="${row.contact_id || ''}" placeholder="IdContato"></div>
-          <div class="field"><label for="r-at">Data e hora</label><input class="input" type="datetime-local" id="r-at" value="${callLocal}"></div>
-          <div class="field"><label for="r-dur">Duração</label><input class="input" id="r-dur" value="${row.duration_sec != null ? fmtDur(row.duration_sec) : ''}" placeholder="m:ss"></div>
-          <div class="field"><label for="r-tab">Tabulação do operador</label><input class="input" id="r-tab" list="r-tabs" value="${row.tabulation || ''}" placeholder="QUEDA LIGACAO CLIENTE"><datalist id="r-tabs">${['QUEDA LIGACAO CLIENTE', 'QUEDA DE LIGACAO', 'LIGACAO MUDA', ...tabs].filter((t, i, a) => a.indexOf(t) === i).map((t) => html`<option value="${t}">`)}</datalist></div>
-          <div class="field span-2"><label>Tipo de desconexão</label><div class="seg" id="r-disc">${['Interna', 'Externa', ''].map((d) => html`<button type="button" data-v="${d}" class="${(row.disconnect || '') === d ? 'on' : ''}">${d || 'Não informado'}</button>`)}</div></div>
+          <div class="field" data-req="r-at"><label for="r-at">Data e hora <i class="req">*</i></label><input class="input num" id="r-at" value="${brDateTime(row.call_at)}" placeholder="dd/mm/aaaa hh:mm:ss" inputmode="numeric" maxlength="19"></div>
+          <div class="field"><label for="r-dur">Duração</label><input class="input num" id="r-dur" value="${row.duration_sec != null ? hms(row.duration_sec) : ''}" placeholder="hh:mm:ss" inputmode="numeric" maxlength="8"></div>
+          <div class="field" data-req="r-tab"><label for="r-tab">Tabulação do operador <i class="req">*</i></label><input class="input" id="r-tab" list="r-tabs" value="${row.tabulation || ''}" placeholder="QUEDA LIGACAO CLIENTE"><datalist id="r-tabs">${['QUEDA LIGACAO CLIENTE', 'QUEDA DE LIGACAO', 'LIGACAO MUDA', ...tabs].filter((t, i, a) => a.indexOf(t) === i).map((t) => html`<option value="${t}">`)}</datalist></div>
+          <div class="field span-2" data-req="r-disc"><label>Tipo de desconexão <i class="req">*</i></label><div class="seg" id="r-disc">${['Interna', 'Externa'].map((d) => html`<button type="button" data-v="${d}" class="${row.disconnect === d ? 'on' : ''}">${d}</button>`)}</div></div>
           ${row.dialer_campaign || row.operation ? html`<div class="field"><label>Discador</label><div class="qd-ro">${[row.dialer_campaign, row.operation].filter(Boolean).join(' · ')}</div></div>` : ''}
         </div>
         ${row.disconnect === 'Interna' ? html`<p class="qd-hint warn">${icon('alert')}Desconexão <b>interna</b>: a ligação foi encerrada do nosso lado. Confirme no áudio se o cliente realmente abandonou antes de validar a queda.</p>` : ''}
       </div>
       <div class="qd-sec"><h4>${icon('user')}Operador</h4>
         <div class="qd-fgrid">
-          <div class="field span-2"><label for="r-op">Login ou nome completo</label><input class="input" id="r-op" list="r-ops" autocomplete="off" value="${row.login ? `${title(row.operator_name || roster.get(row.login)?.name || '')} · ${row.login}`.replace(/^ · /, '') : row.operator_name || ''}" placeholder="Digite o login ou o nome (com ou sem acento)">
+          <div class="field span-2" data-req="r-op"><label for="r-op">Login ou nome completo <i class="req">*</i></label><input class="input" id="r-op" list="r-ops" autocomplete="off" value="${row.login ? `${title(row.operator_name || roster.get(row.login)?.name || '')} · ${row.login}`.replace(/^ · /, '') : row.operator_name || ''}" placeholder="Digite o login ou o nome (com ou sem acento)">
             <datalist id="r-ops">${opList.map((o) => html`<option value="${title(o.name)} · ${o.login}">`)}</datalist><small class="qd-found" id="r-found"></small></div>
-          <div class="field"><label for="r-ld">Liderança</label><input class="input" id="r-ld" list="r-lds" value="${row.leader || ''}"><datalist id="r-lds">${leaders.map((l) => html`<option value="${l}">`)}</datalist></div>
-          <div class="field"><label for="r-mg">Gerência</label><input class="input" id="r-mg" list="r-mgs" value="${row.manager || ''}"><datalist id="r-mgs">${managers().map((l) => html`<option value="${l}">`)}</datalist></div>
+          <div class="field"><label for="r-ld">Liderança</label><input class="input" id="r-ld" list="r-lds" value="${row.leader || ''}"><datalist id="r-lds"></datalist></div>
+          <div class="field" data-req="r-mg"><label for="r-mg">Gerência <i class="req">*</i></label><input class="input" id="r-mg" list="r-mgs" value="${row.manager || ''}"><datalist id="r-mgs"></datalist></div>
           <div class="field"><label for="r-cp">Campanha / setor</label><input class="input" id="r-cp" list="r-cps" value="${row.campaign || ''}"><datalist id="r-cps">${camps.map((l) => html`<option value="${l}">`)}</datalist></div>
-          <div class="field"><label for="r-sg">Segmento</label><input class="input" id="r-sg" list="r-sgs" value="${row.segment || ''}"><datalist id="r-sgs">${segs.map((l) => html`<option value="${l}">`)}</datalist></div>
+          <div class="field" data-req="r-sg"><label for="r-sg">Segmento <i class="req">*</i></label><input class="input" id="r-sg" list="r-sgs" value="${row.segment || ''}"><datalist id="r-sgs"></datalist></div>
         </div>
       </div>
       <div class="qd-sec"><h4>${icon('audio')}Áudio e transcrição</h4>
@@ -938,26 +1029,29 @@ async function openReview(id, queue = null) {
           <div class="qd-trbar"><label class="btn sm ghost">${icon('file')}Anexar arquivo (.txt, .docx)<input type="file" accept=".txt,.docx,.vtt,.srt,.json" id="r-trfile" hidden></label></div>
           <textarea class="textarea qd-tr" id="r-tr" placeholder="Cole aqui a transcrição (Atendente: … / Cliente: …)">${transcript}</textarea></div>
       </div>
-      <div class="qd-sec"><h4>${icon('target')}Resultado da análise</h4>
-        <div class="qd-verdicts" id="r-verdict">${Object.entries(VERDICT).map(([k, [l, tone, d]]) => html`<button type="button" class="qd-vd ${tone} ${v === k ? 'on' : ''}" data-v="${k}"><b>${l}</b><small>${d}</small></button>`)}</div>
+      <div class="qd-sec"><h4>${icon('target')}Resultado da análise <i class="req">*</i></h4>
+        <div class="qd-verdicts" id="r-verdict" data-req="r-verdict">${Object.entries(VERDICT).map(([k, [l, tone, d]]) => html`<button type="button" class="qd-vd ${tone} ${v === k ? 'on' : ''}" data-v="${k}"><b>${l}</b><small>${d}</small></button>`)}</div>
         <div class="qd-fgrid">
-          <div class="field"><label>A tabulação procede?</label><div class="seg" id="r-tabok">${[['1', 'Sim'], ['0', 'Não'], ['', 'Sem conclusão']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.tab_correct === true ? '1' : row.tab_correct === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
+          <div class="field" data-req="r-tabok"><label>A tabulação de queda procede? <i class="req">*</i></label><div class="seg" id="r-tabok">${[['1', 'Sim'], ['0', 'Não']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.tab_correct === true ? '1' : row.tab_correct === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
           <div class="field" id="r-ctab-f"><label for="r-ctab">Tabulação correta</label><input class="input" id="r-ctab" list="r-tabs" value="${row.correct_tab || ''}" placeholder="Qual deveria ser"></div>
-          <div class="field"><label for="r-mom">Momento da queda</label><input class="input" id="r-mom" value="${row.drop_moment || ''}" placeholder="m:ss no áudio"></div>
+          <div class="field"><label for="r-mom">Momento da queda</label><input class="input num" id="r-mom" value="${row.drop_moment ? timeMask(row.drop_moment) : ''}" placeholder="hh:mm:ss no áudio" inputmode="numeric" maxlength="8"></div>
           <div class="field span-2"><label>Prestou atendimento?</label><div class="seg" id="r-att">${[['1', 'Prestou atendimento'], ['0', 'Não prestou'], ['', '—']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.attended === true ? '1' : row.attended === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
-          <div class="field span-2"><label>Segurou a ligação?</label><div class="seg" id="r-held">${[['1', 'Sim'], ['0', 'Não'], ['', '—']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.held === true ? '1' : row.held === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
+          <div class="field span-2" data-req="r-held"><label>Segurou a ligação? <i class="req">*</i></label><div class="seg" id="r-held">${[['1', 'Sim'], ['0', 'Não']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${(row.held === true ? '1' : row.held === false ? '0' : '') === k ? 'on' : ''}">${l}</button>`)}</div></div>
         </div>
-        <div class="qd-conduct-box ${row.conduct ? 'on' : ''}" id="r-cbox">
-          <label class="switch"><input type="checkbox" id="r-conduct" ${row.conduct ? 'checked' : ''}><span><b>Desvio de conduta</b> · o operador desligou com o cliente na linha</span></label>
-          <select class="select sm" id="r-ctype"><option value="">Tipo de desvio…</option>${CONDUCT.map((c) => html`<option ${row.conduct_type === c ? 'selected' : ''}>${c}</option>`)}</select>
+        <div class="qd-conduct-box ${row.conduct ? 'on' : ''}" id="r-cbox" data-req="r-cond">
+          <div class="qd-cq"><b>Houve desvio de conduta? <i class="req">*</i></b><div class="seg" id="r-cond">${[['1', 'Sim'], ['0', 'Não']].map(([k, l]) => html`<button type="button" data-v="${k}" class="${id && row.status === 'analisada' && (row.conduct ? '1' : '0') === k ? 'on' : ''}">${l}</button>`)}</div></div>
+          <div class="qd-cwhy" id="r-cwhy"><label for="r-ctype">Motivo do desvio <i class="req">*</i></label><select class="select sm" id="r-ctype"><option value="">Escolha o motivo…</option>${[...CONDUCT, ...(row.conduct_type && !CONDUCT.includes(row.conduct_type) ? [row.conduct_type] : [])].map((c) => html`<option ${row.conduct_type === c ? 'selected' : ''}>${c}</option>`)}</select>
+            <small>Descreva o desvio na observação abaixo.</small></div>
         </div>
-        <div class="field"><label for="r-notes">Observação / evidência</label><textarea class="textarea" id="r-notes" rows="3" placeholder="O que aconteceu na ligação (ex.: cliente pediu para aguardar e o operador encerrou aos 2:10)">${row.notes || ''}</textarea></div>
+        <div class="field" data-req="r-notes"><label for="r-notes">Observação / evidência <i class="req" id="r-notes-req" hidden>*</i></label><textarea class="textarea" id="r-notes" rows="3" placeholder="O que aconteceu na ligação (ex.: cliente pediu para aguardar e o operador encerrou aos 2:10)">${row.notes || ''}</textarea></div>
       </div>`,
     foot: ro ? html`<button class="btn" data-close>Fechar</button>` : html`${canDelete ? html`<button class="btn ghost danger" id="r-del">${icon('trash')}Excluir</button>` : ''}<div class="grow"></div>
       <button class="btn ghost" data-close>Cancelar</button>
       ${queue ? html`<button class="btn" id="r-savenext">Salvar e próximo${icon('chevRight')}</button>` : ''}
-      <button class="btn primary" id="r-save">${icon('check')}Salvar</button>`,
+      <button class="btn primary" id="r-save">${icon('check')}Salvar análise</button>`,
     onClose: () => { clearInterval(lockTimer); if (locked && id) api.post(`/quedas/${id}/unlock`).catch(() => {}); },
+    // Clicar fora, Esc, X ou Cancelar não descartam a análise sem avisar
+    beforeClose: ro ? null : () => confirmDialog('Sair da análise?', 'Se você sair agora, esta análise não será salva.', { ok: 'Sair sem salvar', cancel: 'Continuar editando', danger: true }),
   });
 
   const val = (s) => $(s, m).value.trim();
@@ -968,13 +1062,17 @@ async function openReview(id, queue = null) {
   segBind('#r-held');
   segBind('#r-tabok', () => syncTab());
   const syncTab = () => { $('#r-ctab-f', m).hidden = segVal('#r-tabok') !== '0'; };
+  const condOn = () => segVal('#r-cond') === '1';
+  const setCond = (on) => $$('#r-cond button', m).forEach((x) => x.classList.toggle('on', x.dataset.v === (on ? '1' : '0')));
   const syncConduct = () => {
-    const on = $('#r-conduct', m).checked;
+    const on = condOn();
     $('#r-cbox', m).classList.toggle('on', on);
-    $('#r-ctype', m).hidden = !on;
+    $('#r-cwhy', m).hidden = !on;
+    $('#r-notes-req', m).hidden = !on;
   };
-  syncTab(); syncConduct();
+  segBind('#r-cond', () => { autoConduct = false; syncConduct(); });
   let autoConduct = false;
+  syncTab(); syncConduct();
   $$('#r-verdict .qd-vd', m).forEach((b) => b.addEventListener('click', () => {
     const was = b.classList.contains('on');
     $$('#r-verdict .qd-vd', m).forEach((x) => x.classList.toggle('on', x === b && !was));
@@ -983,13 +1081,12 @@ async function openReview(id, queue = null) {
     $$('#r-tabok button', m).forEach((x) => x.classList.toggle('on', x.dataset.v === (ok === true ? '1' : ok === false ? '0' : '')));
     // "Operador desligou" é sempre desvio de conduta; ao trocar de resultado, desfaz só a marcação automática
     if (k === 'operador') {
-      if (!$('#r-conduct', m).checked) { $('#r-conduct', m).checked = true; autoConduct = true; }
-      if (!$('#r-ctype', m).value) $('#r-ctype', m).value = CONDUCT[1];
-    } else if (autoConduct) { $('#r-conduct', m).checked = false; $('#r-ctype', m).value = ''; autoConduct = false; }
+      if (!condOn()) { setCond(true); autoConduct = true; }
+      if (!$('#r-ctype', m).value) $('#r-ctype', m).value = CONDUCT[0];
+    } else if (autoConduct) { setCond(false); $('#r-ctype', m).value = ''; autoConduct = false; }
     if (k === 'concluido' && !val('#r-ctab')) setTimeout(() => $('#r-ctab', m).focus(), 0);
     syncTab(); syncConduct();
   }));
-  $('#r-conduct', m).onchange = () => { autoConduct = false; syncConduct(); };
 
   // Login ou nome → liderança, gerência, campanha e segmento
   const found = $('#r-found', m);
@@ -1001,10 +1098,12 @@ async function openReview(id, queue = null) {
     found.className = `qd-found ${o.active ? 'ok' : 'warn'}`;
     if (fill) {
       $('#r-ld', m).value = o.leader || '';
-      $('#r-mg', m).value = managerOf(o.leader) || '';
+      $('#r-mg', m).value = managerOf(o.leader) || topOf(D.rows, (r) => r.leader === o.leader, 'manager') || '';
       $('#r-cp', m).value = o.campaign || '';
       $('#r-sg', m).value = o.segment || '';
       $('#r-op', m).value = `${title(o.name)} · ${o.login}`;
+      cartFrom();
+      refreshLists();
     }
     return o;
   };
@@ -1012,7 +1111,40 @@ async function openReview(id, queue = null) {
   $('#r-op', m).addEventListener('change', () => applyOp(true));
   // O capacity carregado é o da carteira do usuário: em atendimento de outra carteira não confere o operador
   if (val('#r-op') && pf === D.portfolio) applyOp(false);
-  $('#r-ld', m).addEventListener('change', () => { if (!val('#r-mg') || D.leaders.some((l) => l.manager === val('#r-mg'))) $('#r-mg', m).value = managerOf(val('#r-ld')) || val('#r-mg'); });
+  // Liderança, gerência, segmento e carteira puxam um ao outro (pelo capacity e pelas análises já feitas)
+  const cartFrom = () => {
+    const c = (val('#r-mg') && topOf(D.rows, (r) => r.manager === val('#r-mg') && r.carteira, 'carteira')) || (val('#r-sg') && topOf(D.rows, (r) => r.segment === val('#r-sg') && r.carteira, 'carteira'));
+    if (c && CARTEIRAS.includes(c)) $('#r-cart', m).value = c;
+  };
+  const refreshLists = () => {
+    const c = $('#r-cart', m).value, g = val('#r-mg');
+    const inCart = (r) => !c || r.carteira === c;
+    const mgs = new Set([...D.rows.filter((r) => inCart(r) && r.manager).map((r) => r.manager), ...(c ? [] : managers())]);
+    const lds = new Set([...D.rows.filter((r) => inCart(r) && (!g || r.manager === g) && r.leader).map((r) => r.leader), ...D.leaders.filter((l) => !g || l.manager === g).map((l) => l.leader), ...(g || c ? [] : rosterRows.map((r) => r.leader).filter(Boolean))]);
+    const sgs = new Set([...D.rows.filter((r) => inCart(r) && (!g || r.manager === g) && r.segment).map((r) => r.segment), ...rosterRows.filter((r) => !val('#r-ld') || r.leader === val('#r-ld')).map((r) => r.segment).filter(Boolean)]);
+    const fill = (sel, set) => { $(sel, m).innerHTML = [...set].sort().map((x) => `<option value="${esc(x)}">`).join(''); };
+    fill('#r-mgs', mgs); fill('#r-lds', lds); fill('#r-sgs', sgs);
+  };
+  $('#r-ld', m).addEventListener('change', () => {
+    const l = val('#r-ld'); if (!l) return;
+    const g = managerOf(l) || topOf(D.rows, (r) => r.leader === l, 'manager');
+    if (g) $('#r-mg', m).value = g;
+    const sg = topOf(rosterRows, (r) => r.leader === l, 'segment') || topOf(D.rows, (r) => r.leader === l, 'segment');
+    if (sg) $('#r-sg', m).value = sg;
+    cartFrom(); refreshLists();
+  });
+  $('#r-mg', m).addEventListener('change', () => { cartFrom(); refreshLists(); });
+  $('#r-sg', m).addEventListener('change', () => { if (!val('#r-mg')) cartFrom(); refreshLists(); });
+  $('#r-cart', m).addEventListener('change', refreshLists);
+  refreshLists();
+  // Máscaras: data e hora (colar do Mosaic preenche também a duração), duração e momento da queda
+  bindMask($('#r-at', m), dateTimeMask, (text) => {
+    const rest = text.replace(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?|\d{1,2}\/\d{1,2}\/\d{4}\s+\d{1,2}:\d{2}(:\d{2})?/, '');
+    const dur = rest.match(/\d{1,2}:\d{2}:\d{2}(\.\d+)?/);
+    if (dur && !val('#r-dur')) $('#r-dur', m).value = timeMask(dur[0]);
+  });
+  bindMask($('#r-dur', m), timeMask);
+  bindMask($('#r-mom', m), timeMask);
 
   let reopening = false;
   $('#r-cid', m).addEventListener('change', () => {
@@ -1092,21 +1224,56 @@ async function openReview(id, queue = null) {
     try { await api.post('/quedas/delete', { ids: [id] }); locked = false; close(); toast('Atendimento excluído.'); await fetchData(); draw(); } catch (ex) { toast(ex.message, 'err'); }
   });
 
+  // Campos obrigatórios: destaca o que falta e leva até o primeiro
+  const missing = () => {
+    const need = [
+      ['r-cart', 'Carteira analisada', () => $('#r-cart', m).value], ['r-phone', 'Telefone', () => val('#r-phone')], ['r-ctr', 'Contrato / CPF', () => val('#r-ctr')],
+      ['r-at', 'Data e hora (dd/mm/aaaa hh:mm:ss)', () => isDateTime(val('#r-at'))], ['r-tab', 'Tabulação do operador', () => val('#r-tab')], ['r-disc', 'Tipo de desconexão', () => segVal('#r-disc')],
+      ['r-op', 'Login ou nome completo', () => val('#r-op')], ['r-sg', 'Segmento', () => val('#r-sg')], ['r-mg', 'Gerência', () => val('#r-mg')],
+      ['r-verdict', 'Resultado da análise', () => $('#r-verdict .qd-vd.on', m)], ['r-tabok', 'A tabulação de queda procede?', () => segVal('#r-tabok')], ['r-held', 'Segurou a ligação?', () => segVal('#r-held')],
+      ['r-cond', 'Houve desvio de conduta?', () => segVal('#r-cond')], ['r-ctype', 'Motivo do desvio', () => !condOn() || $('#r-ctype', m).value], ['r-notes', 'Observação descrevendo o desvio', () => !condOn() || val('#r-notes')],
+    ];
+    $$('.qd-miss', m).forEach((x) => x.classList.remove('qd-miss'));
+    const miss = need.filter(([, , ok]) => !ok());
+    for (const [k] of miss) (m.querySelector(`[data-req="${k}"]`) || $(`#${k}`, m)?.closest('.field') || $(`#${k}`, m))?.classList.add('qd-miss');
+    if (val('#r-dur') && !isTime(val('#r-dur'))) { miss.push(['r-dur', 'Duração no formato hh:mm:ss']); $('#r-dur', m).closest('.field').classList.add('qd-miss'); }
+    if (val('#r-mom') && !isTime(val('#r-mom'))) { miss.push(['r-mom', 'Momento da queda no formato hh:mm:ss']); $('#r-mom', m).closest('.field').classList.add('qd-miss'); }
+    return miss;
+  };
+  let saving = false;
+  // Enter ou "Salvar análise": confere os obrigatórios e pede a confirmação antes de gravar
+  const askSave = async (btnEl, goNext) => {
+    if (saving || ro) return;
+    const miss = missing();
+    if (miss.length) {
+      toast(`Preencha: ${miss.map(([, l]) => l).join(', ')}`.replace(/([^?])$/, '$1.'), 'err', 6000);
+      m.querySelector('.qd-miss')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    const vd = $('#r-verdict .qd-vd.on', m).dataset.v;
+    const sure = await confirmDialog('Finalizar análise?', `${title(findOperator(val('#r-op'))?.name || val('#r-op'))} · ${VERDICT[vd][0]} · tabulação ${segVal('#r-tabok') === '1' ? 'procede' : 'não procede'}${condOn() ? ` · desvio: ${$('#r-ctype', m).value}` : ' · sem desvio de conduta'}. Confirme que a análise foi finalizada.`, { ok: 'Confirmar e salvar', cancel: 'Voltar à edição', enter: true });
+    if (sure) save(btnEl, goNext);
+  };
+  m.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing || ro) return;
+    if (e.target.matches('textarea, button, a')) return;
+    if ($$('.overlay').pop() !== m.closest('.overlay')) return;
+    e.preventDefault();
+    askSave($('#r-save', m), false);
+  });
   const save = async (btnEl, goNext) => {
+    saving = true;
     const verdict = $('#r-verdict .qd-vd.on', m)?.dataset.v || null;
     const o = findOperator(val('#r-op'));
     const opText = val('#r-op');
-    if (!opText) { toast('Informe o login ou o nome do operador.', 'err'); $('#r-op', m).focus(); return; }
-    const conduct = $('#r-conduct', m).checked;
-    if (conduct && !$('#r-ctype', m).value) { toast('Escolha o tipo de desvio de conduta.', 'err'); $('#r-ctype', m).focus(); return; }
+    const conduct = condOn();
     const tabOk = segVal('#r-tabok');
     const dur = val('#r-dur');
     const carteira = $('#r-cart', m).value;
-    if (verdict && !carteira) { toast('Escolha a carteira analisada.', 'err'); $('#r-cart', m).focus(); return; }
     const yn = (s) => { const x = segVal(s); return x === '' ? null : x === '1'; };
     const body = {
       carteira, phone: val('#r-phone'), contract: val('#r-ctr'), attended: yn('#r-att'), held: yn('#r-held'),
-      contact_id: val('#r-cid'), call_at: val('#r-at') ? `${val('#r-at').replace('T', ' ')}:00` : '', duration_sec: dur ? mmss(dur) : '',
+      contact_id: val('#r-cid'), call_at: val('#r-at'), duration_sec: dur ? mmss(dur) : '',
       tabulation: val('#r-tab'), disconnect: segVal('#r-disc'),
       login: o ? o.login : /^[\w.-]+$/.test(opText) ? opText : '', operator_name: o ? o.name : /\s/.test(opText) ? opText.replace(/\s*·.*$/, '') : (row.operator_name || ''),
       leader: val('#r-ld'), manager: val('#r-mg'), campaign: val('#r-cp'), segment: val('#r-sg'),
@@ -1115,8 +1282,7 @@ async function openReview(id, queue = null) {
       verdict, conduct, conduct_type: conduct ? $('#r-ctype', m).value : '', tab_correct: tabOk === '' ? null : tabOk === '1',
       correct_tab: tabOk === '0' ? val('#r-ctab') : '', drop_moment: val('#r-mom'), notes: val('#r-notes'), force: true,
     };
-    if (body.audio_url && !/^https:\/\//i.test(body.audio_url)) { toast('O link do áudio precisa começar com https://', 'err'); return; }
-    if (dur && body.duration_sec == null) { toast('Duração no formato m:ss (ex.: 2:35).', 'err'); return; }
+    if (body.audio_url && !/^https:\/\//i.test(body.audio_url)) { saving = false; toast('O link do áudio precisa começar com https://', 'err'); return; }
     busy(btnEl, true, 'Salvando');
     try {
       const saved = id ? await api.put(`/quedas/${id}`, body) : await api.post('/quedas', body);
@@ -1130,10 +1296,10 @@ async function openReview(id, queue = null) {
       toast(verdict ? `Análise salva${conduct ? ' · desvio de conduta registrado' : ''}.` : 'Atendimento salvo como pendente.');
       await fetchData(); if (ROOT?.isConnected) draw();
       if (goNext) { const n = next(); if (n) openReview(n.id, filtered().filter(inList)); else toast('Não há mais pendentes da sua carteira nesta lista.'); }
-    } catch (ex) { toast(ex.message, 'err', 5000); busy(btnEl, false); }
+    } catch (ex) { saving = false; toast(ex.message, 'err', 5000); busy(btnEl, false); }
   };
-  $('#r-save', m)?.addEventListener('click', (e) => save(e.currentTarget, false));
-  $('#r-savenext', m)?.addEventListener('click', (e) => save(e.currentTarget, true));
+  $('#r-save', m)?.addEventListener('click', (e) => askSave(e.currentTarget, false));
+  $('#r-savenext', m)?.addEventListener('click', (e) => askSave(e.currentTarget, true));
 }
 
 function canEditRow(r) {

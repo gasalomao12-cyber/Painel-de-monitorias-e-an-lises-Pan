@@ -205,7 +205,9 @@ export function toast(msg, type = 'ok', ms = 3200) {
 }
 
 // ---------------- Modal ----------------
-export function modal({ title, body, foot, wide = false, onMount, onClose, dismissable = true, cls = '' }) {
+// beforeClose: chamado quando a pessoa tenta fechar (X, Esc, clique fora ou "Cancelar"); devolve false para manter aberta.
+// O close() devolvido ao onMount fecha direto (ex.: depois de salvar).
+export function modal({ title, body, foot, wide = false, onMount, onClose, beforeClose, dismissable = true, cls = '' }) {
   const ov = document.createElement('div');
   ov.className = 'overlay';
   ov.innerHTML = String(html`<div class="modal ${wide ? 'wide' : ''} ${cls}" role="dialog" aria-modal="true" aria-label="${title}">
@@ -215,29 +217,43 @@ export function modal({ title, body, foot, wide = false, onMount, onClose, dismi
   </div>`);
   document.body.appendChild(ov);
   const close = () => { if (!ov.isConnected) return; ov.remove(); document.removeEventListener('keydown', onKey); onClose?.(); };
-  const onKey = (e) => { if (e.key === 'Escape' && dismissable) close(); };
+  let asking = false;
+  const tryClose = async () => {
+    if (asking) return;
+    if (beforeClose) { asking = true; const ok = await beforeClose(); asking = false; if (!ok) return; }
+    close();
+  };
+  // Só a janela de cima responde ao Esc (uma confirmação aberta não fecha a janela de baixo junto)
+  const onKey = (e) => { if (e.key === 'Escape' && dismissable && $$('.overlay').pop() === ov) { e.stopPropagation(); tryClose(); } };
   document.addEventListener('keydown', onKey);
-  ov.addEventListener('mousedown', (e) => { if (e.target === ov && dismissable) close(); });
-  $$('[data-close]', ov).forEach((b) => b.addEventListener('click', close));
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov && dismissable) tryClose(); });
+  $$('[data-close]', ov).forEach((b) => b.addEventListener('click', tryClose));
   const m = $('.modal', ov);
   onMount?.(m, close);
   setTimeout(() => $('input:not([type=hidden]), textarea, select', m)?.focus(), 50);
   return { el: m, close };
 }
 
-export function confirmDialog(title, text, { ok = 'Confirmar', danger = false } = {}) {
+export function confirmDialog(title, text, { ok = 'Confirmar', cancel = 'Cancelar', danger = false, enter = false } = {}) {
   return new Promise((resolve) => {
     let done = false;
-    const { close } = modal({
+    let onEnter = null;
+    modal({
       title,
       body: html`<p class="t2" style="margin:0">${text}</p>`,
-      foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn ${danger ? 'danger' : 'primary'}" data-ok>${ok}</button>`,
+      foot: html`<button class="btn ghost" data-close>${cancel}</button><button class="btn ${danger ? 'danger' : 'primary'}" data-ok>${ok}</button>`,
+      onClose: () => { if (onEnter) document.removeEventListener('keydown', onEnter, true); if (!done) { done = true; resolve(false); } },
       onMount: (m, c) => {
-        $('[data-ok]', m).addEventListener('click', () => { done = true; c(); resolve(true); });
-        $$('[data-close]', m).forEach((b) => b.addEventListener('click', () => { if (!done) resolve(false); }));
+        const yes = () => { if (done) return; done = true; c(); resolve(true); };
+        $('[data-ok]', m).addEventListener('click', yes);
+        if (!enter) return;
+        // Enter confirma enquanto este aviso for o de cima, mesmo com o foco ainda no formulário de trás
+        const ov = m.closest('.overlay') || m;
+        onEnter = (e) => { if (e.key !== 'Enter' || e.repeat || $$('.overlay').pop() !== ov || e.target.closest?.('[data-close]')) return; e.preventDefault(); e.stopPropagation(); yes(); };
+        document.addEventListener('keydown', onEnter, true);
+        setTimeout(() => $('[data-ok]', m).focus(), 60);
       },
     });
-    void close;
   });
 }
 
