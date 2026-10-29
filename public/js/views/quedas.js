@@ -23,6 +23,7 @@ const groupOf = (r) => (r.carteira ? r.carteira.split(' ')[0] : r.portfolio || '
 // Motivos de desvio de conduta (o analista descreve o caso na observação)
 const CONDUCT = ['Desligou na cara do cliente', 'Omissão de atendimento', 'Tabulação incorreta', 'Interromper ou faltar com respeito com o cliente', 'Outro tipo de desvio'];
 // Motivos usados antes desta lista continuam aparecendo nas análises antigas
+const CONDUCT_VERDICTS = new Set(['cliente', 'operador', 'concluido']);
 const CONDUCT_OLD = ['Desligou durante o atendimento', 'Encerrou sem retorno ao cliente', 'Outro desvio de conduta'];
 const LIST = { todos: 'Todos', pendente: 'Pendentes', analisada: 'Analisados', desvio: 'Com desvio', interna: 'Desconexão interna' };
 const PAGE = 25;
@@ -84,7 +85,7 @@ const brDateTime = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso
 
 const mmss = (s) => { const m = String(s || '').trim().match(/^(?:(\d+):)?(\d{1,2}):(\d{2})$/); return m ? (Number(m[1] || 0) * 3600 + Number(m[2]) * 60 + Number(m[3])) : /^\d+$/.test(String(s || '').trim()) ? Number(s) : null; };
 
-const state = { f: {}, period: { by: 'analise', from: '', to: '' }, more: false, q: '', list: 'todos', page: 0, view: 'todas' };
+const state = { condOpen: false, f: {}, period: { by: 'analise', from: '', to: '' }, more: false, q: '', list: 'todos', page: 0, view: 'todas' };
 const FILTERS = [
   ['carteira', 'Todas as carteiras', 'carteiras', (r) => r.carteira || 'A definir'],
   ['manager', 'Todas as gerências', 'gerências', (r) => r.manager],
@@ -304,11 +305,19 @@ function drawBody() {
     </div>
     <section class="card qd-card qd-listcard">
       <div class="qd-ch"><div class="seg" id="qd-tabs">${Object.entries(LIST).map(([k, l]) => html`<button class="${state.list === k ? 'on' : ''}" data-l="${k}">${l} <em>${rows.filter((r) => (k === 'todos' ? true : k === 'desvio' ? r.conduct : k === 'interna' ? r.disconnect === 'Interna' : r.status === k)).length}</em></button>`)}</div>
-        <div class="grow"></div>${CTX.can('admin') ? html`<button class="btn sm ghost" id="qd-del-sel" hidden>${icon('trash')}Excluir selecionados</button>` : ''}</div>
+        <div class="grow"></div>${CTX.can('admin') ? html`<button class="btn sm ghost" id="qd-ana" title="Registrar quem fez as análises">${icon('userCog')}Trocar analista</button><button class="btn sm ghost" id="qd-del-sel" hidden>${icon('trash')}Excluir selecionados</button>` : ''}</div>
       <div id="qd-list"></div>
     </section>`);
   $$('#qd-tabs [data-l]', box).forEach((b) => b.addEventListener('click', () => { state.list = b.dataset.l; state.page = 0; drawBody(); }));
   $$('[data-op]', box).forEach((b) => b.addEventListener('click', () => { state.f.login = [b.dataset.op]; state.list = b.dataset.list || 'todos'; state.page = 0; draw(); }));
+  $('#qd-cond-tg', box)?.addEventListener('click', (e) => {
+    state.condOpen = !state.condOpen;
+    const tg = e.currentTarget;
+    tg.setAttribute('aria-expanded', String(state.condOpen));
+    tg.closest('.qd-conduct').classList.toggle('open', state.condOpen);
+    $('#qd-cond-cards', box).hidden = !state.condOpen;
+    tg.querySelector('.qd-cond-more').firstChild.textContent = state.condOpen ? 'Recolher' : 'Ver operadores';
+  });
   $$('[data-ld]', box).forEach((b) => b.addEventListener('click', () => { state.f.leader = [b.dataset.ld]; state.page = 0; draw(); }));
   $$('[data-dv]', box).forEach((b) => b.addEventListener('click', () => { state.f.disconnect = [b.dataset.dv]; if (b.dataset.v) state.f.verdict = [b.dataset.v]; state.page = 0; draw(); }));
   $$('[data-open]', box).forEach((b) => b.addEventListener('click', () => openReview(Number(b.dataset.open))));
@@ -386,8 +395,11 @@ function conductCards(conduct) {
   if (!conduct.length) return '';
   const ops = byOperator(conduct).sort((a, b) => b.rows.length - a.rows.length);
   const totalOf = (o) => D.rows.filter((r) => r.login === o.login && (r.portfolio || 'PAN') === o.portfolio && r.status === 'analisada').length;
-  return html`<section class="qd-conduct"><div class="qd-ch"><h3>${icon('alert')}Desvios de conduta</h3><span class="sub">operadores que desligaram com o cliente na linha</span></div>
-    <div class="qd-cards">${ops.map((o) => {
+  // Recolhido mostra só quantos atendimentos tiveram desvio; os cards aparecem ao expandir
+  return html`<section class="qd-conduct ${state.condOpen ? 'open' : ''}" id="qd-cond"><button type="button" class="qd-ch qd-cond-tg" id="qd-cond-tg" aria-expanded="${state.condOpen ? 'true' : 'false'}">
+      <h3>${icon('alert')}Desvios de conduta</h3><span class="chip bad num">${conduct.length} atendimento(s) com desvio</span><span class="sub">${ops.length} operador(es)</span>
+      <span class="grow"></span><span class="qd-cond-more">${state.condOpen ? 'Recolher' : 'Ver operadores'}${icon('chevDown')}</span></button>
+    <div class="qd-cards" id="qd-cond-cards" ${state.condOpen ? '' : 'hidden'}>${ops.map((o) => {
       const types = {};
       for (const r of o.rows) types[r.conduct_type || 'Desligou com o cliente na linha'] = (types[r.conduct_type || 'Desligou com o cliente na linha'] || 0) + 1;
       const last = o.rows.map((r) => r.call_at || r.analyzed_at).sort().pop();
@@ -461,11 +473,49 @@ function drawList(rows) {
   const sync = () => { const n = $$('.qd-sel:checked', box).length; if (delBtn) { delBtn.hidden = !n; delBtn.lastChild.textContent = `Excluir ${n} selecionado(s)`; } };
   $('#qd-all', box)?.addEventListener('change', (e) => { $$('.qd-sel', box).forEach((c) => { c.checked = e.target.checked; }); sync(); });
   $$('.qd-sel', box).forEach((c) => c.addEventListener('change', sync));
+  const anaBtn = $('#qd-ana', ROOT);
+  if (anaBtn) anaBtn.onclick = () => openAnalyst($$('.qd-sel:checked', box).map((c) => Number(c.value)), list.filter((r) => r.status === 'analisada'));
   if (delBtn) delBtn.onclick = async () => {
     const ids = $$('.qd-sel:checked', box).map((c) => Number(c.value));
     if (!ids.length || !(await confirmDialog('Excluir atendimentos', `${ids.length} atendimento(s) saem da força-tarefa, com a análise e os anexos. Não dá para desfazer.`, { ok: 'Excluir', danger: true }))) return;
     try { const r = await api.post('/quedas/delete', { ids }); toast(`${r.deleted} atendimento(s) excluído(s).`); await fetchData(); draw(); } catch (ex) { toast(ex.message, 'err'); }
   };
+}
+
+// Admin: troca quem consta como analista nos selecionados ou em todos os analisados da lista filtrada
+function openAnalyst(selIds, listDone) {
+  const sel = selIds.filter((id) => listDone.some((r) => r.id === id));
+  const people = D.analysts || [];
+  modal({
+    title: 'Trocar analista', cls: 'qd-modal',
+    body: html`<p class="t2" style="margin-top:0">Registra quem realmente fez as análises (por exemplo, uma planilha importada por outra pessoa). A data da análise e o resultado não mudam.</p>
+      <div class="field"><label for="an-who">Quem fez as análises</label><select class="select" id="an-who"><option value="">Escolha a pessoa…</option>${people.map((u) => html`<option value="${u.id}">${title(u.full || u.name)}${u.portfolio !== 'PAN' ? ` · ${u.portfolio}` : ''}</option>`)}</select></div>
+      <div class="field"><label>Quais análises</label>
+        <label class="check"><input type="radio" name="an-scope" value="sel" ${sel.length ? 'checked' : 'disabled'}> ${sel.length} selecionada(s) na lista</label><br>
+        <label class="check" style="margin-top:6px"><input type="radio" name="an-scope" value="all" ${sel.length ? '' : 'checked'}> Todas as ${listDone.length} analisada(s) da lista (filtros atuais)</label></div>
+      <p class="tiny muted" id="an-info"></p>`,
+    foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="an-go">${icon('check')}Trocar analista</button>`,
+    onMount: (m, close) => {
+      const ids = () => ($('[name="an-scope"]:checked', m)?.value === 'sel' ? sel : listDone.map((r) => r.id));
+      const info = () => {
+        const rows = D.rows.filter((r) => ids().includes(r.id));
+        const now = [...new Set(rows.map((r) => r.analyst_name || '—'))];
+        $('#an-info', m).textContent = rows.length ? `Hoje constam: ${now.slice(0, 4).join(', ')}${now.length > 4 ? '…' : ''}${rows[0]?.batch ? ` · lote ${[...new Set(rows.map((r) => r.batch).filter(Boolean))].slice(0, 2).join(', ')}` : ''}` : 'Nenhuma análise para trocar.';
+      };
+      $$('[name="an-scope"]', m).forEach((x) => { x.onchange = info; });
+      info();
+      $('#an-go', m).onclick = async (e) => {
+        const who = $('#an-who', m).value; const list = ids();
+        if (!who) { toast('Escolha quem fez as análises.', 'err'); return; }
+        if (!list.length) { toast('Nenhuma análise para trocar.', 'err'); return; }
+        const name = $('#an-who', m).selectedOptions[0].textContent;
+        if (!(await confirmDialog('Trocar analista', `${list.length} análise(s) passam a constar como feitas por ${name}.`, { ok: 'Trocar', enter: true }))) return;
+        busy(e.currentTarget, true, 'Salvando');
+        try { const r = await api.post('/quedas/analyst', { ids: list, user_id: who }); close(); toast(`${r.updated} análise(s) agora constam como de ${r.analyst_name}.`); await fetchData(); draw(); }
+        catch (ex) { toast(ex.message, 'err'); busy(e.currentTarget, false); }
+      };
+    },
+  });
 }
 
 // ---------------------------------------------------------------- Pasta de áudios
@@ -1062,10 +1112,13 @@ async function openReview(id, queue = null) {
   segBind('#r-held');
   segBind('#r-tabok', () => syncTab());
   const syncTab = () => { $('#r-ctab-f', m).hidden = segVal('#r-tabok') !== '0'; };
-  const condOn = () => segVal('#r-cond') === '1';
+  // A pergunta de desvio só vale para cliente desligou, operador desligou e atendimento seguiu
+  const condAsk = () => CONDUCT_VERDICTS.has($('#r-verdict .qd-vd.on', m)?.dataset.v);
+  const condOn = () => condAsk() && segVal('#r-cond') === '1';
   const setCond = (on) => $$('#r-cond button', m).forEach((x) => x.classList.toggle('on', x.dataset.v === (on ? '1' : '0')));
   const syncConduct = () => {
     const on = condOn();
+    $('#r-cbox', m).hidden = !condAsk();
     $('#r-cbox', m).classList.toggle('on', on);
     $('#r-cwhy', m).hidden = !on;
     $('#r-notes-req', m).hidden = !on;
@@ -1231,7 +1284,7 @@ async function openReview(id, queue = null) {
       ['r-at', 'Data e hora (dd/mm/aaaa hh:mm:ss)', () => isDateTime(val('#r-at'))], ['r-tab', 'Tabulação do operador', () => val('#r-tab')], ['r-disc', 'Tipo de desconexão', () => segVal('#r-disc')],
       ['r-op', 'Login ou nome completo', () => val('#r-op')], ['r-sg', 'Segmento', () => val('#r-sg')], ['r-mg', 'Gerência', () => val('#r-mg')],
       ['r-verdict', 'Resultado da análise', () => $('#r-verdict .qd-vd.on', m)], ['r-tabok', 'A tabulação de queda procede?', () => segVal('#r-tabok')], ['r-held', 'Segurou a ligação?', () => segVal('#r-held')],
-      ['r-cond', 'Houve desvio de conduta?', () => segVal('#r-cond')], ['r-ctype', 'Motivo do desvio', () => !condOn() || $('#r-ctype', m).value], ['r-notes', 'Observação descrevendo o desvio', () => !condOn() || val('#r-notes')],
+      ['r-cond', 'Houve desvio de conduta?', () => !condAsk() || segVal('#r-cond')], ['r-ctype', 'Motivo do desvio', () => !condOn() || $('#r-ctype', m).value], ['r-notes', 'Observação descrevendo o desvio', () => !condOn() || val('#r-notes')],
     ];
     $$('.qd-miss', m).forEach((x) => x.classList.remove('qd-miss'));
     const miss = need.filter(([, , ok]) => !ok());

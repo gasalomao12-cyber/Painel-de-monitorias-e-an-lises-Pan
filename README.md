@@ -288,7 +288,13 @@ sozinhos na tela de todos, mesmo com uma análise aberta.
   "Segurou a ligação?" e "Houve desvio de conduta?". O que falta fica destacado em vermelho.
 - **Desvio de conduta**: Sim/Não. Com Sim, escolha o motivo (desligou na cara do cliente, omissão de atendimento,
   tabulação incorreta, interromper ou faltar com respeito com o cliente, outro tipo de desvio) e descreva o desvio
-  na observação, que passa a ser obrigatória. "Operador desligou" já marca Sim.
+  na observação, que passa a ser obrigatória. "Operador desligou" já marca Sim. A pergunta só aparece para
+  cliente desligou, operador desligou e atendimento seguiu; queda técnica, ligação muda e inconclusivo nunca
+  contam desvio.
+- **Cards de desvio de conduta** ficam recolhidos e mostram só quantos atendimentos tiveram desvio;
+  "Ver operadores" abre os cards.
+- **Trocar analista** (admin): na lista, registra quem realmente fez as análises selecionadas ou todas as analisadas
+  da lista filtrada (ex.: planilha importada por outra pessoa), sem mudar a data nem o resultado.
 - **Tempos**: os ":" entram sozinhos ao digitar (hh:mm:ss) em Duração e Momento da queda, e a data e hora vira
   dd/mm/aaaa hh:mm:ss. Colar do Mosaic funciona: "00:05:17.520" vira 00:05:17, "2026-10-27 16:06:56" vira
   27/10/2026 16:06:56, e colar data e hora seguidas da duração preenche os dois campos.

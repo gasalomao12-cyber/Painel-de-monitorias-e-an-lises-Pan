@@ -134,7 +134,7 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
       fetchAll(() => sb().from('px_drop_reviews').select(LIST_COLS).order('call_at', { ascending: false, nullsFirst: false }).order('id', { ascending: false })),
       fetchAll(() => sb().from('px_roster').select('scope, login, name, name_key, registration, shift, status, campaign, segment, leader, active, updated_at').eq('portfolio', pf).order('name')),
       must(sb().from('px_roster_leaders').select('portfolio, leader, manager').order('leader')),
-      must(sb().from('px_profiles').select('id, portfolio')),
+      must(sb().from('px_profiles').select('id, portfolio, name, display_name, role, active')),
     ]);
     const now = Date.now();
     for (const r of rows) if (r.locked_by && !(r.locked_at && now - new Date(r.locked_at).getTime() < LOCK_MS)) { r.locked_by = null; r.locked_name = null; }
@@ -150,6 +150,8 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
       folder: getSetting(folderKey(pf)),
       folders: Object.fromEntries(portfolios.map((p) => [p, getSetting(folderKey(p))])),
       analyst_portfolio: Object.fromEntries(profiles.map((u) => [u.id, portfolioOf(u)])),
+      // Para o admin trocar quem consta como analista (ex.: planilha importada por outra pessoa)
+      ...(req.user.role === 'admin' ? { analysts: profiles.filter((u) => u.active !== false).map((u) => ({ id: u.id, name: userName(u), full: u.name, portfolio: portfolioOf(u) })).sort((a, z) => String(a.full).localeCompare(String(z.full))) } : {}),
       me: req.user.id,
     });
   }));
@@ -448,6 +450,21 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
     res.json({ ok: true });
   }));
 
+  // Admin: registra quem realmente fez as análises (mantém a data da análise)
+  router.post('/quedas/analyst', ADMIN, h(async (req, res) => {
+    const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter(Boolean).slice(0, 5000);
+    if (!ids.length) throw httpError(400, 'Nenhum atendimento selecionado.');
+    const who = await must(sb().from('px_profiles').select('id, name, display_name').eq('id', String(req.body?.user_id || '')).maybeSingle());
+    if (!who) throw httpError(400, 'Escolha quem fez as análises.');
+    let total = 0;
+    for (let i = 0; i < ids.length; i += 200) {
+      const upd = await must(sb().from('px_drop_reviews').update({ analyst_id: who.id, analyst_name: userName(who), updated_at: new Date().toISOString() }).in('id', ids.slice(i, i + 200)).eq('status', 'analisada').select('id'));
+      total += upd.length;
+    }
+    await audit(req.user.id, 'quedas_analista_trocado', 'drop_review', null, { total, analista: who.id });
+    res.json({ updated: total, analyst_name: userName(who) });
+  }));
+
   router.post('/quedas/delete', h(async (req, res) => {
     const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter(Boolean).slice(0, 5000);
     if (!ids.length) throw httpError(400, 'Nenhum atendimento selecionado.');
@@ -494,10 +511,13 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
   }));
 }
 
-// Com veredito o atendimento vira "analisada"; desligar no cliente é sempre desvio de conduta
+// Com veredito o atendimento vira "analisada"; desligar no cliente é sempre desvio de conduta.
+// Desvio só se aplica a cliente desligou, operador desligou e atendimento seguiu
+const CONDUCT_VERDICTS = new Set(['cliente', 'operador', 'concluido']);
 function analysisMeta(req, row, cur) {
   if (!row.verdict) return { status: 'pendente', conduct: !!row.conduct };
-  const out = { status: 'analisada', conduct: row.verdict === 'operador' ? true : !!row.conduct };
+  const conduct = row.verdict === 'operador' ? true : CONDUCT_VERDICTS.has(row.verdict) && !!row.conduct;
+  const out = { status: 'analisada', conduct, ...(conduct ? {} : { conduct_type: null }) };
   if (!cur || cur.status !== 'analisada' || !cur.analyst_id) {
     out.analyst_id = req.user.id; out.analyst_name = userName(req.user); out.analyzed_at = new Date().toISOString();
   }
