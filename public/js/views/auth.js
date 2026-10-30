@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { sb, recoveryUrl } from '../sb.js';
 import { html, icon, pxLogo, $, $$, toast, busy, greeting, modal } from '../ui.js';
 import { applyTheme } from '../app.js';
+import { downloadWindowsShortcut } from '../desktop.js';
 
 function pwToggle(root) {
   $$('[data-pw]', root).forEach((b) => b.addEventListener('click', () => {
@@ -50,12 +51,14 @@ export function renderLogin(app, { onLogin, store, error = '' }) {
           <button class="btn primary lg block" id="l-btn">Entrar ${icon('arrowRight')}</button>
         </form>
         <p class="tiny muted center mt">Ainda não tem acesso? Peça ao administrador da plataforma.</p>
+        <p class="center" style="margin:6px 0 0"><button type="button" class="btn sm ghost" id="l-shortcut">${icon('download')}Criar atalho na área de trabalho</button></p>
       </div>
     </section>
   </div>`);
   pwToggle(app);
   const form = $('#login-form');
   $('#l-forgot').onclick = () => forgotPassword(form.email.value.trim());
+  $('#l-shortcut').onclick = () => { downloadWindowsShortcut(); toast('Abra o arquivo baixado para criar o atalho PX na área de trabalho.', 'ok', 6000); };
   setTimeout(() => (remembered ? $('#l-pass') : $('#l-user')).focus(), 50);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -176,6 +179,7 @@ function forgotPassword(prefill) {
         try {
           const { error: er } = await sb.auth.resetPasswordForEmail(email, { redirectTo: recoveryUrl() });
           if (er && /rate limit|too many/i.test(er.message)) throw new Error('Muitas solicitações. Aguarde alguns minutos e tente de novo.');
+          if (er?.code === 'no_smtp') throw new Error(er.message);
           close(); toast('Se o e-mail tiver acesso, o link de recuperação chega em instantes. Confira também o spam.', 'ok', 7000); }
         catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };

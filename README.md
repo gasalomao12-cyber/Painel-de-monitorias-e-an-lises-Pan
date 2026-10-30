@@ -16,7 +16,7 @@ Plataforma web (servidor na nuvem) para publicar os reports quinzenais de qualid
 | **Dashboards & reports** | Visão geral, comparativo entre quinzenas, comparativo por produto (ou pelos segmentos de um produto) e individual do operador — **com capa**, páginas A4 paisagem, impressão em PDF e download em HTML. |
 | **Admin** | Quinzenas e **links das pastas de áudio do OneDrive** (por quinzena, por atendimento ou em lote, editáveis a qualquer momento), critérios e pesos, usuários e perfis, bugs reportados, auditoria, configurações da IA, backup em JSON. |
 | **Reportar bug** | Botão flutuante em todas as telas (com print opcional). O admin trata e o usuário é notificado. |
-| **Atalho PX** | Em *Meu perfil › Atalho na área de trabalho*: gera o instalador do atalho **PX Monitorias** com o ícone PX (Windows) ou instala como aplicativo (PWA). |
+| **Atalho PX** | Botão na tela de login, ícone na barra superior, convite no primeiro acesso e *Meu perfil › Atalho na área de trabalho*: gera o instalador do atalho **PX Monitorias** com o ícone PX (Windows) ou instala como aplicativo (PWA). O T.I. pode instalar para todos com `desktop/criar-atalho-windows.ps1 -TodosUsuarios`. |
 
 ### Perfis de acesso
 - **Administrador** — tudo, inclusive links de áudio, quinzenas, critérios, usuários e configurações. **É o único com acesso à análise por IA** (rodar, ver sugestões e o parecer da IA).
@@ -77,6 +77,17 @@ ou como segredo da Edge Function (*Edge Functions › Secrets* › `ANTHROPIC_AP
 
 **7. Atalho PX** — em *Meu perfil › Atalho na área de trabalho*, cada pessoa baixa o instalador do atalho com o ícone PX (Windows)
 ou instala como aplicativo (Chrome/Edge).
+
+## Servidor próprio (sem Supabase)
+A plataforma também roda num servidor da empresa só com **PostgreSQL** e o programa `servidor/main.ts` (Deno), que entrega
+as telas, a API, o login (senhas em bcrypt), o tempo real (Server-Sent Events) e os áudios em disco. As rotas da API são as
+mesmas: com `PX_DATABASE_URL` definido, `supabase/functions/px-api/local.ts` troca o Supabase pelo PostgreSQL.
+
+- Guia do T.I.: [`implantacao-vm/LEIA-ME_TI.md`](implantacao-vm/LEIA-ME_TI.md) (serviço systemd, Nginx, configuração, backup).
+- Banco: [`implantacao-vm/sql/px_monitorias_postgres.sql`](implantacao-vm/sql/px_monitorias_postgres.sql) e a migração dos
+  dados do Supabase em [`implantacao-vm/sql/LEIA-ME_SQL.md`](implantacao-vm/sql/LEIA-ME_SQL.md).
+- Para rodar localmente: `PX_DATABASE_URL=postgres://... PX_JWT_SECRET=<64 caracteres> deno run -A --config servidor/deno.json servidor/main.ts`.
+- Migrações novas em `supabase/migrations/` devem funcionar nos dois bancos (sem `auth.*`, `storage.*` ou `realtime.*`).
 
 ## Tela em qualquer resolução
 - **Escala automática**: a interface inteira cresce ou encolhe conforme a resolução, mantendo o mesmo layout

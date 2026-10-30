@@ -3,6 +3,7 @@ import { sb } from './sb.js';
 import { html, raw, icon, pxLogo, $, $$, toast, modal, avatar, userName, ROLE, esc, busy, readFileAsBase64, fmtRel } from './ui.js';
 import { destroyAll } from './charts.js';
 import { renderLogin, renderChangePassword, renderWelcome } from './views/auth.js';
+import { openShortcut, offerShortcut, markShortcutLaunch } from './desktop.js';
 
 const app = document.getElementById('app');
 export const store = { user: null, meta: null, company: 'Paschoalotto', cycle: localStorage.getItem('px_cycle') || '' };
@@ -165,6 +166,7 @@ function shell() {
         <button class="btn-icon zoom-btn" id="zoom-btn" title="Tamanho da tela" aria-label="Tamanho da tela">${icon('zoom')}<span id="zoom-label">${zoomLabel()}</span></button>
         <span class="live-dot" id="live-dot" data-on="0" title="Conectando…"><i></i><span>Ao vivo</span></span>
         <button class="btn-icon" id="notif-btn" aria-label="Notificações" title="Notificações">${icon('bell')}<b class="dot" id="notif-dot" hidden></b></button>
+        <button class="btn-icon" id="shortcut-btn" aria-label="Atalho na área de trabalho" title="Criar atalho PX na área de trabalho">${icon('download')}</button>
         <button class="btn sm ghost" id="bug-top" title="Reportar um problema">${icon('bug')}<span class="nowrap">Reportar bug</span></button>
       </header>
       <main class="content" id="view"></main>
@@ -193,6 +195,7 @@ function shell() {
   $('#logout-btn').onclick = logout;
   $('#bug-fab').onclick = openBugReport;
   $('#bug-top').onclick = openBugReport;
+  $('#shortcut-btn').onclick = () => openShortcut(store);
   $('#notif-btn').onclick = (e) => openNotifications(e.currentTarget);
   $('#global-search').addEventListener('focus', (e) => { e.target.blur(); openPalette(); });
   updateCounts();
@@ -462,6 +465,7 @@ export async function start(opts = {}) {
   shell();
   subscribeRealtime();
   route();
+  offerShortcut(store);
 }
 sb.auth.onAuthStateChange((event) => { if (event === 'SIGNED_OUT' && store.user) { store.user = null; start(); } });
 
@@ -470,6 +474,7 @@ window.addEventListener('px:unauthorized', () => { if (store.user) { store.user 
 window.addEventListener('px:must-change-password', () => start());
 setInterval(() => { if (store.user && store.meta && document.visibilityState === 'visible') refreshMeta().catch(() => {}); }, 60000);
 
+markShortcutLaunch();
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); store.installPrompt = e; });
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 

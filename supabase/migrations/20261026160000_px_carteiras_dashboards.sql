@@ -10,7 +10,7 @@ alter table public.px_evaluations add constraint px_evaluations_product_check
   check (product in ('REFIN','ENTREGA','VEICULOS','CARTOES','CONSIGNADO'));
 alter table public.px_criteria drop constraint if exists px_criteria_product_check;
 alter table public.px_criteria add constraint px_criteria_product_check
-  check (product in ('REFIN','ENTREGA','AMBOS','VEICULOS','SEM_GARANTIA','CARTOES','CONSIGNADO'));
+  check (product in ('REFIN','ENTREGA','AMBOS','VEICULOS','SEM_GARANTIA','CARTOES','CONSIGNADO','AGV','AGV2'));  -- lista final (todas as migrações), para rodar de novo sem erro
 
 alter table public.px_evaluations add column if not exists segment text;
 alter table public.px_evaluations drop constraint if exists px_evaluations_segment_check;

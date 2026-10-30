@@ -441,9 +441,9 @@ function friendlyAiError(e) {
 }
 
 async function runAnalysis(id, user) {
-  const e = await must(sb().from('px_evaluations').select('*, px_operators(name)').eq('id', id).maybeSingle());
+  const e = await must(sb().from('px_evaluations').select('*').eq('id', id).maybeSingle());
   if (!e) throw httpError(404, 'Atendimento não encontrado.');
-  e.operator_name = e.px_operators?.name;
+  e.operator_name = e.operator_id ? (await must(sb().from('px_operators').select('name').eq('id', e.operator_id).maybeSingle()))?.name : undefined;
   const items = await must(sb().from('px_v_eval_items').select('*').eq('evaluation_id', id).order('sort'));
   await must(sb().from('px_evaluations').update({ ai_status: 'executando' }).eq('id', id));
   let result;
@@ -1469,7 +1469,7 @@ const BACKUP_TABLES = ['px_profiles', 'px_cycles', 'px_operators', 'px_criteria'
 router.get('/admin/backup', ADMIN, h(async (req, res) => {
   const out = { generated_at: nowIso(), source: 'PX Monitorias & Feedbacks', tables: {} };
   for (const t of BACKUP_TABLES) {
-    const rows = await fetchAll(() => sb().from(t).select('*').order(t === 'px_settings' ? 'key' : 'id'));
+    const rows = await fetchAll(() => sb().from(t).select('*').order({ px_settings: 'key', px_roster: 'login', px_roster_leaders: 'leader' }[t] || 'id'));
     out.tables[t] = t === 'px_settings' ? rows.filter((r) => !SECRET_KEYS.includes(r.key)) : rows;
   }
   await audit(req.user.id, 'backup_baixado', 'settings', null);

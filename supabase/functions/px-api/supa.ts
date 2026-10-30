@@ -1,6 +1,7 @@
 // @ts-nocheck — clientes do Supabase dentro da Edge Function
 // Nas Edge Functions o Supabase injeta SUPABASE_URL e as chaves automaticamente.
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { LOCAL, localClient } from './local.ts';
 
 const env = (k) => Deno.env.get(k) || '';
 const fromSet = (k) => { try { const o = JSON.parse(env(k) || '{}'); return o.default || Object.values(o)[0] || ''; } catch { return ''; } };
@@ -19,12 +20,14 @@ if (!env('SUPABASE_PUBLISHABLE_KEYS') && !env('SUPABASE_PUBLISHABLE_KEY') && PUB
 const serverAuth = { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false };
 let adminClient = null;
 export function admin() {
-  if (!adminClient) adminClient = createClient(SUPABASE_URL, SECRET, { auth: serverAuth });
+  // Servidor próprio (PX_DATABASE_URL): PostgreSQL puro, sem Supabase
+  if (!adminClient) adminClient = LOCAL ? localClient() : createClient(SUPABASE_URL, SECRET, { auth: serverAuth });
   return adminClient;
 }
 
 // Cliente com a chave publicável, só para conferir a senha atual na troca de senha
 export function authClient() {
+  if (LOCAL) return localClient();
   return createClient(SUPABASE_URL, PUBLISHABLE, { auth: serverAuth });
 }
 

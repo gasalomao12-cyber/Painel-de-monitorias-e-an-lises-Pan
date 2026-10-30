@@ -3,6 +3,7 @@
 // "Authorization: Bearer", validado aqui pelo @supabase/server com o JWKS do projeto.
 import { verifyCredentials } from 'npm:@supabase/server@1.9.2/core';
 import { admin, must } from './supa.ts';
+import { LOCAL, verifyJwt } from './local.ts';
 
 export function validatePassword(pw) {
   if (typeof pw !== 'string' || pw.length < 8) return 'A senha precisa ter pelo menos 8 caracteres.';
@@ -21,10 +22,13 @@ export function tempPassword() {
 
 export async function verifyToken(token) {
   if (!token) return null;
-  const { data, error } = await verifyCredentials({ token, apikey: null }, { auth: 'user' });
-  if (!error && data?.userClaims?.id) return data.userClaims.id;
-  // Alternativa caso o JWKS não esteja disponível no ambiente
-  if (error && /env|jwks|config/i.test(String(error.code || error.message))) {
+  if (LOCAL) { const p = await verifyJwt(token); return p?.sub || null; }
+  let res = null;
+  try { res = await verifyCredentials({ token, apikey: null }, { auth: 'user' }); } catch (e) { res = { error: e }; }
+  if (!res?.error && res?.data?.userClaims?.id) return res.data.userClaims.id;
+  // Alternativa: o próprio Auth confere o token. Cobre o Supabase self-hosted (VM), que assina os
+  // logins com chave simétrica (HS256) e não publica JWKS
+  if (res?.error) {
     const { data: u } = await admin().auth.getUser(token);
     return u?.user?.id || null;
   }
