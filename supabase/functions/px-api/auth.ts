@@ -3,6 +3,7 @@
 // "Authorization: Bearer", validado aqui pelo @supabase/server com o JWKS do projeto.
 import { verifyCredentials } from 'npm:@supabase/server@1.9.2/core';
 import { admin, must } from './supa.ts';
+import { LOCAL, verifyJwt } from './local.ts';
 
 export function validatePassword(pw) {
   if (typeof pw !== 'string' || pw.length < 8) return 'A senha precisa ter pelo menos 8 caracteres.';
@@ -21,6 +22,7 @@ export function tempPassword() {
 
 export async function verifyToken(token) {
   if (!token) return null;
+  if (LOCAL) { const p = await verifyJwt(token); return p?.sub || null; }
   let res = null;
   try { res = await verifyCredentials({ token, apikey: null }, { auth: 'user' }); } catch (e) { res = { error: e }; }
   if (!res?.error && res?.data?.userClaims?.id) return res.data.userClaims.id;

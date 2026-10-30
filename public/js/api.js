@@ -7,7 +7,7 @@ export class ApiError extends Error {
 
 async function request(method, url, body, { raw = false, file = null } = {}) {
   const token = await accessToken();
-  const headers = { apikey: window.PX_CONFIG.publishableKey };
+  const headers = window.PX_CONFIG.publishableKey ? { apikey: window.PX_CONFIG.publishableKey } : {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (file) headers['Content-Type'] = file.type || 'application/octet-stream';
   else if (body !== undefined) headers['Content-Type'] = 'application/json';

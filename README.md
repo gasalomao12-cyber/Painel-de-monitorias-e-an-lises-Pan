@@ -78,11 +78,16 @@ ou como segredo da Edge Function (*Edge Functions › Secrets* › `ANTHROPIC_AP
 **7. Atalho PX** — em *Meu perfil › Atalho na área de trabalho*, cada pessoa baixa o instalador do atalho com o ícone PX (Windows)
 ou instala como aplicativo (Chrome/Edge).
 
-## Hospedar numa VM da empresa
-O guia do T.I. está em [`implantacao-vm/LEIA-ME_TI.md`](implantacao-vm/LEIA-ME_TI.md): Supabase self-hosted (Docker) + Nginx,
-com a configuração do Nginx e scripts para criar o banco, apontar as telas para o domínio da VM, atualizar e fazer backup.
-O SQL completo do banco está em `implantacao-vm/sql/px_monitorias_completo.sql`, e a migração dos dados do Supabase para o
-servidor, em `implantacao-vm/sql/LEIA-ME_SQL.md`.
+## Servidor próprio (sem Supabase)
+A plataforma também roda num servidor da empresa só com **PostgreSQL** e o programa `servidor/main.ts` (Deno), que entrega
+as telas, a API, o login (senhas em bcrypt), o tempo real (Server-Sent Events) e os áudios em disco. As rotas da API são as
+mesmas: com `PX_DATABASE_URL` definido, `supabase/functions/px-api/local.ts` troca o Supabase pelo PostgreSQL.
+
+- Guia do T.I.: [`implantacao-vm/LEIA-ME_TI.md`](implantacao-vm/LEIA-ME_TI.md) (serviço systemd, Nginx, configuração, backup).
+- Banco: [`implantacao-vm/sql/px_monitorias_postgres.sql`](implantacao-vm/sql/px_monitorias_postgres.sql) e a migração dos
+  dados do Supabase em [`implantacao-vm/sql/LEIA-ME_SQL.md`](implantacao-vm/sql/LEIA-ME_SQL.md).
+- Para rodar localmente: `PX_DATABASE_URL=postgres://... PX_JWT_SECRET=<64 caracteres> deno run -A --config servidor/deno.json servidor/main.ts`.
+- Migrações novas em `supabase/migrations/` devem funcionar nos dois bancos (sem `auth.*`, `storage.*` ou `realtime.*`).
 
 ## Tela em qualquer resolução
 - **Escala automática**: a interface inteira cresce ou encolhe conforme a resolução, mantendo o mesmo layout

@@ -1,0 +1,21 @@
+# systemd: /etc/systemd/system/px-monitorias.service
+# systemctl daemon-reload && systemctl enable --now px-monitorias
+[Unit]
+Description=PX Monitorias & Feedbacks
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=px
+Group=px
+WorkingDirectory=/opt/px-app
+EnvironmentFile=/etc/px-monitorias/px.env
+ExecStart=/usr/local/bin/deno run --config servidor/deno.json --allow-net --allow-env --allow-sys --allow-read --allow-write=/var/lib/px-monitorias servidor/main.ts
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

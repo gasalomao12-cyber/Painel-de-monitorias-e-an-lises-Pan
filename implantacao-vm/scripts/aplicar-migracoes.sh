@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
-# Cria ou atualiza o banco da PX Monitorias. Roda, em ordem de data, só as migrações que ainda
-# não foram aplicadas (registradas em public.px_schema_migrations).
-# Uso: ./aplicar-migracoes.sh [/opt/px-app] [container-do-banco]
+# Atualiza o banco da PX Monitorias: roda, em ordem de data, só as migrações de supabase/migrations/ que ainda não
+# estão em public.px_schema_migrations (o px_monitorias_postgres.sql já marca as que contém).
+# Uso: ./aplicar-migracoes.sh "postgres://px:SENHA@127.0.0.1:5432/px_monitorias" [/opt/px-app]
 set -euo pipefail
-
-APP_DIR="${1:-/opt/px-app}"
-DB="${2:-supabase-db}"
-psql_db() { docker exec -i "$DB" psql -U postgres -v ON_ERROR_STOP=1 -q "$@"; }
-
-psql_db -c "create table if not exists public.px_schema_migrations (version text primary key, applied_at timestamptz not null default now());
-            alter table public.px_schema_migrations enable row level security;" >/dev/null
+URL="${1:?Informe a URL do banco}"
+APP_DIR="${2:-/opt/px-app}"
+PSQL="${PSQL:-psql}"
+run() { $PSQL "$URL" -v ON_ERROR_STOP=1 -q "$@"; }
 
 for f in "$APP_DIR"/supabase/migrations/*.sql; do
   v="$(basename "$f" .sql)"
-  if [ "$(psql_db -tAc "select 1 from public.px_schema_migrations where version = '$v'")" = "1" ]; then continue; fi
+  [ "$(run -tAc "select 1 from public.px_schema_migrations where version = '$v'")" = "1" ] && continue
   echo "→ $v"
-  psql_db < "$f"
-  psql_db -c "insert into public.px_schema_migrations (version) values ('$v')" >/dev/null
+  run -f "$f"
+  run -c "insert into public.px_schema_migrations (version) values ('$v')"
 done
 echo "Banco atualizado."
