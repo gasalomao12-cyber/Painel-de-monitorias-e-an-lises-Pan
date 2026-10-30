@@ -16,7 +16,7 @@ Plataforma web (servidor na nuvem) para publicar os reports quinzenais de qualid
 | **Dashboards & reports** | Visão geral, comparativo entre quinzenas, comparativo por produto (ou pelos segmentos de um produto) e individual do operador — **com capa**, páginas A4 paisagem, impressão em PDF e download em HTML. |
 | **Admin** | Quinzenas e **links das pastas de áudio do OneDrive** (por quinzena, por atendimento ou em lote, editáveis a qualquer momento), critérios e pesos, usuários e perfis, bugs reportados, auditoria, configurações da IA, backup em JSON. |
 | **Reportar bug** | Botão flutuante em todas as telas (com print opcional). O admin trata e o usuário é notificado. |
-| **Atalho PX** | Em *Meu perfil › Atalho na área de trabalho*: gera o instalador do atalho **PX Monitorias** com o ícone PX (Windows) ou instala como aplicativo (PWA). |
+| **Atalho PX** | Botão na tela de login, ícone na barra superior, convite no primeiro acesso e *Meu perfil › Atalho na área de trabalho*: gera o instalador do atalho **PX Monitorias** com o ícone PX (Windows) ou instala como aplicativo (PWA). O T.I. pode instalar para todos com `desktop/criar-atalho-windows.ps1 -TodosUsuarios`. |
 
 ### Perfis de acesso
 - **Administrador** — tudo, inclusive links de áudio, quinzenas, critérios, usuários e configurações. **É o único com acesso à análise por IA** (rodar, ver sugestões e o parecer da IA).
@@ -81,6 +81,8 @@ ou instala como aplicativo (Chrome/Edge).
 ## Hospedar numa VM da empresa
 O guia do T.I. está em [`implantacao-vm/LEIA-ME_TI.md`](implantacao-vm/LEIA-ME_TI.md): Supabase self-hosted (Docker) + Nginx,
 com a configuração do Nginx e scripts para criar o banco, apontar as telas para o domínio da VM, atualizar e fazer backup.
+O SQL completo do banco está em `implantacao-vm/sql/px_monitorias_completo.sql`, e a migração dos dados do Supabase para o
+servidor, em `implantacao-vm/sql/LEIA-ME_SQL.md`.
 
 ## Tela em qualquer resolução
 - **Escala automática**: a interface inteira cresce ou encolhe conforme a resolução, mantendo o mesmo layout

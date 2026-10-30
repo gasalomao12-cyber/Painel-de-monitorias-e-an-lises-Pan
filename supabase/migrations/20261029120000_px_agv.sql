@@ -5,7 +5,7 @@
 
 alter table public.px_criteria drop constraint if exists px_criteria_product_check;
 alter table public.px_criteria add constraint px_criteria_product_check
-  check (product in ('REFIN','ENTREGA','AMBOS','VEICULOS','SEM_GARANTIA','CARTOES','CONSIGNADO','AGV'));
+  check (product in ('REFIN','ENTREGA','AMBOS','VEICULOS','SEM_GARANTIA','CARTOES','CONSIGNADO','AGV','AGV2'));  -- lista final (todas as migrações), para rodar de novo sem erro
 
 -- Avalia só o operador, a partir da transferência. Peso 1 cada; N/A sai da base.
 -- O desfecho (acordo com boleto, promessa, retorno, sem acordo) fica no campo "desfecho" da ligação.

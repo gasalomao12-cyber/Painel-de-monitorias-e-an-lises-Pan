@@ -21,7 +21,11 @@ Navegador ──HTTPS 443──> Nginx ──> px.EMPRESA      → /opt/px-app/p
 | `supabase/functions/px-api/` | API |
 | `supabase/migrations/` | Scripts do banco, rodados em ordem de data |
 | `implantacao-vm/nginx/px-monitorias.conf` | Configuração do Nginx (telas + proxy da API com WebSocket) |
-| `implantacao-vm/scripts/aplicar-migracoes.sh` | Cria/atualiza o banco |
+| `implantacao-vm/sql/px_monitorias_completo.sql` | SQL completo do banco (estrutura), num arquivo só |
+| `implantacao-vm/sql/LEIA-ME_SQL.md` | Como migrar estrutura e dados do Supabase para o servidor |
+| `implantacao-vm/scripts/aplicar-migracoes.sh` | Cria/atualiza o banco, rodando só as migrações novas |
+| `implantacao-vm/scripts/exportar-dados-supabase.sh`, `importar-dados.sh` | Levam os dados da nuvem para a VM |
+| `desktop/criar-atalho-windows.ps1` | Cria o atalho PX na área de trabalho (uma pessoa ou todos os usuários do computador) |
 | `implantacao-vm/scripts/configurar-telas.sh` | Aponta as telas para o domínio da VM (config.js, CSP, version.json) |
 | `implantacao-vm/scripts/atualizar.sh` | Atualiza tudo a partir do GitHub |
 | `implantacao-vm/scripts/backup.sh` | Backup diário do banco e dos áudios |
@@ -82,8 +86,10 @@ cd /opt/px && docker compose up -d
 ```
 
 ### 4. Banco
+SQL completo num arquivo só (ou o script, que faz o mesmo migração por migração):
 ```bash
-/opt/px-app/implantacao-vm/scripts/aplicar-migracoes.sh /opt/px-app supabase-db
+docker exec -i supabase-db psql -U postgres -v ON_ERROR_STOP=1 < /opt/px-app/implantacao-vm/sql/px_monitorias_completo.sql
+# ou: /opt/px-app/implantacao-vm/scripts/aplicar-migracoes.sh /opt/px-app supabase-db
 ```
 
 ### 5. Telas
@@ -106,35 +112,34 @@ A partir daí, **o administrador da plataforma (Qualidade) cria, altera, reseta 
 Usuários & acessos**, sem depender do T.I.
 
 ### 8. Migração dos dados (virada)
-Com a plataforma atual pausada:
-
-1. Do Supabase nuvem (a senha do banco fica com o dono do projeto), exporte os dados:
-   ```bash
-   pg_dump "$URL_BANCO_NUVEM" --data-only -t auth.users -t auth.identities -Fc > auth.dump
-   pg_dump "$URL_BANCO_NUVEM" --data-only -t 'public.px_*' -Fc > px.dump
-   ```
-2. Restaure na VM, primeiro `auth.dump` e depois `px.dump` (`pg_restore -d postgres --data-only`). Se houver erro de chave
-   estrangeira, restaure com `--disable-triggers` usando o usuário `supabase_admin`.
-3. Copie os arquivos do bucket `px-quedas` (áudios) para o Storage da VM com os mesmos caminhos.
-4. Ajuste as sequências de ID:
-   ```sql
-   do $$ declare r record; begin
-     for r in select c.relname t, a.attname col, pg_get_serial_sequence('public.' || c.relname, a.attname) s
-       from pg_class c join pg_attribute a on a.attrelid = c.oid
-       where c.relnamespace = 'public'::regnamespace and c.relkind = 'r' and c.relname like 'px\_%'
-         and pg_get_serial_sequence('public.' || c.relname, a.attname) is not null
-     loop execute format('select setval(%L, coalesce((select max(%I) from public.%I), 0) + 1, false)', r.s, r.col, r.t); end loop;
-   end $$;
-   ```
-5. Teste: login, "esqueci minha senha", uma análise de queda com áudio, exportação CSV e o tempo real com duas abas abertas.
-
-Ensaie a migração numa cópia antes da virada.
+Detalhes em `implantacao-vm/sql/LEIA-ME_SQL.md`. Com a plataforma atual pausada:
+```bash
+# na VM, com a connection string do banco do Supabase (Project Settings › Database)
+implantacao-vm/scripts/exportar-dados-supabase.sh "postgresql://postgres.REF:SENHA@HOST:5432/postgres" ./dados-px
+implantacao-vm/scripts/importar-dados.sh ./dados-px supabase-db
+```
+Vêm os usuários (com as mesmas senhas), todas as tabelas `px_*` e o registro dos áudios; depois copie os arquivos do
+bucket `px-quedas`. Como os usuários vêm junto, o passo 7 não é necessário numa migração.
+Teste: login, "esqueci minha senha", uma análise de queda com áudio, exportação CSV e o tempo real com duas abas abertas.
+Ensaie numa cópia antes da virada.
 
 ### 9. Depois da virada
 - Divulgue o endereço novo.
 - No GitHub, desative os workflows `.github/workflows/pages.yml` e `supabase.yml` (eles publicam na nuvem).
 - Agende o backup: `30 2 * * * /opt/px-app/implantacao-vm/scripts/backup.sh /backup/px` (cópias fora da VM e criptografadas).
 - Atualizações: `implantacao-vm/scripts/atualizar.sh https://px-api.EMPRESA.com.br "<ANON_KEY>"`.
+
+## Atalho na área de trabalho
+
+Cada usuário pode criar o atalho **PX Monitorias** (ícone PX, janela própria no Edge/Chrome) sozinho: botão na tela de
+login, botão na barra superior e um convite no primeiro acesso pelo computador. O atalho usa o endereço de onde a
+plataforma foi aberta, então já aponta para a VM.
+
+Para colocar o atalho em todos os computadores de uma vez (GPO de inicialização ou Intune), como administrador:
+```powershell
+powershell -ExecutionPolicy Bypass -File desktop\criar-atalho-windows.ps1 -Url https://px.EMPRESA.com.br -TodosUsuarios
+```
+Cria o atalho na Área de Trabalho Pública e no Menu Iniciar. O ícone vem junto (`desktop/px.ico`) ou do próprio servidor.
 
 ## Segurança
 
