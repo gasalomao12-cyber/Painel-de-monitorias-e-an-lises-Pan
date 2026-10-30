@@ -78,6 +78,10 @@ ou como segredo da Edge Function (*Edge Functions › Secrets* › `ANTHROPIC_AP
 **7. Atalho PX** — em *Meu perfil › Atalho na área de trabalho*, cada pessoa baixa o instalador do atalho com o ícone PX (Windows)
 ou instala como aplicativo (Chrome/Edge).
 
+## Hospedar numa VM da empresa
+O guia do T.I. está em [`implantacao-vm/LEIA-ME_TI.md`](implantacao-vm/LEIA-ME_TI.md): Supabase self-hosted (Docker) + Nginx,
+com a configuração do Nginx e scripts para criar o banco, apontar as telas para o domínio da VM, atualizar e fazer backup.
+
 ## Tela em qualquer resolução
 - **Escala automática**: a interface inteira cresce ou encolhe conforme a resolução, mantendo o mesmo layout
   (notebook 1366×768 ≈ 89%, Full HD ≈ 110–126%, monitores grandes até 135%).
