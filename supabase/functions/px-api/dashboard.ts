@@ -169,13 +169,17 @@ function unsecuredCall(c) {
     row: {
       tabulation: clip(c.fin, 120), outcome: DES[c.des] || clip(c.des, 80), effort: ESF[c.esf] ? c.esf : null,
       speech_summary: clip(c.res, 2000), transcript: c.txt ? String(c.txt).slice(0, 400000) : null, transcript_name: c.txt ? `transcricao-${c.id}.txt` : null,
-      ai_summary: c.res || c.pf || c.fb ? { engine: 'dashboard', summary: c.res || '', feedback: { strengths: c.pf || '', improvements: c.fb || '', action_plan: '' } } : null,
+      ai_summary: c.res || c.pf || c.fb ? { engine: 'dashboard', summary: c.res || '', feedback: { strengths: c.pf || '', improvements: c.fb || '', action_plan: Array.isArray(c.tentar) ? c.tentar.map((t) => `“${String(t).replace(/^["“]|["”]$/g, '')}”`).join(' ') : '' } } : null,
+      // Dashboards de 2026-11 trazem campanha e canal (AGV ou convencional)
+      ...(c.camp ? { campaign: clip(c.camp, 120) } : {}), ...(c.agv !== undefined ? { channel: c.agv ? 'AGV' : 'Convencional' } : {}),
     },
     operator: { team: 'PAN Sem Garantia', manager_name: null },
     facts: [
       ['Segmento no Capacity', c.seg || null], ['Quem atendeu', QUEM[c.quem] || c.quem], ['Tabulação', c.fin],
       ['Desfecho', DES[c.des] || c.des], ['Motivo do atraso', MOT[c.mot] || c.mot],
       ['Ofertas feitas', (c.ofs || []).map((o) => OFS[o] || o).join(', ') || null], ['Esforço negocial', ESF[c.esf] || null],
+      ['Campanha', c.camp || null], ['Canal', c.agv === undefined ? null : c.agv ? 'AGV (agente virtual)' : 'Convencional'], ['Desconexão', c.desc || null],
+      ['Frase do cliente', c.frase ? `“${c.frase}”` : null],
     ],
   };
 }
@@ -204,7 +208,7 @@ async function resolveCycle(cycleId, dates) {
   return row.id;
 }
 
-async function resolveOperators(calls, mapped) {
+async function resolveOperators(calls, mapped, portfolio = 'PAN') {
   const logins = [...new Set(calls.map((c) => String(c.log || '').trim().toLowerCase()).filter(Boolean))];
   const existing = await must(sb().from('px_operators').select('*'));
   const supervisors = await must(sb().from('px_profiles').select('id, name').eq('role', 'supervisor').eq('active', true));
@@ -226,7 +230,7 @@ async function resolveOperators(calls, mapped) {
       const changes = Object.fromEntries(Object.entries(fields).filter(([k, v]) => v && op[k] !== v));
       if (Object.keys(changes).length) op = await must(sb().from('px_operators').update(changes).eq('id', op.id).select().single());
     } else {
-      op = await must(sb().from('px_operators').insert({ name, ...fields }).select().single());
+      op = await must(sb().from('px_operators').insert({ name, ...fields, portfolio }).select().single());
       created++;
     }
     out.set(login, op.id);
@@ -235,7 +239,7 @@ async function resolveOperators(calls, mapped) {
 }
 
 // Importa um lote de ligações. Ligações já importadas (mesma origem + id) são ignoradas.
-export async function importDashboard({ kind, calls, cycle_id, period }, userId) {
+export async function importDashboard({ kind, calls, cycle_id, period, aud, portfolio }, userId) {
   if (!KEYS[kind]) throw Object.assign(new Error('Formato de dashboard não reconhecido.'), { status: 400 });
   if (!Array.isArray(calls) || !calls.length) throw Object.assign(new Error('Nenhuma ligação recebida.'), { status: 400 });
   if (calls.length > 200) throw Object.assign(new Error('Envie no máximo 200 ligações por vez.'), { status: 400 });
@@ -255,7 +259,7 @@ export async function importDashboard({ kind, calls, cycle_id, period }, userId)
   if (!fresh.length) return { kind, cycle_id: cycleId, created: 0, skipped: valid.length, operators_created: 0 };
 
   const mapped = fresh.map((c) => (kind === 'dash_veiculos' ? vehicleCall(c) : unsecuredCall(c)));
-  const { ids: opIds, created: opsCreated } = await resolveOperators(fresh, mapped);
+  const { ids: opIds, created: opsCreated } = await resolveOperators(fresh, mapped, portfolio);
   const now = new Date().toISOString();
 
   const rows = fresh.map((c, i) => {
@@ -270,6 +274,7 @@ export async function importDashboard({ kind, calls, cycle_id, period }, userId)
       source: kind, external_id: String(c.id), call_date: String(c.dt).slice(0, 10), call_time: String(c.dt).slice(11, 16) || null,
       protocol: String(c.id), customer, duration_sec: Number.isFinite(Number(c.dur)) ? Math.round(Number(c.dur)) : null,
       audio_file: clip(c.arq, 300), speech_score: speechScore, final_score: finalScore,
+      ...(/^https:\/\//.test(aud || '') ? { audio_url: String(aud).slice(0, 500) } : {}),
       status: m.status, reviewed_by: m.status === 'pendente' ? null : userId, reviewed_at: m.status === 'pendente' ? null : now,
       alerts: m.alerts, created_by: userId,
       details: { origem: SOURCE_LABEL[kind], periodo: period || null, facts: m.facts.filter(([, v]) => v != null && v !== ''), highlights: m.highlights },

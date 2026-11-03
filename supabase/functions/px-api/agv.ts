@@ -236,7 +236,7 @@ function cmpCall(c, meta) {
   };
 }
 
-async function resolveAgvOperators(calls) {
+async function resolveAgvOperators(calls, portfolio = 'PAN') {
   const ops = await must(sb().from('px_operators').select('*'));
   const supervisors = await must(sb().from('px_profiles').select('id, name').eq('role', 'supervisor').eq('active', true));
   const norm = (s) => plain(s).toLowerCase();
@@ -261,7 +261,7 @@ async function resolveAgvOperators(calls) {
       if (c.name && (op.name === op.login || !op.name)) changes.name = c.name;
       if (Object.keys(changes).length) op = await must(sb().from('px_operators').update(changes).eq('id', op.id).select().single());
     } else {
-      op = await must(sb().from('px_operators').insert({ name: c.name || c.login || UNKNOWN_OP, ...fields }).select().single());
+      op = await must(sb().from('px_operators').insert({ name: c.name || c.login || UNKNOWN_OP, ...fields, portfolio }).select().single());
       created++;
       if (op.login) byLogin.set(op.login.toLowerCase(), op);
       byName.set(norm(op.name), op);
@@ -271,7 +271,7 @@ async function resolveAgvOperators(calls) {
   return { opOf: (c) => out.get(c.login || (c.name ? `nome:${norm(c.name)}` : 'nenhum')), created };
 }
 
-export async function importAgvDashboard({ kind, calls, meta, cycle_id, filename }, userId) {
+export async function importAgvDashboard({ kind, calls, meta, cycle_id, filename, portfolio }, userId) {
   if (!['dash_agv', 'dash_agv_cmp'].includes(kind)) throw httpError(400, 'Formato de dashboard AGV não reconhecido.');
   if (!Array.isArray(calls) || !calls.length) throw httpError(400, 'Nenhuma ligação recebida.');
   if (calls.length > 200) throw httpError(400, 'Envie no máximo 200 ligações por vez.');
@@ -288,7 +288,7 @@ export async function importAgvDashboard({ kind, calls, meta, cycle_id, filename
   }
   const evIds = [...new Set([...found.values()].map((e) => e.id))];
   const items = await itemsOf(evIds);
-  const { opOf, created: opsCreated } = await resolveAgvOperators(list);
+  const { opOf, created: opsCreated } = await resolveAgvOperators(list, portfolio);
   const now = nowIso();
   const source = { kind, file: clip(filename, 200), at: now };
   const out = { kind, created: 0, updated: 0, skipped: [], operators_created: opsCreated, cycle_id: cycle_id || null };
@@ -333,7 +333,7 @@ export async function importAgvDashboard({ kind, calls, meta, cycle_id, filename
       };
       const fill = (field, v) => (ex[field] == null || ex[field] === '' ? (v ?? undefined) : undefined);
       const patch = {
-        channel: 'AGV', cycle_id: null, outcome: c.outcome || ex.outcome, alerts: [...new Set([...(ex.alerts || []), ...c.alerts])], details, updated_at: now,
+        channel: c.channel, cycle_id: null, ...(c.apt_ea !== undefined ? { apt_ea: c.apt_ea, apt_refin: c.apt_refin } : {}), outcome: c.outcome || ex.outcome, alerts: [...new Set([...(ex.alerts || []), ...c.alerts])], details, updated_at: now,
         speech_score: scoreOf(scored, 'speech_result'), final_score: scoreOf(scored, 'final_result'),
         status: ex.status === 'pendente' ? 'revisada' : ex.status, reviewed_by: ex.reviewed_by || userId, reviewed_at: ex.reviewed_at || now,
         tabulation: fill('tabulation', c.tabulation), campaign: fill('campaign', c.campaign), audio_file: fill('audio_file', c.audio_file),
@@ -415,6 +415,13 @@ function esfCall(c, meta) {
   if (conduta) highlights.push({ kind: 'bad', title: `Postura: ${ESF_POST[conduta.tipo] || conduta.tipo.toLowerCase()}`, text: conduta.trecho ? `“${conduta.trecho}”` : '' });
   if (c.titular === 'TERCEIRO') highlights.push({ kind: 'warn', title: 'Quem atendeu não era o titular', text: 'Conferir se os dados da dívida foram passados a outra pessoa.' });
   const alerts = conduta ? ['conduta'] : [];
+  // Dashboard "Refin e E.A." (Veículos): a oferta de entrega amigável e de refin quando cabia
+  const offer = (o, nome) => (o && o.cabia != null ? `${o.cabia ? 'cabia' : 'não cabia'}${o.cabia ? (o.ofertou ? ', ofertou' : ', não ofertou') : ''}${o.ev ? ` · ${o.ev}` : ''}` : null);
+  const lostEa = !!(c.ea && c.ea.cabia && !c.ea.ofertou), lostRf = !!(c.rf && c.rf.cabia && !c.rf.ofertou);
+  if (lostEa || lostRf) {
+    alerts.push('oferta_perdida');
+    highlights.push({ kind: 'bad', title: 'Oportunidade perdida', text: `Cabia ${[lostEa && 'entrega amigável', lostRf && 'refin'].filter(Boolean).join(' e ')} e a oferta não foi feita.` });
+  }
   const key = String(c.cid || c.id);
   return {
     key, transcript_id: c.cid && c.id && String(c.id) !== key ? String(c.id) : null, detailed, rotOnly: !cr.length, period, current: c.per === 'C', gerencia: ger?.nome || null,
@@ -423,18 +430,20 @@ function esfCall(c, meta) {
     login: String(c.login || '').trim().toLowerCase(), name: clip(c.op, 160), leader: clip(c.lid, 160), registration: null,
     team: clip(ger?.op, 80), manager: clip(ger?.nome, 80), product: meta?.carteira === 'VEICULOS' ? 'VEICULOS' : c.pr === 'CON' ? 'CONSIGNADO' : (meta?.carteira || 'CARTOES'),
     campaign: clip(c.camp, 120), tabulation: clip(c.tab, 120), audio_file: clip(c.arq, 300), customer: clip(c.cli, 160),
-    items, outcome, alerts, highlights, kit, esf, rot, trat,
+    items, outcome, alerts, highlights, kit, esf, rot, trat, channel: c.agv === false ? 'Convencional' : 'AGV',
+    apt_ea: c.ea ? !!c.ea.apto : undefined, apt_refin: c.rf ? !!c.rf.apto : undefined,
     summary: kit?.mail || null,
     ai_summary: kit && (kit.mail || kit.ok.length) ? { engine: 'dashboard', summary: kit.mail || '', feedback: { strengths: kit.ok.join('; '), improvements: (kit.op2.length ? kit.op2 : kit.tentar).join('; '), action_plan: kit.tentar.map((t) => `“${t.replace(/^["“]|["”]$/g, '')}”`).join(' ') } } : null,
     facts: [['Período', period ? (c.per === 'C' ? period : `${period} (histórico)`) : null], ['Gerência', ger ? `${ger.nome} · ${ger.op}` : null], ['Tabulação', c.tab], ['Campanha', c.camp],
-      ['Desconexão', c.desc], ['Canal', 'AGV (agente virtual)'], ['Desfecho', outcome], ['Esforço negocial', esf != null ? `${esf}%` : null], ['Roteiro AGV', rot != null ? `${Math.round(rot)}%` : null],
+      ['Desconexão', c.desc], ['Canal', c.agv === false ? 'Convencional' : 'AGV (agente virtual)'],
+      ['Oferta de E.A.', offer(c.ea)], ['Oferta de refin', offer(c.rf)], ['Motivo do atraso', c.mot ? String(c.mot).toLowerCase() : null], ['Desfecho', outcome], ['Esforço negocial', esf != null ? `${esf}%` : null], ['Roteiro AGV', rot != null ? `${Math.round(rot)}%` : null],
       ['Motivo da recusa', c.recusa], ['Contrato / dívida', c.veic],
       ['Vínculo com o áudio', c.conf === false ? 'Provável (pela duração e pelo operador): confira o nome do cliente ao abrir o áudio' : c.conf === true ? 'Confirmado' : null],
       ['Transcrição', c.cid && c.id && String(c.id) !== String(c.cid) ? String(c.id) : null]],
   };
 }
 
-export async function importAgvEsforco({ calls, meta, filename }, userId) {
+export async function importAgvEsforco({ calls, meta, filename, portfolio }, userId) {
   if (!Array.isArray(calls) || !calls.length) throw httpError(400, 'Nenhuma ligação recebida.');
   if (calls.length > 200) throw httpError(400, 'Envie no máximo 200 ligações por vez.');
   const list = calls.filter((c) => c && (c.cid || c.id)).map((c) => esfCall(c, meta || {}));
@@ -450,7 +459,7 @@ export async function importAgvEsforco({ calls, meta, filename }, userId) {
   }
   const evIds = [...new Set([...found.values()].map((e) => e.id))];
   const items = await itemsOf(evIds);
-  const { opOf, created: opsCreated } = await resolveAgvOperators(list.filter((c) => c.login || c.name));
+  const { opOf, created: opsCreated } = await resolveAgvOperators(list.filter((c) => c.login || c.name), portfolio);
   const now = nowIso();
   const source = { kind: 'dash_agv_esf', file: clip(filename, 200), at: now };
   const out = { kind: 'dash_agv_esf', created: 0, updated: 0, history: 0, skipped: [], operators_created: opsCreated };
@@ -480,7 +489,7 @@ export async function importAgvEsforco({ calls, meta, filename }, userId) {
       const old = ex.details || {};
       const keysF = new Set(facts.map(([k]) => k));
       const details = {
-        ...old, origem: 'Dashboard Esforço negocial AGV (leitura da transcrição)',
+        ...old, origem: meta?.kind === 'refin_ea' ? 'Dashboard Refin e E.A. (leitura da transcrição)' : 'Dashboard Esforço negocial AGV (leitura da transcrição)',
         facts: [...(old.facts || []).filter(([k]) => !keysF.has(k) && !['Desfecho (speech)', 'Evidência do speech'].includes(k)), ...facts],
         highlights: [...(old.highlights || []).filter((h) => !['speech_agv', 'warn', 'bad', 'info'].includes(h.kind)), ...c.highlights],
         agv_source: source, esforco, ...(c.kit ? { feedback_kit: c.kit } : {}),
@@ -507,12 +516,13 @@ export async function importAgvEsforco({ calls, meta, filename }, userId) {
     if (!c.date) { out.skipped.push({ id: c.key, reason: 'sem data da ligação e não está na plataforma' }); continue; }
     if (!opOf(c)) { out.skipped.push({ id: c.key, reason: 'sem operador' }); continue; }
     const row = await must(sb().from('px_evaluations').insert({
-      cycle_id: null, operator_id: opOf(c), product: c.product, segment: null, channel: 'AGV', source: 'dash_agv_esf', external_id: c.key, protocol: c.key,
+      cycle_id: null, operator_id: opOf(c), product: c.product, segment: null, channel: c.channel, source: 'dash_agv_esf', external_id: c.key, protocol: c.key,
+      ...(c.apt_ea !== undefined ? { apt_ea: c.apt_ea, apt_refin: c.apt_refin } : {}),
       call_date: c.date, call_time: c.time, duration_sec: c.dur, customer: c.customer, audio_file: c.audio_file, campaign: c.campaign, tabulation: c.tabulation,
       outcome: c.outcome, speech_score: scoreOf(vals), final_score: scoreOf(vals), alerts: c.alerts, speech_summary: null, ai_summary: c.ai_summary,
       audio_url: /^https:\/\//.test(meta?.aud || '') ? meta.aud.slice(0, 500) : null,
       status: 'revisada', reviewed_by: userId, reviewed_at: now, created_by: userId,
-      details: { origem: 'Dashboard Esforço negocial AGV (leitura da transcrição)', facts, highlights: c.highlights, agv_source: source, esforco, ...(c.kit ? { feedback_kit: c.kit } : {}) },
+      details: { origem: meta?.kind === 'refin_ea' ? 'Dashboard Refin e E.A. (leitura da transcrição)' : 'Dashboard Esforço negocial AGV (leitura da transcrição)', facts, highlights: c.highlights, agv_source: source, esforco, ...(c.kit ? { feedback_kit: c.kit } : {}) },
     }).select('id').single());
     try { await must(sb().from('px_evaluation_items').insert(itemRows(row.id, c))); }
     catch (e) { await sb().from('px_evaluations').delete().eq('id', row.id); throw e; }

@@ -5,7 +5,7 @@ import { makeReq, makeRes } from './router.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-px-carteira',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
   'Access-Control-Expose-Headers': 'Content-Disposition',
   'Access-Control-Max-Age': '86400',
