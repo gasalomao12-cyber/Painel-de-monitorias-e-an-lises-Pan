@@ -47,7 +47,7 @@ export async function cycleFor(date, cache) {
   return id;
 }
 
-export async function importCalls({ calls, cycle_id }, userId) {
+export async function importCalls({ calls, cycle_id, portfolio = 'PAN' }, userId) {
   if (!Array.isArray(calls) || !calls.length) throw httpError(400, 'Nenhuma ligação recebida.');
   if (calls.length > 500) throw httpError(400, 'Envie no máximo 500 ligações por vez.');
   const rows = calls.map((c) => ({
@@ -74,7 +74,7 @@ export async function importCalls({ calls, cycle_id }, userId) {
     if (byLogin.has(lg)) continue;
     const r = rows.find((x) => x.login === lg);
     // Equipe: Sem Garantia pelo produto; em Veículos (Contact ou Ativas) fica para completar no cadastro
-    const op = await must(sb().from('px_operators').insert({ name: lg, login: lg, team: productOf(r) === 'VEICULOS' ? null : 'PAN Sem Garantia' }).select('id, login, team').single());
+    const op = await must(sb().from('px_operators').insert({ name: lg, login: lg, team: productOf(r) === 'VEICULOS' ? null : 'PAN Sem Garantia', portfolio }).select('id, login, team').single());
     byLogin.set(lg, op); opsCreated++;
   }
   // Cartões e consignado: o segmento (Clean Curto/Longo, Público/Privado) vem da última monitoria do operador no mesmo produto

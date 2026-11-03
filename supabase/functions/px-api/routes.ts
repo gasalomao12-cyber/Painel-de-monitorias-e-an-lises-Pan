@@ -12,6 +12,7 @@ import { importDashboard } from './dashboard.ts';
 import { importCalls } from './discador.ts';
 import { importSpeechAgv, importAgvDashboard, importAgvEsforco } from './agv.ts';
 import { registerQuedas } from './quedas.ts';
+import { CARTEIRAS, carteiraOf } from './carteira.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
 
@@ -114,8 +115,13 @@ router.use((req, res, next) => {
 // --------------------------------------------------------------- Escopo e filtros
 const supervisorTeamOnly = (req) => req.user.role === 'supervisor' && getSetting('supervisor_scope', 'all') === 'team';
 
+// Carteira de quem cadastra (operadores novos vindos de importações)
+const carteiraNew = (req) => carteiraOf(req) || 'PAN';
+
 function scoped(query, req) {
-  return supervisorTeamOnly(req) ? query.eq('supervisor_user_id', req.user.id) : query;
+  const q = supervisorTeamOnly(req) ? query.eq('supervisor_user_id', req.user.id) : query;
+  const pf = carteiraOf(req);
+  return pf ? q.eq('portfolio', pf) : q;
 }
 
 // Filtros comuns às views px_v_eval_cards e px_v_item_facts
@@ -165,7 +171,11 @@ async function assertEvalAccess(req, evalId) {
 // --------------------------------------------------------------- Metadados
 router.get('/meta', h(async (req, res) => {
   const ops = await must(scoped(sb().from('px_operators').select('*'), req).order('name'));
-  const pend = (st) => count(scoped(sb().from('px_v_eval_cards').select('id', { count: 'exact', head: true }), req)[st === 'review' ? 'eq' : 'neq']('status', st === 'review' ? 'pendente' : 'feedback_aplicado'));
+  const pend = (st) => (st === 'review'
+    ? count(scoped(sb().from('px_v_eval_cards').select('id', { count: 'exact', head: true }), req).eq('status', 'pendente'))
+    // Feedbacks pendentes contam operadores (um feedback por operador), sem os tirados da lista
+    : fetchAll(() => scoped(sb().from('px_v_eval_cards').select('operator_id'), req).neq('status', 'feedback_aplicado').is('feedback_excluded_at', null).order('id'))
+      .then((r) => new Set(r.map((x) => x.operator_id)).size));
   const [cycles, criteria, supervisors, pendingFeedback, pendingReview, openBugs, unread, mix] = await Promise.all([
     must(sb().from('px_cycles').select('*').order('start_date', { ascending: false })),
     must(sb().from('px_criteria').select('*').order('sort').order('id')),
@@ -762,6 +772,121 @@ async function saveFeedback(req, evalId, fbId) {
   await must(sb().from('px_evaluations').update({ status: 'feedback_aplicado', updated_at: nowIso() }).eq('id', evalId));
 }
 
+// --------------------------------------------------------------- Feedback por operador
+// Feedbacks pendentes = operadores (não atendimentos): um feedback cobre todos os atendimentos auditados dele.
+const EXCLUSION_REASONS = ['Remanejado de equipe', 'Desligado da empresa', 'Afastado', 'Mudou de carteira', 'Outro motivo'];
+const nOrNull = (v) => (v == null || v === '' ? null : v);
+
+router.get('/feedbacks/pending', h(async (req, res) => {
+  const q = { ...req.query, feedback: 'pending' };
+  delete q.cycle_id; // pendências valem para qualquer período, salvo De/Até
+  const cards = await fetchAll(() => applyFilters(sb().from('px_v_eval_cards').select('*'), req, q).order('call_date', { ascending: false }).order('id'));
+  const evIds = cards.map((c) => c.id);
+  const facts = [];
+  for (let i = 0; i < evIds.length; i += 300) {
+    facts.push(...await must(sb().from('px_v_item_facts').select('evaluation_id, code, name, final_result, critical').in('evaluation_id', evIds.slice(i, i + 300))));
+  }
+  const byEval = new Map();
+  for (const f of facts) (byEval.get(f.evaluation_id) || byEval.set(f.evaluation_id, []).get(f.evaluation_id)).push(f);
+  const groups = new Map();
+  for (const c of cards) {
+    const g = groups.get(c.operator_id) || groups.set(c.operator_id, {
+      operator_id: c.operator_id, operator_name: c.operator_name, login: c.login, team: c.team, supervisor_name: c.supervisor_name, manager_name: c.manager_name,
+      portfolio: c.portfolio || 'PAN', excluded_at: c.feedback_excluded_at || null, evaluations: [],
+    }).get(c.operator_id);
+    g.evaluations.push(c);
+  }
+  const ops = [...groups.values()];
+  const excludedIds = ops.filter((o) => o.excluded_at).map((o) => o.operator_id);
+  const exInfo = excludedIds.length ? await must(sb().from('px_operators').select('id, feedback_excluded_at, feedback_excluded_reason, feedback_excluded_by').in('id', excludedIds)) : [];
+  const who = new Map((await must(sb().from('px_profiles').select('id, name, display_name'))).map((p) => [p.id, p.display_name || p.name]));
+  const avg = (a) => { const v = a.filter((x) => x != null); return v.length ? Math.round((v.reduce((s, x) => s + Number(x), 0) / v.length) * 10) / 10 : null; };
+  const out = ops.map((o) => {
+    const ev = o.evaluations;
+    const miss = new Map();
+    for (const e of ev) for (const f of byEval.get(e.id) || []) {
+      if (f.final_result !== 'NC' && f.final_result !== 'P') continue;
+      const m = miss.get(f.code) || miss.set(f.code, { code: f.code, name: f.name, nc: 0, p: 0, critical: !!f.critical }).get(f.code);
+      if (f.final_result === 'NC') m.nc++; else m.p++;
+    }
+    const alerts = {};
+    for (const e of ev) for (const a of e.alerts || []) alerts[a] = (alerts[a] || 0) + 1;
+    const ex = exInfo.find((x) => x.id === o.operator_id);
+    return {
+      operator_id: o.operator_id, operator_name: o.operator_name, login: o.login, team: o.team, supervisor_name: o.supervisor_name, manager_name: o.manager_name, portfolio: o.portfolio,
+      total: ev.length, avg_final: avg(ev.map((e) => e.final_score)), min_final: ev.reduce((m, e) => (e.final_score != null && (m == null || e.final_score < m) ? e.final_score : m), null),
+      critical: ev.filter((e) => e.critical_fail > 0).length, last_call: ev.map((e) => e.call_date).filter(Boolean).sort().pop() || null,
+      channels: [...new Set(ev.map((e) => e.channel || 'Convencional'))], products: [...new Set(ev.map((e) => e.product))],
+      worst: [...miss.values()].sort((a, b) => (b.nc + b.p / 2) - (a.nc + a.p / 2)).slice(0, 5), alerts,
+      evaluations: ev.map((e) => ({ id: e.id, protocol: e.protocol, call_date: e.call_date, call_time: e.call_time, product: e.product, segment: e.segment, channel: e.channel, final_score: e.final_score, status: e.status, critical_fail: e.critical_fail, alerts: e.alerts, outcome: e.outcome, source: e.source })),
+      excluded: ex ? { at: ex.feedback_excluded_at, reason: ex.feedback_excluded_reason, by: who.get(ex.feedback_excluded_by) || null } : null,
+    };
+  }).sort((a, b) => b.total - a.total || (a.avg_final ?? 101) - (b.avg_final ?? 101));
+  res.json({ operators: out.filter((o) => !o.excluded), excluded: out.filter((o) => o.excluded), reasons: EXCLUSION_REASONS });
+}));
+
+// Material para o feedback único: o que os dashboards trouxeram de cada atendimento (pontos fortes, o que tentar)
+router.get('/operators/:id/feedback-material', QUALITY, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const ids = (String(req.query.ids || '').split(',').map(Number).filter(Boolean)).slice(0, 300);
+  if (!ids.length) return res.json({ items: [] });
+  const evs = await must(scoped(sb().from('px_v_eval_cards').select('id'), req).eq('operator_id', id).in('id', ids));
+  const ok = evs.map((e) => e.id);
+  const full = ok.length ? await must(sb().from('px_evaluations').select('id, protocol, call_date, ai_summary, details').in('id', ok)) : [];
+  res.json({ items: full.map((e) => ({ id: e.id, protocol: e.protocol, call_date: e.call_date, summary: e.ai_summary?.engine === 'dashboard' ? e.ai_summary.summary || '' : '',
+    strengths: e.details?.feedback_kit?.ok?.join('; ') || e.ai_summary?.feedback?.strengths || '', improvements: e.details?.feedback_kit?.tentar?.join(' ') || e.ai_summary?.feedback?.improvements || '' })) });
+}));
+
+router.post('/operators/:id/feedback', QUALITY, h(async (req, res) => {
+  const opId = Number(req.params.id);
+  const b = req.body || {};
+  const op = await must(scoped(sb().from('px_operators').select('*'), req).eq('id', opId).maybeSingle());
+  if (!op) throw httpError(404, 'Operador não encontrado.');
+  const content = String(b.content || '').trim();
+  if (content.length < 10) throw httpError(400, 'Descreva o que foi passado ao operador (mínimo 10 caracteres).');
+  let pend = await must(scoped(sb().from('px_v_eval_cards').select('id, protocol, call_date, final_score, product, segment, team, campaign, alerts, operator_id'), req)
+    .eq('operator_id', opId).neq('status', 'feedback_aplicado'));
+  const chosen = Array.isArray(b.evaluation_ids) ? new Set(b.evaluation_ids.map(Number)) : null;
+  if (chosen) pend = pend.filter((e) => chosen.has(e.id));
+  if (!pend.length) throw httpError(400, 'Este operador não tem atendimentos pendentes de feedback.');
+  let appliedAt = nowIso();
+  if (b.applied_at) { const d = new Date(b.applied_at); if (!Number.isNaN(d.getTime())) appliedAt = d.toISOString(); }
+  const vals = { applied_at: appliedAt, modality: nOrNull(b.modality), content, strengths: nOrNull(b.strengths), improvements: nOrNull(b.improvements), action_plan: nOrNull(b.action_plan), operator_ack: !!b.operator_ack, followup_date: nOrNull(b.followup_date) };
+  const batch = crypto.randomUUID();
+  const rows = await must(sb().from('px_feedbacks').insert(pend.map((e) => ({ ...vals, evaluation_id: e.id, operator_id: opId, applied_by: req.user.id, batch_id: batch }))).select('id'));
+  const ids = pend.map((e) => e.id);
+  for (let i = 0; i < ids.length; i += 200) await must(sb().from('px_evaluations').update({ status: 'feedback_aplicado', updated_at: nowIso() }).in('id', ids.slice(i, i + 200)));
+  await audit(req.user.id, 'feedback_aplicado', 'operator', opId, { atendimentos: ids.length, lote: batch, modalidade: vals.modality });
+  const whoName = req.user.display_name || req.user.name;
+  await notify([op.supervisor_user_id].filter((u) => u && u !== req.user.id), 'Feedback aplicado', `${whoName} aplicou feedback para ${op.name} (${ids.length} atendimento(s)).`, `#/operadores/${opId}`);
+  // Uma linha na planilha de ações por feedback (não por atendimento)
+  const first = pend[0];
+  const its = await must(sb().from('px_v_eval_items').select('final_result, weight, stage').in('evaluation_id', ids.slice(0, 300)));
+  await recordAction({
+    source: 'feedback', action: FEEDBACK_ONLINE.includes(vals.modality) ? 'Feedback online' : 'Feedback',
+    theme: THEMES.includes(b.sheet_theme) ? b.sheet_theme : suggestTheme(its, [...new Set(pend.flatMap((e) => e.alerts || []))]),
+    evaluation: first, operator_id: opId, action_date: dayInBrazil(appliedAt),
+    obs: `Feedback de ${ids.length} atendimento(s)${vals.modality ? ` (${vals.modality})` : ''}: ${content}`, feedback_id: rows[0].id, dedupe_key: `feedback-lote:${batch}`,
+  }, req.user);
+  flushInBackground();
+  res.json({ ok: true, batch_id: batch, evaluations: ids.length });
+}));
+
+// Tira (ou devolve) o operador da lista de feedbacks pendentes: remanejado, desligado…
+router.post('/operators/:id/feedback-exclusion', QUALITY, h(async (req, res) => {
+  const opId = Number(req.params.id);
+  const op = await must(scoped(sb().from('px_operators').select('id, name'), req).eq('id', opId).maybeSingle());
+  if (!op) throw httpError(404, 'Operador não encontrado.');
+  const restore = req.body?.restore === true;
+  const reason = [String(req.body?.reason || '').trim(), String(req.body?.note || '').trim()].filter(Boolean).join(' · ').slice(0, 300);
+  if (!restore && !reason) throw httpError(400, 'Informe o motivo.');
+  await must(sb().from('px_operators').update(restore
+    ? { feedback_excluded_at: null, feedback_excluded_reason: null, feedback_excluded_by: null }
+    : { feedback_excluded_at: nowIso(), feedback_excluded_reason: reason, feedback_excluded_by: req.user.id }).eq('id', opId));
+  await audit(req.user.id, restore ? 'operador_voltou_feedback' : 'operador_fora_feedback', 'operator', opId, { nome: op.name, motivo: reason || null });
+  res.json({ ok: true });
+}));
+
 function feedbackObs(ev, vals) {
   return `Feedback da ligação ${ev.protocol || '#' + ev.id}${vals.modality ? ` (${vals.modality})` : ''}: ${vals.content}`;
 }
@@ -995,7 +1120,8 @@ router.get('/agv/data', h(async (req, res) => {
   const roteiro = ['AGV', 'AGV2'].includes(req.query.roteiro) ? req.query.roteiro : roteiros[0].total ? 'AGV2' : 'AGV';
   const agvItems = items.filter((i) => i.criterion_product === roteiro);
   const agvIds = new Set(agvItems.map((i) => i.evaluation_id));
-  const agv = evals.filter((e) => e.channel === 'AGV' && agvIds.has(e.id));
+  // Roteiro de esforço: entram também as ligações convencionais lidas com ele (ex.: Refin e E.A.)
+  const agv = evals.filter((e) => agvIds.has(e.id) && (roteiro === 'AGV2' || e.channel === 'AGV'));
   const anyAgv = new Set(items.filter((i) => i.criterion_product === 'AGV' || i.criterion_product === 'AGV2').map((i) => i.evaluation_id));
   const criteria = await must(sb().from('px_criteria').select('id, code, name, description, stage, sort').eq('product', roteiro).eq('active', true).order('sort'));
   // Análise de origem (ex.: "19/10", "23 a 26/10"); sem ela, a análise é o dia da ligação
@@ -1003,7 +1129,7 @@ router.get('/agv/data', h(async (req, res) => {
   {
     const ids = agv.map((e) => e.id);
     for (let i = 0; i < ids.length; i += 300) {
-      for (const r of await must(sb().from('px_evaluations').select('id, esforco:details->esforco').in('id', ids.slice(i, i + 300)))) analysis.set(r.id, r.esforco || {});
+      for (const r of await must(sb().from('px_evaluations').select('id, audio_url, esforco:details->esforco').in('id', ids.slice(i, i + 300)))) analysis.set(r.id, { ...(r.esforco || {}), audio_url: r.audio_url || null });
     }
   }
   const pick = (e) => ({
@@ -1014,6 +1140,7 @@ router.get('/agv/data', h(async (req, res) => {
     // Usados pelo painel de esforço negocial (gerência, ID da ligação e arquivo para localizar o áudio)
     manager: e.manager_name || null, call_id: e.protocol || e.external_id || String(e.id), audio_file: e.audio_file || null, customer: e.customer || null,
     source: e.source || null, analysis: analysis.get(e.id)?.periodo || null, analysis_manager: analysis.get(e.id)?.gerencia || null,
+    channel: e.channel || null, audio_url: analysis.get(e.id)?.audio_url || null,
   });
   const byEval = new Map();
   for (const i of items) { if (!byEval.has(i.evaluation_id)) byEval.set(i.evaluation_id, []); byEval.get(i.evaluation_id).push(i); }
@@ -1144,7 +1271,7 @@ router.post('/import/commit', QUALITY, h(async (req, res) => {
     let op = operators.find((o) => (r.operator_id && o.id === r.operator_id) || (r.registration && o.registration && String(o.registration) === String(r.registration)) || low(o.name) === low(r.operator));
     if (!op) {
       const sup = sups.find((s) => [s.name, s.display_name, s.email].some((v) => v && low(v) === low(r.supervisor)));
-      op = await must(sb().from('px_operators').insert({ name: r.operator, registration: n(r.registration), team: n(r.team), supervisor_name: n(r.supervisor), supervisor_user_id: sup ? sup.id : null }).select('id, name, registration').single());
+      op = await must(sb().from('px_operators').insert({ name: r.operator, registration: n(r.registration), team: n(r.team), supervisor_name: n(r.supervisor), supervisor_user_id: sup ? sup.id : null, portfolio: carteiraNew(req) }).select('id, name, registration').single());
       operators.push(op); newOps++;
     }
     await createEvaluation({
@@ -1161,7 +1288,7 @@ router.post('/import/commit', QUALITY, h(async (req, res) => {
 // Lista de ligações do discador (.csv): cria atendimentos pendentes ou completa os existentes
 router.post('/import/calls', QUALITY, h(async (req, res) => {
   const b = req.body || {};
-  const out = await importCalls({ calls: b.calls, cycle_id: intOrNull(b.cycle_id) }, req.user.id);
+  const out = await importCalls({ calls: b.calls, cycle_id: intOrNull(b.cycle_id), portfolio: carteiraNew(req) }, req.user.id);
   if (out.created || out.updated || b.last) await audit(req.user.id, 'importacao_discador', 'import', null, { ...out, arquivo: b.filename ? String(b.filename).slice(0, 200) : null, lote: b.batch || null });
   res.json(out);
 }));
@@ -1178,8 +1305,8 @@ router.post('/import/speech-agv', QUALITY, h(async (req, res) => {
 router.post('/import/agv-dashboard', QUALITY, h(async (req, res) => {
   const b = req.body || {};
   const out = b.kind === 'dash_agv_esf'
-    ? await importAgvEsforco({ calls: b.calls, meta: b.meta || null, filename: b.filename }, req.user.id)
-    : await importAgvDashboard({ kind: b.kind, calls: b.calls, meta: b.meta || null, cycle_id: intOrNull(b.cycle_id), filename: b.filename }, req.user.id);
+    ? await importAgvEsforco({ calls: b.calls, meta: b.meta || null, filename: b.filename, portfolio: carteiraNew(req) }, req.user.id)
+    : await importAgvDashboard({ kind: b.kind, calls: b.calls, meta: b.meta || null, cycle_id: intOrNull(b.cycle_id), filename: b.filename, portfolio: carteiraNew(req) }, req.user.id);
   if (out.created || out.updated || b.last) await audit(req.user.id, 'importacao_dashboard_agv', 'import', null, { tipo: b.kind, novas: out.created, completadas: out.updated, ignoradas: out.skipped.length, arquivo: b.filename ? String(b.filename).slice(0, 200) : null, lote: b.batch || null });
   res.json(out);
 }));
@@ -1187,7 +1314,7 @@ router.post('/import/agv-dashboard', QUALITY, h(async (req, res) => {
 // Dashboards de monitoria PAN (HTML com JSON embutido): o navegador extrai o JSON e envia em lotes
 router.post('/import/dashboard', QUALITY, h(async (req, res) => {
   const b = req.body || {};
-  const out = await importDashboard({ kind: b.kind, calls: b.calls, cycle_id: intOrNull(b.cycle_id), period: b.period ? String(b.period).slice(0, 60) : null }, req.user.id);
+  const out = await importDashboard({ kind: b.kind, calls: b.calls, cycle_id: intOrNull(b.cycle_id), aud: typeof b.aud === 'string' ? b.aud : null, portfolio: carteiraNew(req), period: b.period ? String(b.period).slice(0, 60) : null }, req.user.id);
   if (out.created || b.last) await audit(req.user.id, 'importacao_dashboard', 'import', null, { ...out, arquivo: b.filename ? String(b.filename).slice(0, 200) : null, lote: b.batch || null });
   res.json(out);
 }));
@@ -1358,6 +1485,7 @@ router.post('/operators', QUALITY, h(async (req, res) => {
   const o = await must(sb().from('px_operators').insert({
     name: String(b.name).trim(), registration: n(b.registration), team: n(b.team),
     supervisor_user_id: sup ? b.supervisor_user_id : null, supervisor_name: sup ? sup.name : n(b.supervisor_name),
+    portfolio: CARTEIRAS.includes(String(b.portfolio || '').toUpperCase()) && req.user.role === 'admin' ? String(b.portfolio).toUpperCase() : carteiraNew(req),
   }).select().single());
   await audit(req.user.id, 'operador_criado', 'operator', o.id, { nome: b.name });
   res.json(o);
@@ -1366,12 +1494,15 @@ router.post('/operators', QUALITY, h(async (req, res) => {
 router.put('/operators/:id', QUALITY, h(async (req, res) => {
   const id = Number(req.params.id);
   const o = await must(sb().from('px_operators').select('*').eq('id', id).maybeSingle());
-  if (!o) return res.status(404).json({ error: 'Operador não encontrado.' });
+  const view = carteiraOf(req);
+  if (!o || (view && (o.portfolio || 'PAN') !== view)) return res.status(404).json({ error: 'Operador não encontrado.' });
   const b = { ...o, ...req.body };
   const sup = await supName(b.supervisor_user_id);
+  const pf = String(b.portfolio || '').toUpperCase();
   const saved = await must(sb().from('px_operators').update({
     name: String(b.name).trim(), registration: n(b.registration), team: n(b.team),
     supervisor_user_id: sup ? b.supervisor_user_id : null, supervisor_name: sup ? sup.name : n(b.supervisor_name), active: !!b.active,
+    portfolio: req.user.role === 'admin' && CARTEIRAS.includes(pf) ? pf : (o.portfolio || 'PAN'),
   }).eq('id', id).select().single());
   await audit(req.user.id, 'operador_editado', 'operator', id);
   res.json(saved);

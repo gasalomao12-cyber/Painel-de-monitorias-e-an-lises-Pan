@@ -118,9 +118,63 @@ function readEsforco(data, doc, text, file) {
     meta: { periods, ger, year, title, aud: typeof data.aud === 'string' ? data.aud : null, carteira: /ve[ií]culo/i.test(title) ? 'VEICULOS' : 'CARTOES' },
   };
 }
+// Dashboards de 2026-11 (versão 5): os dados vêm em <script id="data">, uma lista de ligações, e o link
+// da pasta de áudios em const LINK. São convertidos para os formatos que a API já importa.
+const secs = (v) => { const m = String(v || '').match(/^(\d+):(\d{2}):(\d{2})$/); return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : Number(v) || null; };
+const GER_V5 = { 'Amanda Mendes': ['AM', 'Contact & WO'], 'Tatiane de Souza': ['TS', 'Ativas'] };
+function periodV5(title, file, list) {
+  const m = String(file.name).match(/(\d{1,2}(?:-\d{2})?a\d{1,2}-\d{2}|\d{1,2}-\d{2})(?=[_.])/);
+  if (m) return m[1].replace(/a/, ' a ').replace(/-/g, '/');
+  const d = list.map((c) => c.dt).filter(Boolean).sort();
+  return d.length ? `${d[0].slice(8, 10)}/${d[0].slice(5, 7)} a ${d[d.length - 1].slice(8, 10)}/${d[d.length - 1].slice(5, 7)}` : '';
+}
+function readV5(list, doc, text, file) {
+  const link = (text.match(/const LINK="([^"]*)"/) || [])[1] || '';
+  const aud = /^https:\/\//.test(link) ? link : null;
+  const title = (doc.title || '').trim();
+  const evaluated = list.filter((c) => c && c.aval !== false);
+  const excluded = list.length - evaluated.length;
+  const period = periodV5(title, file, list);
+  const year = (evaluated.map((c) => c.dt).filter(Boolean).sort().pop() || String(new Date().getFullYear())).slice(0, 4);
+  const sample = evaluated.find((c) => c.q && Object.keys(c.q).length) || evaluated[0] || {};
+  // Roteiro e Esforço Sem Garantia (Cartões e Consignado, AGV e convencional): mesmo roteiro do Sem Garantia
+  if (sample.q && 'ab' in sample.q) {
+    const calls = evaluated.map((c) => ({
+      ...c, log: c.login, dt: `${c.dt} ${c.hr || ''}`.trim(), dur: secs(c.dur), prod: /consig/i.test(c.prod || '') ? 'CON' : 'CAR', seg: c.seg || null,
+    }));
+    return { kind: 'dash_sem_garantia', calls, period, name: file.name, title, aud, excluded, v5: true };
+  }
+  const ger = {};
+  for (const c of evaluated) { const g = GER_V5[c.ger]; if (g) ger[g[0]] = { nome: c.ger, op: g[1] }; else if (c.ger) ger[c.ger] = { nome: c.ger, op: null }; }
+  const base = (c) => ({ cid: c.id, id: c.audio || c.id, dt: `${c.dt} ${c.hr || ''}`.trim(), dur: secs(c.dur), login: c.login, op: c.op, lid: c.lid, camp: c.camp, tab: c.tabL || c.tab || null,
+    arq: c.arq, cli: c.cli, desc: c.desc, g: (GER_V5[c.ger] || [c.ger])[0], per: 'C', agv: c.agv !== false, tentar: c.tentar, frase: c.frase, mail: c.fb || c.feedback || null });
+  const meta = { periods: { C: period }, ger, year, title, aud, carteira: 'VEICULOS' };
+  // Esforço negocial AGV (5 critérios + 6 itens do roteiro dos primeiros segundos)
+  if (Array.isArray(sample.c) && Array.isArray(sample.s)) {
+    const calls = evaluated.map((c) => ({ ...base(c), c: c.c, s: c.s, ev: c.ev, s_ev: c.s_ev, ok: c.ok, op2: c.op2, desf: c.desf, recusa: c.recusa, titular: c.titular, veic: c.veic }));
+    return { kind: 'dash_agv_esf', calls, meta, name: file.name, title, excluded, v5: true };
+  }
+  // Refin e E.A. (Veículos, AGV e convencional): mesmos 5 critérios de esforço e 6 do roteiro, mais a oferta de refin e E.A.
+  if (Array.isArray(sample.esf) && Array.isArray(sample.rot)) {
+    const calls = evaluated.map((c) => ({ ...base(c), c: c.esf, s: c.rot, desf: c.desf, recusa: c.mot_rec, veic: c.veic, mot: c.mot, res: c.res,
+      ea: { cabia: c.ea_cabia, ofertou: c.ea_ofertou, ev: c.ea_ev, apto: !!c.aptEA, terceiro: c.eaTerc }, rf: { cabia: c.rf_cabia, ofertou: c.rf_ofertou, cond: c.rf_cond, ev: c.rf_ev, apto: !!c.aptRF, info: c.rfInfo } }));
+    return { kind: 'dash_agv_esf', calls, meta: { ...meta, kind: 'refin_ea' }, name: file.name, title, excluded, v5: true };
+  }
+  return null;
+}
+
 export async function readDashboard(file) {
   const text = await file.text();
   const doc = new DOMParser().parseFromString(text, 'text/html');
+  const v5 = doc.querySelector('script#data[type="application/json"]');
+  if (v5 && !doc.querySelector('script#dados')) {
+    let list;
+    try { list = JSON.parse(v5.textContent); } catch { throw new Error('Não foi possível ler os dados do dashboard.'); }
+    const out = Array.isArray(list) ? readV5(list, doc, text, file) : null;
+    if (!out) throw new Error('Formato de dashboard não reconhecido.');
+    if (!out.calls.length) throw new Error('O dashboard não tem ligações analisadas.');
+    return out;
+  }
   const node = doc.querySelector('script#dados[type="application/json"]');
   if (!node) throw new Error('Este arquivo não tem os dados do dashboard (bloco "dados" não encontrado).');
   let data;
@@ -181,7 +235,7 @@ function drawDash(el, ctx) {
     try {
       for (let i = 0; i < calls.length; i += size) {
         prog.innerHTML = String(html`<div class="meter" style="height:8px"><i style="width:${Math.round((i / calls.length) * 100)}%"></i></div><div class="mt-0" style="margin-top:6px">Enviando ${Math.min(i + size, calls.length)} de ${calls.length}…</div>`);
-        const r = await api.post('/import/dashboard', { kind, calls: calls.slice(i, i + size), cycle_id: cycle, period: dash.period, filename: dash.name, batch: i / size + 1, last: i + size >= calls.length });
+        const r = await api.post('/import/dashboard', { kind, calls: calls.slice(i, i + size), cycle_id: cycle, period: dash.period, aud: dash.aud || null, filename: dash.name, batch: i / size + 1, last: i + size >= calls.length });
         cycle = r.cycle_id; tot.created += r.created; tot.skipped += r.skipped; tot.operators_created += r.operators_created;
       }
       toast(`${tot.created} ligação(ões) importada(s)${tot.skipped ? ` · ${tot.skipped} já existiam` : ''}${tot.operators_created ? ` · ${tot.operators_created} operador(es) cadastrado(s)` : ''}.`);

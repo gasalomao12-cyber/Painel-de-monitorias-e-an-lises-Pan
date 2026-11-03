@@ -4,6 +4,7 @@ import { html, raw, icon, pxLogo, $, $$, toast, modal, avatar, userName, ROLE, e
 import { destroyAll } from './charts.js';
 import { renderLogin, renderChangePassword, renderWelcome } from './views/auth.js';
 import { openShortcut, offerShortcut, markShortcutLaunch } from './desktop.js';
+import { CARTEIRAS, CARTEIRA_INFO, applyCarteira, chooseCarteira, viewCarteira } from './carteira.js';
 
 const app = document.getElementById('app');
 export const store = { user: null, meta: null, company: 'Paschoalotto', cycle: localStorage.getItem('px_cycle') || '' };
@@ -133,6 +134,7 @@ const zoomLabel = () => `${Math.round((window.PX_ZOOM?.get() || 1) * 100)}%`;
 
 function shell() {
   const u = store.user;
+  applyCarteira(u);
   const collapsed = sidebarCollapsed();
   const navHtml = NAV.filter((n) => !n.roles || n.roles.includes(u.role)).map((n) => n.sec
     ? html`<div class="sb-sec">${n.sec}</div>`
@@ -145,6 +147,7 @@ function shell() {
         <div class="sb-title">Monitorias<br>&amp; Feedbacks<small>${store.company}</small></div>
         <button class="btn-icon sb-toggle" id="sb-toggle" aria-label="Recolher menu" title="Recolher menu">${icon('panel')}</button>
       </div>
+      ${viewCarteira(u) ? html`<div class="sb-carteira" title="${CARTEIRA_INFO[viewCarteira(u)].label}"><img src="${CARTEIRA_INFO[viewCarteira(u)].logo}" alt="${CARTEIRA_INFO[viewCarteira(u)].label}"></div>` : ''}
       <nav class="sb-nav">${navHtml}</nav>
       <div class="sb-foot">
         <div class="me">
@@ -163,6 +166,7 @@ function shell() {
         <div style="min-width:0"><div class="crumb" id="page-crumb"></div><h1 id="page-title">PX</h1></div>
         <div class="grow"></div>
         <label class="search"><span class="sr-only">Buscar</span>${icon('search')}<input id="global-search" placeholder="Buscar operador, protocolo, página…" autocomplete="off"><kbd>Ctrl K</kbd></label>
+        ${u.role === 'admin' ? html`<label class="carteira-pick" title="Carteira que você está vendo"><span class="sr-only">Carteira</span><select class="select sm" id="carteira-sel"><option value="">Todas as carteiras</option>${CARTEIRAS.map((c) => html`<option value="${c}" ${viewCarteira(u) === c ? 'selected' : ''}>${CARTEIRA_INFO[c].label}</option>`)}</select></label>` : ''}
         <button class="btn-icon zoom-btn" id="zoom-btn" title="Tamanho da tela" aria-label="Tamanho da tela">${icon('zoom')}<span id="zoom-label">${zoomLabel()}</span></button>
         <span class="live-dot" id="live-dot" data-on="0" title="Conectando…"><i></i><span>Ao vivo</span></span>
         <button class="btn-icon" id="notif-btn" aria-label="Notificações" title="Notificações">${icon('bell')}<b class="dot" id="notif-dot" hidden></b></button>
@@ -196,6 +200,10 @@ function shell() {
   $('#bug-fab').onclick = openBugReport;
   $('#bug-top').onclick = openBugReport;
   $('#shortcut-btn').onclick = () => openShortcut(store);
+  $('#carteira-sel')?.addEventListener('change', async (e) => {
+    chooseCarteira(e.target.value);
+    shell(); await refreshMeta().catch(() => {}); route();
+  });
   $('#notif-btn').onclick = (e) => openNotifications(e.currentTarget);
   $('#global-search').addEventListener('focus', (e) => { e.target.blur(); openPalette(); });
   updateCounts();
@@ -203,6 +211,7 @@ function shell() {
 
 async function logout() {
   store.user = null; store.meta = null;
+  applyCarteira(null);
   await sb.auth.signOut().catch(() => {});
   location.hash = '';
   start();
@@ -459,6 +468,7 @@ export async function start(opts = {}) {
   boot?.classList.add('hide');
   if (!store.user) { unsubscribeRealtime(); renderLogin(app, { onLogin: start, store, error: loginError }); return; }
   applyTheme(store.user.theme);
+  applyCarteira(store.user);
   if (store.user.must_change_password) { renderChangePassword(app, { store, onDone: start, onLogout: logout }); return; }
   if (!store.user.onboarded) { renderWelcome(app, { store, onDone: start }); return; }
   await refreshMeta();

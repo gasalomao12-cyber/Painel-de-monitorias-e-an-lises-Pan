@@ -1,5 +1,6 @@
 // Cliente HTTP da API (Edge Function px-api no Supabase)
 import { API_URL, accessToken } from './sb.js';
+import { chosenCarteira } from './carteira.js';
 
 export class ApiError extends Error {
   constructor(message, status, code) { super(message); this.status = status; this.code = code; }
@@ -8,6 +9,9 @@ export class ApiError extends Error {
 async function request(method, url, body, { raw = false, file = null } = {}) {
   const token = await accessToken();
   const headers = window.PX_CONFIG.publishableKey ? { apikey: window.PX_CONFIG.publishableKey } : {};
+  // Carteira escolhida pelo administrador no seletor (para os demais perfis, a API usa a do cadastro)
+  const pf = chosenCarteira();
+  if (pf) headers['x-px-carteira'] = pf;
   if (token) headers.Authorization = `Bearer ${token}`;
   if (file) headers['Content-Type'] = file.type || 'application/octet-stream';
   else if (body !== undefined) headers['Content-Type'] = 'application/json';

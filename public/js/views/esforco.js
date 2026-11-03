@@ -1,5 +1,6 @@
 import { api, qs } from '../api.js';
-import { toast, multiSelect, bindMultiSelect } from '../ui.js';
+import { toast, multiSelect, bindMultiSelect, pxLogo } from '../ui.js';
+import { CARTEIRA_INFO } from '../carteira.js';
 
 // Painel de esforço negocial AGV — mesma estrutura dos dashboards "Esforço negocial AGV" (capa, visão geral,
 // lideranças, operadores e ligações), com os dados da plataforma, mais dispersões e evolução entre as análises.
@@ -37,7 +38,8 @@ const BANDS = [
   { k: 'ok', t: 'Bom', r: '70% ou mais', c: 'var(--okf)', test: (p) => p >= 70 }];
 const REF = 70;
 const PAL = ['#0A8FD6', '#7C5CE0', '#0E9F8E', '#E07B0B', '#D2477E', '#5B6B86'];
-const LOGOS = '<div class="logos"><img src="brand/paschoalotto-branco.png" alt="Paschoalotto"><i></i><img src="brand/banco-pan-branco.png" alt="Banco PAN"></div>';
+const CART = () => CARTEIRA_INFO[document.documentElement.dataset.carteira] || CARTEIRA_INFO.PAN;
+const logos = () => `<div class="logos"><img src="brand/paschoalotto-branco.png" alt="Paschoalotto"><i></i><img src="${CART().logo}" alt="${CART().label}"></div>`;
 const TAB_LABEL = {
   'VENC. NAO ATENDE': 'Vencimento não atende', 'VENCIMENTO NAO ATENDE': 'Vencimento não atende', 'ATRASO DE SALARIO': 'Atraso de salário', 'REDUCAO DE RENDA': 'Redução de renda',
   DESEMPREGO: 'Desemprego', DOENCA: 'Doença', 'FINANCIOU PARA TERCEIRO': 'Financiou para terceiro',
@@ -73,13 +75,15 @@ const ICO = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>',
   print: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   inbox: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>',
 };
 
 // ------------------------------------------------------------------ estado
 let RAW = [];                 // todas as ligações AGV elegíveis (todas as análises)
+let ALL = [];                 // todas as ligações lidas, inclusive as sem possibilidade de negociação
 let ROTC = [];                // roteiro de esforço: ligações com o roteiro dos primeiros segundos (inclui as sem negociação)
-let VIEW = 'capa', GERS = [], PERS = [], F = { lid: [], tab: [] }, LQ = '', CHIP = 'todas', SORT = { k: 'p', d: 1 }, PRE = null, GRAN = 'cycle';
+let VIEW = 'capa', GERS = [], PERS = [], CHS = [], F = { lid: [], tab: [] }, LQ = '', CHIP = 'todas', SORT = { k: 'p', d: 1 }, PRE = null, GRAN = 'cycle';
 let LISTA = [], MID = null, root = null, LIDS = [], TABS = [];
 
 function prep(d) {
@@ -119,7 +123,7 @@ function prep(d) {
     const an = e.analysis ? { id: `a:${e.analysis}`, name: `Análise de ${e.analysis}` } : e.date ? { id: `d:${e.date}`, name: `Análise de ${dfmt(e.date)}` } : { id: 'sem-data', name: 'Sem data' };
     out.push({
       eid: e.id, id: String(e.call_id || e.id), dt, date: e.date || '', dur: e.duration, op: e.operator || 'Operador', login: e.login || '', lid: e.supervisor || 'Sem liderança',
-      ger: mgrOf(e), team: e.team || '', product: e.product, tab: tabLabel(e.tabulation), cli: e.customer || '', arq: e.audio_file || '', camp: e.campaign || '',
+      ger: mgrOf(e), team: e.team || '', product: e.product, tab: tabLabel(e.tabulation), cli: e.customer || '', arq: e.audio_file || '', camp: e.campaign || '', ch: e.channel === 'AGV' ? 'AGV' : e.channel ? 'Convencional' : 'AGV', aud: e.audio_url || '',
       cycle_id: an.id, cycle: an.name, cycle_start: e.date || '',
       desf, it, s, n, p: pc(s, n), falta: IT.filter((i) => it[i.k] === 'NAO').map((i) => i.k), ri, rp: pc(riS, riN), conduta,
     });
@@ -129,7 +133,8 @@ function prep(d) {
 }
 
 const gers = () => [...new Set(RAW.map((c) => c.ger))].sort((a, b) => RAW.filter((c) => c.ger === b).length - RAW.filter((c) => c.ger === a).length);
-const inGer = () => RAW.filter((c) => !GERS.length || GERS.includes(c.ger));
+const chOk = (c) => !CHS.length || CHS.includes(c.ch);
+const inGer = () => RAW.filter((c) => (!GERS.length || GERS.includes(c.ger)) && chOk(c));
 function periodsOf(L) {
   const M = new Map();
   for (const c of L) {
@@ -157,9 +162,9 @@ function G() {
   const L = inGer();
   const teams = Object.entries(L.reduce((a, c) => { if (c.team) a[c.team] = (a[c.team] || 0) + 1; return a; }, {})).sort((a, b) => b[1] - a[1]);
   const prods = new Set(L.map((c) => c.product));
-  const op = prods.size === 1 && prods.has('VEICULOS') ? 'Banco PAN · Veículos' : prods.has('VEICULOS') ? 'Banco PAN · Veículos e Sem Garantia' : 'Banco PAN · Sem Garantia';
+  const op = `${CART().label} · ${[...new Set([...prods].map((x) => PRODL[x] || x))].join(' e ') || 'Esforço negocial'}`;
   const one = GERS.length === 1;
-  return { nome: one ? GERS[0] : GERS.length ? `${GERS.length} gerências` : 'todas as gerências', curto: one ? teams[0]?.[0] || 'AGV PAN' : 'AGV PAN', op, all: !GERS.length, many: GERS.length > 1 };
+  return { nome: one ? GERS[0] : GERS.length ? `${GERS.length} gerências` : 'todas as gerências', curto: one ? teams[0]?.[0] || CART().label : CART().label, op, all: !GERS.length, many: GERS.length > 1 };
 }
 function perLabel(L) {
   const d = L.map((c) => c.date).filter(Boolean).sort();
@@ -202,7 +207,7 @@ function faixas(L) {
   return `<div class="stk" role="img" aria-label="Ligações por faixa de esforço">${rows.filter((r) => r.n).map((r) => `<i style="width:${(100 * r.n) / t}%;background:${r.c}" data-tip="${r.t}: ${lg(r.n)}"></i>`).join('')}</div>
   <div class="bands">${rows.slice().reverse().map((r) => `<button class="bd" data-goband="${r.k}"><span class="dt" style="background:${r.c}"></span><span class="tx"><b>${r.t}</b><small>esforço ${r.r}</small></span><span class="n num">${r.n}</span><span class="p num">${fp(pc(r.n, t))}</span></button>`).join('')}</div>`;
 }
-const flR = () => ROTC.filter((c) => (!GERS.length || GERS.includes(c.ger)) && perOk(c) && (!F.lid.length || F.lid.includes(c.lid)) && (!F.tab.length || F.tab.includes(c.tab)));
+const flR = () => ROTC.filter((c) => (!GERS.length || GERS.includes(c.ger)) && chOk(c) && perOk(c) && (!F.lid.length || F.lid.includes(c.lid)) && (!F.tab.length || F.tab.includes(c.tab)));
 function riBars(L) {
   const ps = L.map((c) => c.rp).filter((v) => v != null);
   const ap = ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : null;
@@ -269,19 +274,8 @@ function dispOps(L) {
   const sem = pc(L.filter((c) => c.desf === 'SEM_ACORDO').length, L.length);
   const pts = ops.map((o) => ({ x: o.A.p ?? 0, y: pc(o.A.sem, o.v.length) ?? 0, r: 5 + 9 * Math.sqrt(o.v.length / maxN), attr: `data-goop="${esc(o.key)}"`,
     tip: `${o.op}: esforço ${fp(o.A.p)} · ${fp(pc(o.A.sem, o.v.length))} sem acordo · ${lg(o.v.length)}` }));
-  return `${scatter(pts, { xLabel: 'Esforço negocial do operador', yLabel: '% das ligações sem acordo', refX: REF, refY: sem, refYLabel: `média ${fp(sem)}` })}
+  return `${scatter(pts, { xLabel: 'Esforço negocial do operador', yLabel: '% das ligações sem acordo', refX: REF, refY: sem, refYLabel: `média ${fp(sem)}`, w: 1240, h: 340 })}
     <p class="foot">Cada bolha é um operador (tamanho = nº de ligações). <b>Acima da média e à esquerda da referência</b>: pouco esforço e muita ligação sem acordo, onde a conversão mais perde. Clique numa bolha para abrir as ligações.</p>`;
-}
-function dispCalls(L) {
-  const durs = L.map((c) => (c.dur || 0) / 60);
-  const xMax = Math.max(1, Math.ceil(Math.max(...durs, 1)));
-  const pts = L.map((c) => ({ x: (c.dur || 0) / 60, y: c.p ?? 0, r: 5, op: 0.55, color: DESF[c.desf]?.[1], attr: `data-open="${esc(c.id)}"`,
-    tip: `${c.id} · ${c.op}: esforço ${fp(c.p)} · ${dur(c.dur)} · ${DESF[c.desf]?.[0] || ''}` }));
-  const step = xMax <= 6 ? 1 : Math.ceil(xMax / 6);
-  const xTicks = []; for (let v = 0; v <= xMax; v += step) xTicks.push(v);
-  return `${scatter(pts, { xLabel: 'Duração da ligação (minutos)', yLabel: 'Esforço negocial', xMax, refY: REF, refYLabel: 'referência 70%', xTicks, h: 340, w: 1240 })}
-    <div class="lgd">${Object.values(DESF).map(([t, c]) => `<span><i style="background:${c}"></i>${t}</span>`).join('')}</div>
-    <p class="foot">Cada ponto é uma ligação, colorida pelo desfecho. Ligações curtas com esforço baixo indicam encerramento antes de negociar.</p>`;
 }
 
 // Evolução entre as análises (quinzena, semana ou dia), sem o filtro de quinzena
@@ -298,43 +292,113 @@ function evoGroups() {
   }
   return [...M.values()].sort((a, b) => String(a.ord).localeCompare(String(b.ord))).map((g) => ({ ...g, A: agg(g.v) }));
 }
-function evoMini() {
-  const P = evoGroups();
-  if (P.length < 2) return '<div class="empty" style="padding:28px 10px">Ainda há uma única análise neste recorte. A evolução aparece quando outra quinzena for importada.</div>';
-  const last = P[P.length - 1].A.p, prev = P[P.length - 2].A.p;
-  return `${lines(P.map((g) => g.label), [{ label: 'Esforço negocial', data: P.map((g) => g.A.p), color: 'var(--pan2)', w: 3, values: true }], { h: 240 })}
-    <p class="foot">Última análise ${dlt(last - prev)} em relação à anterior.</p>`;
-}
 
 // ------------------------------------------------------------------ views
+// ------------------------------------------------------------------ peças da visão geral (formato dos dashboards de análise)
+// Critérios mais ofensores: % das ligações em que o critério cabia e não foi feito
+function ofensoresCrit(L) {
+  const rows = IT.map((i) => { const v = L.filter((c) => c.it[i.k] !== 'NA'); const nc = v.filter((c) => c.it[i.k] === 'NAO').length; return { ...i, nc, n: v.length, p: pc(nc, v.length) }; })
+    .filter((x) => x.n).sort((a, b) => b.p - a.p);
+  const R2 = flR();
+  if (V2 && R2.length) for (const x of RI) { const v = R2.filter((c) => c.ri && c.ri[x.code] !== 'NA'); const nc = v.filter((c) => c.ri[x.code] === 'NAO').length; if (v.length) rows.push({ k: `ri:${x.code}`, t: x.t, nc, n: v.length, p: pc(nc, v.length), ri: 1 }); }
+  rows.sort((a, b) => b.p - a.p);
+  const col = (p) => (p >= 55 ? 'var(--badf)' : p >= 30 ? 'var(--warnf)' : '#818CF8');
+  return `<div class="v5-bars">${rows.map((x) => `<${x.ri ? 'div' : 'button'} class="v5-bar" ${x.ri ? '' : `data-goitem="${x.k}"`} data-tip="${esc(x.t)}: não fez em ${x.nc} de ${lg(x.n)}"><span class="lb">${esc(x.t)}${x.ri ? ' <em>roteiro</em>' : ''}</span><div class="trk"><i style="width:${(x.p || 0).toFixed(1)}%;background:${col(x.p)}"></i></div><b class="num">${f1(x.p)}</b></${x.ri ? 'div' : 'button'}>`).join('')}</div>
+  <p class="foot">% das ligações em que o critério cabia e não foi feito. Clique num critério do esforço para ver as ligações.</p>`;
+}
+// Ranking dos operadores com 2 ou mais ligações, do maior esforço ao menor
+function rankingOps(L) {
+  const ops = opsOf(L).filter((o) => o.v.length >= 2).sort((a, b) => (b.A.p ?? 0) - (a.A.p ?? 0) || b.v.length - a.v.length);
+  if (!ops.length) return '<div class="empty" style="padding:24px 10px">Nenhum operador com 2 ou mais ligações neste recorte.</div>';
+  return `<div class="v5-rank"><div class="v5-rh"><span>#</span><span>Operador</span><span>Esforço</span></div>${ops.slice(0, 12).map((o, i) => `<button class="v5-rr" data-goop="${esc(o.key)}">
+    <span class="md ${i < 3 ? `m${i + 1}` : ''}">${i + 1}</span>${av(o.lid)}<span class="who"><b>${esc(o.op)}</b><small>${esc(o.lid)} · ${lg(o.v.length)}</small></span>${pill(o.A.p)}</button>`).join('')}</div>
+  ${ops.length > 12 ? `<p class="foot">Mais ${ops.length - 12} operador(es) na aba Operadores.</p>` : ''}`;
+}
+function evoDia(L) {
+  const days = [...new Set(L.map((c) => c.date).filter(Boolean))].sort();
+  if (days.length < 2) return '<div class="empty" style="padding:28px 10px">A evolução por dia aparece quando o recorte tem ligações de mais de um dia.</div>';
+  const R2 = flR();
+  const S = V2
+    ? [{ label: 'Esforço negocial', color: '#22D3EE', data: days.map((d) => agg(L.filter((c) => c.date === d)).p) },
+      { label: 'Roteiro AGV', color: '#818CF8', data: days.map((d) => rotP(R2.filter((c) => c.date === d))) },
+      { label: 'Após o primeiro não', color: '#FBBF24', data: days.map((d) => agg(L.filter((c) => c.date === d)).I.apn.p) }]
+    : [{ label: 'Esforço negocial', color: '#22D3EE', data: days.map((d) => agg(L.filter((c) => c.date === d)).p) },
+      { label: 'Proposta com valor', color: '#22C55E', data: days.map((d) => agg(L.filter((c) => c.date === d)).I.prop.p) },
+      { label: 'Alternativa após o não', color: '#FBBF24', data: days.map((d) => agg(L.filter((c) => c.date === d)).I.alt.p) }];
+  return `${lines(days.map(dfmt), S, { h: 260, w: 760 })}<div class="lgd">${S.map((s) => `<span><i class="ln" style="background:${s.color}"></i>${s.label}</span>`).join('')}</div>`;
+}
+const DIST = [['< 45%', 0, 45, '#EF4444'], ['45-69%', 45, 70, '#F5B83D'], ['70-84%', 70, 85, '#3B82F6'], ['85-100%', 85, 101, '#22C55E']];
+function distrib(L) {
+  const rows = DIST.map(([t, a, b, c]) => ({ t, c, n: L.filter((x) => (x.p ?? 0) >= a && (x.p ?? 0) < b).length, k: a < 45 ? 'bad' : a < 70 ? 'warn' : 'ok' }));
+  const mx = Math.max(1, ...rows.map((r) => r.n));
+  return `<div class="v5-cols">${rows.map((r) => `<button class="v5-col" data-goband="${r.k}" data-tip="${r.t}: ${lg(r.n)}"><b class="num">${r.n}</b><i style="height:${(100 * r.n) / mx}%;background:${r.c}"></i><span>${r.t}</span></button>`).join('')}</div><p class="foot">Ligações por faixa de esforço negocial.</p>`;
+}
+// Ofensores: operadores com mais ligações de esforço crítico (abaixo de 45%) ou fraco (45% a 59%)
+function ofensoresOps(L) {
+  const ops = opsOf(L).map((o) => ({ ...o, cr: o.v.filter((c) => (c.p ?? 0) < 45).length, fr: o.v.filter((c) => (c.p ?? 0) >= 45 && (c.p ?? 0) < 60).length }))
+    .filter((o) => o.cr).sort((a, b) => b.cr - a.cr || b.fr - a.fr || (a.A.p ?? 0) - (b.A.p ?? 0)).slice(0, 10);
+  if (!ops.length) return '<div class="empty" style="padding:24px 10px">Nenhuma ligação com esforço crítico neste recorte.</div>';
+  const mx = Math.max(...ops.map((o) => o.cr + o.fr));
+  return `<div class="v5-ofs">${ops.map((o) => `<button class="v5-of" data-goop="${esc(o.key)}"><span class="who"><b>${esc(curto(o.op))}</b>${o.v[0].ch !== 'AGV' ? '<em>CONV</em>' : ''}<small>${esc(o.login || '')}${o.login ? ' · ' : ''}${esc(o.lid)}</small></span>
+    <div class="trk2"><i style="width:${(100 * o.cr) / mx}%;background:#EF4444"></i><i style="width:${(100 * o.fr) / mx}%;background:#F5B83D"></i></div><span class="n num"><b>${o.cr}</b> · ${o.v.length} lig.</span></button>`).join('')}</div>
+  <div class="lgd"><span><i style="background:#EF4444"></i>Esforço abaixo de 45%</span><span><i style="background:#F5B83D"></i>Esforço de 45% a 59%</span></div>`;
+}
+// Desfecho e campanha × desfecho
+function desfechos(L) {
+  const t = L.length || 1;
+  const keys = Object.keys(DESF).filter((k) => L.some((c) => c.desf === k));
+  const groups = [...new Set(L.map((c) => c.ch))].length > 1 ? [...new Set(L.map((c) => c.ch))] : [...new Set(L.map((c) => c.camp || 'Sem campanha'))];
+  const byCh = [...new Set(L.map((c) => c.ch))].length > 1;
+  const gs = groups.map((gk) => { const v = L.filter((c) => (byCh ? c.ch : c.camp || 'Sem campanha') === gk); return { gk, v }; }).sort((a, b) => b.v.length - a.v.length).slice(0, 6);
+  return `<div class="v5-bars">${keys.map((k) => { const n = L.filter((c) => c.desf === k).length; return `<div class="v5-bar" style="cursor:default"><span class="lb">${DESF[k][0]}</span><div class="trk"><i style="width:${(100 * n) / t}%;background:${DESF[k][1]}"></i></div><b class="num">${n} <small>${f1(pc(n, t))}</small></b></div>`; }).join('')}</div>
+  ${gs.length > 1 || byCh ? `<div class="v5-camp"><h4>${byCh ? 'Canal' : 'Campanha'} × desfecho</h4>${gs.map(({ gk, v }) => `<div class="v5-cg"><div class="v5-cgh"><b>${esc(gk)}</b><small>${lg(v.length)} · esforço ${f1(agg(v).p)}</small></div>
+    <div class="v5-stk">${keys.map((k) => { const n = v.filter((c) => c.desf === k).length; return n ? `<i style="width:${(100 * n) / v.length}%;background:${DESF[k][1]}" data-tip="${esc(gk)} · ${DESF[k][0]}: ${n}"></i>` : ''; }).join('')}</div></div>`).join('')}
+    <div class="lgd">${keys.map((k) => `<span><i style="background:${DESF[k][1]}"></i>${DESF[k][0]}</span>`).join('')}</div></div>` : ''}`;
+}
+// Mapa de desempenho: esforço médio × consistência (desvio-padrão) de cada operador com 2 ou mais ligações
+function mapa(L) {
+  const ops = opsOf(L).filter((o) => o.v.length >= 2).map((o) => { const ps = o.v.map((c) => c.p ?? 0); const m = avgOf(ps); return { ...o, m, sd: Math.sqrt(avgOf(ps.map((x) => (x - m) ** 2))) }; });
+  if (!ops.length) return '<div class="empty" style="padding:24px 10px">O mapa aparece quando há operadores com 2 ou mais ligações.</div>';
+  const yMax = Math.max(10, Math.ceil(Math.max(...ops.map((o) => o.sd)) / 10) * 10);
+  const maxN = Math.max(...ops.map((o) => o.v.length));
+  const W = 1240, H = 340, Lm = 46, R = 16, T = 14, B = 40, iw = W - Lm - R, ih = H - T - B;
+  const X = (v) => Lm + (v / 100) * iw, Y = (v) => T + ih - (Math.min(yMax, v) / yMax) * ih;
+  const ideal = Math.min(15, yMax);
+  const svg = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Mapa de desempenho dos operadores">
+    <rect x="${X(REF)}" y="${Y(ideal)}" width="${X(100) - X(REF)}" height="${Y(0) - Y(ideal)}" fill="#22C55E" fill-opacity=".08" stroke="#22C55E" stroke-opacity=".35" stroke-dasharray="4 4"/><text x="${X(100) - 8}" y="${Y(ideal) + 16}" text-anchor="end" style="fill:#22C55E;font-weight:800">ideal</text>
+    ${[0, 0.25, 0.5, 0.75, 1].map((f) => `<line class="gl" x1="${Lm}" x2="${W - R}" y1="${Y(f * yMax)}" y2="${Y(f * yMax)}"/><text x="${Lm - 8}" y="${Y(f * yMax) + 4}" text-anchor="end">${Math.round(f * yMax)}</text>`).join('')}
+    ${[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((v) => `<text x="${X(v)}" y="${H - B + 18}" text-anchor="middle">${v}%</text>`).join('')}
+    ${ops.map((o) => `<circle class="pt" cx="${X(o.m).toFixed(1)}" cy="${Y(o.sd).toFixed(1)}" r="${(4 + 7 * Math.sqrt(o.v.length / maxN)).toFixed(1)}" fill="${fill(o.m)}" fill-opacity=".8" stroke="var(--card)" stroke-width="1.5" data-goop="${esc(o.key)}" data-tip="${esc(`${o.op}: esforço médio ${f1(o.m)} · desvio ${Math.round(o.sd)} p.p. · ${lg(o.v.length)}`)}"/>`).join('')}
+    <text class="axl" x="${Lm + iw / 2}" y="${H - 4}" text-anchor="middle">esforço negocial médio</text>
+    <text class="axl" transform="translate(12 ${T + ih / 2}) rotate(-90)" text-anchor="middle">desvio-padrão (p.p.)</text></svg>`;
+  return `${svg}<p class="foot">Operadores com 2 ou mais ligações analisadas. Ideal: à direita (esforço alto) e embaixo (constante de uma ligação para outra). Clique no ponto para ver as ligações.</p>`;
+}
+
 function vGeral() {
   const L = fl(); if (!L.length) return semDados();
   const A = agg(L), R = rank(A), pior = R[0], melhor = R[R.length - 1], R2 = R.slice(0, 2);
   const crit = L.filter((c) => c.b === 'bad').length;
-  const evo = evoGroups(), cur = evo.findIndex((g) => (GRAN === 'cycle' ? g.k === (PERS.length === 1 ? PERS[0] : !PERS.length ? evo[evo.length - 1]?.k : null) : false));
-  const prevA = cur > 0 ? evo[cur - 1] : null, curA = cur >= 0 ? evo[cur] : null;
   const brief = [
-    `Analisei <b>${lg(A.calls)}</b> AGV com negociação, de <b>${A.ops} operadores</b>${A.lids > 1 ? ` em ${A.lids} lideranças` : ''}. O esforço negocial ficou em <b>${fp(A.p)}</b>.`,
-    R2.length > 1 ? `O ponto mais fraco do roteiro é <b>${pior.t.toLowerCase()}</b> (${fp(pior.p)}), seguido de <b>${R2[1].t.toLowerCase()}</b> (${fp(R2[1].p)}). O mais forte é <b>${melhor.t.toLowerCase()}</b> (${fp(melhor.p)}).` : '',
+    `Analisei <b>${lg(A.calls)}</b> com negociação, de <b>${A.ops} operadores</b>${A.lids > 1 ? ` em ${A.lids} lideranças` : ''}. O esforço negocial ficou em <b>${f1(A.p)}</b>.`,
+    R2.length > 1 ? `O ponto mais fraco é <b>${pior.t.toLowerCase()}</b> (${fp(pior.p)}), seguido de <b>${R2[1].t.toLowerCase()}</b> (${fp(R2[1].p)}). O mais forte é <b>${melhor.t.toLowerCase()}</b> (${fp(melhor.p)}).` : '',
     `<b>${lg(crit)}</b> (${fp(pc(crit, A.calls))}) ficaram com esforço crítico, abaixo de 45%, e <b>${fp(pc(A.sem, A.calls))}</b> terminaram sem acordo.`,
-    V2 ? `<b>${lg(A.trat)}</b> pedem tratativa (esforço abaixo de 60%, sem tentativa após o não ou postura)${A.semtN ? `, e em <b>${A.semt} de ${A.semtN}</b> recusas o operador encerrou sem trazer outra opção` : ''}. O material de feedback de cada uma está em Ligações.` : '',
-    prevA && curA && GRAN === 'cycle' && !F.lid.length && !F.tab.length ? `Em relação à análise anterior (${esc(prevA.label)}), o esforço ${curA.A.p - prevA.A.p >= 0.5 ? 'subiu' : curA.A.p - prevA.A.p <= -0.5 ? 'caiu' : 'ficou estável'}: <b>${fp(prevA.A.p)} → ${fp(curA.A.p)}</b>.` : ''].filter(Boolean);
+    V2 ? `<b>${lg(A.trat)}</b> pedem tratativa (esforço abaixo de 60%, sem tentativa após o não ou postura)${A.semtN ? `, e em <b>${A.semt} de ${A.semtN}</b> recusas o operador encerrou sem trazer outra opção` : ''}. O material de feedback de cada uma está em Ligações.` : ''].filter(Boolean);
   return `<div class="stack">
   <div class="brief"><div class="bi">${ICO.bulb}</div><div><h4>Em poucas palavras</h4><ul>${brief.map((b) => `<li>${b}</li>`).join('')}</ul></div></div>
   <div class="grid">
-    <section class="card kpi c3" style="--kc:var(--pan)"><div class="l">Ligações analisadas</div><div class="v num">${A.calls}</div><div class="d">${A.ops} operadores · ${A.lids} liderança${A.lids > 1 ? 's' : ''}</div></section>
-    <section class="card kpi c3" style="--kc:${fill(A.p)};--kv:${fill(A.p)}"><div class="l">Esforço negocial</div><div class="v num">${fp(A.p)}</div><div class="meter"><i style="width:${A.p}%;background:${fill(A.p)}"></i><u style="left:${REF}%"></u></div><div class="d">${V2 ? 'Média dos 5 critérios em cada ligação · referência 70%' : `Média dos ${IT.length} itens da negociação · referência 70%`}</div></section>
-    ${V2 ? `<section class="card kpi c3" style="--kc:var(--badf);cursor:pointer" data-chip-go="trat"><div class="l">Para tratativa</div><div class="v num">${A.trat}<small>${fp(pc(A.trat, A.calls))}</small></div><div class="d">esforço abaixo de 60%, sem tentativa após o não ou postura</div></section>`
-    : `<section class="card kpi c3" style="--kc:var(--okf)"><div class="l">Etapa mais forte</div><div class="t">${melhor.t}</div><div class="d"><span class="pill ${band(melhor.p)}">${fp(melhor.p)}</span> <span class="mut">das ligações</span></div></section>`}
-    <section class="card kpi c3" style="--kc:var(--badf)"><div class="l">Maior oportunidade</div><div class="t">${pior.t}</div><div class="d"><span class="pill ${band(pior.p)}">${fp(pior.p)}</span> <span class="mut">das ligações</span></div></section>
+    ${card('Critérios mais ofensores', 'o que mais deixou de ser feito', ofensoresCrit(L), 'c6')}
+    ${card('Ranking de operadores', 'maior esforço negocial, com 2 ou mais ligações', rankingOps(L), 'c6', lnk('Ver todos', 'data-go="ops"'))}
+    ${card('Evolução por dia', V2 ? 'esforço, roteiro AGV e tentativa após o não' : 'esforço, proposta e alternativa', evoDia(L), 'c7')}
+    ${card('Distribuição do esforço', 'ligações por faixa', distrib(L), 'c5')}
+    ${card('Ofensores', 'operadores com ligações de esforço crítico', ofensoresOps(L), 'c6')}
+    ${card('Desfecho', 'como a ligação terminou', desfechos(L), 'c6')}
+    ${card('Mapa de desempenho dos operadores', 'esforço médio × consistência (desvio-padrão). Ideal: à direita e embaixo.', mapa(L), 'c12')}
     ${card(V2 ? 'Esforço negocial critério a critério' : 'Esforço negocial etapa por etapa', V2 ? 'Quanto de cada critério o operador cumpriu (½ quando fez em parte). Clique num critério para ver onde faltou.' : 'Percentual de ligações em que o operador cumpriu cada item. Clique num item para ver onde faltou.', itemBars(A), 'c7 fillc')}
     <div class="c5 col">${card('Ligações por faixa de esforço', V2 ? 'Esforço de cada ligação' : 'Itens do roteiro cumpridos em cada ligação', faixas(L))}
     ${card('Esforço por motivo', 'Motivo de sem condições informado pelo cliente', porMotivo(L))}</div>
     ${V2 && flR().length ? card('Roteiro AGV dos primeiros segundos', 'Abertura depois da transferência da assistente virtual', riBars(flR()), 'c12') : ''}
     ${A.lids > 1 ? card('Visão por liderança', 'Esforço de cada equipe, item a item. Clique numa linha para abrir a equipe.', heatLid(L), 'c12', lnk('Ver equipes', 'data-go="lid"')) : ''}
-    ${card('Dispersão dos operadores', 'Esforço negocial × ligações que terminaram sem acordo', dispOps(L), 'c7')}
-    ${card('Evolução entre as análises', 'Esforço negocial de cada análise importada', evoMini(), 'c5', lnk('Ver evolução', 'data-go="evo"'))}
-    ${card('Dispersão das ligações', 'Duração × esforço negocial de cada ligação', dispCalls(L), 'c12')}
+    ${card('Dispersão dos operadores', 'Esforço negocial × ligações que terminaram sem acordo', dispOps(L), 'c12')}
   </div></div>`;
 }
 
@@ -465,38 +529,113 @@ function perOptions() {
   for (const d of days) if (!ids.has(`d:${d}`) && P.some((p) => p.id.startsWith('a:') && L.some((c) => c.date === d && String(c.cycle_id) === p.id && L.filter((x) => String(x.cycle_id) === p.id).some((x) => x.date !== d)))) opts.push([`d:${d}`, `Só o dia ${dfmt(d)}`, L.filter((c) => c.date === d).length]);
   return opts;
 }
+const selCh = (cls) => (new Set(RAW.map((c) => c.ch)).size > 1 ? msHtml({ id: 'f-ch', cls, allLabel: 'AGV e convencional', noun: 'canais', options: ['AGV', 'Convencional'].map((k) => [k, k === 'AGV' ? 'Só AGV' : 'Só convencional', RAW.filter((c) => c.ch === k).length]), selected: CHS }) : '');
 const selPer = (cls) => msHtml({ id: 'f-per', cls, allLabel: 'Todas as análises', noun: 'análises', options: perOptions(), selected: PERS });
+// Capa no formato dos dashboards de análise: evolução entre as análises com a variação de cada indicador,
+// indicadores do recorte e o acesso às visões do painel
+const SER_COL = ['#22D3EE', '#818CF8', '#22C55E', '#FBBF24'];
+const avgOf = (l) => (l.length ? l.reduce((a, b) => a + b, 0) / l.length : null);
+const rotP = (L) => avgOf(L.map((c) => c.rp).filter((v) => v != null));
+// Indicadores acompanhados na evolução: esforço, roteiro dos primeiros segundos e os pontos-chave da negociação
+function evoSeries() {
+  return V2
+    ? [{ t: 'Esforço negocial', s: 'Esforço', f: (L) => agg(L.filter((c) => c.n)).p }, { t: 'Roteiro AGV', s: 'Roteiro', f: rotP },
+      { t: 'Escada de ofertas', s: 'Escada', f: (L) => agg(L.filter((c) => c.n)).I.esc.p }, { t: 'Após o primeiro não', s: 'Após o não', f: (L) => agg(L.filter((c) => c.n)).I.apn.p }]
+    : [{ t: 'Esforço negocial', s: 'Esforço', f: (L) => agg(L).p }, { t: 'Proposta com valor', s: 'Proposta', f: (L) => agg(L).I.prop.p },
+      { t: 'Alternativa após o não', s: 'Alternativa', f: (L) => agg(L).I.alt.p }, { t: 'Motivo do atraso', s: 'Motivo', f: (L) => agg(L).I.sond.p }];
+}
+// Análises em ordem, com todas as ligações lidas (as sem negociação contam no roteiro dos primeiros segundos)
+function analyses() {
+  const L = ALL.filter((c) => (!GERS.length || GERS.includes(c.ger)) && chOk(c) && (!F.lid.length || F.lid.includes(c.lid)) && (!F.tab.length || F.tab.includes(c.tab)));
+  const M = new Map();
+  for (const c of L) {
+    const k = String(c.cycle_id || '');
+    if (!M.has(k)) M.set(k, { k, label: String(c.cycle).replace(/^Análise de /, ''), ord: c.cycle_start || c.date || '', v: [] });
+    const g = M.get(k); if (c.date && (!g.ord || c.date < g.ord)) g.ord = c.date; g.v.push(c);
+  }
+  return [...M.values()].sort((a, b) => String(a.ord).localeCompare(String(b.ord))).slice(-6);
+}
+const f1 = (v) => (v == null ? '–' : `${(Math.round(v * 10) / 10).toLocaleString('pt-BR')}%`);
+function evoHero() {
+  const P = analyses(), S = evoSeries();
+  if (!P.length) return '';
+  const data = S.map((s, i) => ({ ...s, c: SER_COL[i], v: P.map((g) => s.f(g.v)) }));
+  const vals = data.flatMap((d) => d.v).filter((v) => v != null);
+  const lo = Math.max(0, Math.floor((Math.min(...vals) - 8) / 10) * 10), hi = Math.min(100, Math.ceil((Math.max(...vals) + 6) / 10) * 10);
+  const W = 560, H = 230, L = 40, R = 110, T = 14, B = 40, iw = W - L - R, ih = H - T - B;
+  const X = (i) => L + (P.length === 1 ? iw / 2 : (i / (P.length - 1)) * iw), Y = (v) => T + ih - ((v - lo) / Math.max(1, hi - lo)) * ih;
+  const ticks = []; for (let v = lo; v <= hi; v += 10) ticks.push(v);
+  // Rótulos à direita da última análise, afastados para não se sobreporem
+  const ends = data.map((d, i) => ({ i, y: Y(d.v[d.v.length - 1] ?? lo) })).sort((a, b) => a.y - b.y);
+  for (let j = 1; j < ends.length; j++) if (ends[j].y - ends[j - 1].y < 14) ends[j].y = ends[j - 1].y + 14;
+  const endY = Object.fromEntries(ends.map((e) => [e.i, e.y]));
+  const svg = `<svg class="v5-ch" viewBox="0 0 ${W} ${H}" role="img" aria-label="Evolução das análises">
+    ${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" class="g"/><text x="${L - 8}" y="${Y(v) + 3}" text-anchor="end">${v}%</text>`).join('')}
+    ${P.map((g, i) => `<line x1="${X(i)}" x2="${X(i)}" y1="${T}" y2="${T + ih}" class="g d"/><text x="${X(i)}" y="${H - 22}" text-anchor="middle" class="xl">${esc(g.label)}</text><text x="${X(i)}" y="${H - 9}" text-anchor="middle">${lg(g.v.length)}</text>`).join('')}
+    ${data.map((d, si) => { const pts = d.v.map((v, i) => (v == null ? null : [X(i), Y(v), v])).filter(Boolean); const last = pts[pts.length - 1];
+      return `<polyline fill="none" stroke="${d.c}" stroke-width="2.4" stroke-linejoin="round" points="${pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')}"/>
+      ${pts.map((p, i) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4.5" fill="${d.c}" stroke="#0B1430" stroke-width="2" data-tip="${esc(`${d.t} · ${P[i]?.label}: ${f1(p[2])}`)}"/>`).join('')}
+      ${last ? `<text x="${last[0] + 10}" y="${endY[si] + 4}" class="el"><tspan font-weight="800" fill="#fff">${f1(last[2])}</tspan> ${esc(d.s)}</text>` : ''}`; }).join('')}
+  </svg>`;
+  const deltas = data.map((d) => {
+    const v = d.v.filter((x) => x != null), dv = v.length > 1 ? v[v.length - 1] - v[0] : null;
+    return `<div class="v5-dl"><div class="v5-dh"><span><i style="background:${d.c}"></i>${esc(d.t)}</span>${dv == null ? '<em class="fl">única análise</em>' : `<em class="${dv > 0.05 ? 'up' : dv < -0.05 ? 'dn' : 'fl'}">${dv > 0.05 ? '▲' : dv < -0.05 ? '▼' : '='} ${dv > 0 ? '+' : ''}${(Math.round(dv * 10) / 10).toLocaleString('pt-BR')} p.p.</em>`}</div><small>${v.map(f1).join(' → ')}</small></div>`;
+  }).join('');
+  return `<div class="v5-evo"><div class="v5-eh"><b>Evolução das análises</b><span>${P.map((g) => esc(g.label)).join(' · ')}</span></div>${svg}<div class="v5-dls">${deltas}</div></div>`;
+}
+function kpisV5() {
+  const all = ALL.filter((c) => (!GERS.length || GERS.includes(c.ger)) && chOk(c) && perOk(c) && (!F.lid.length || F.lid.includes(c.lid)) && (!F.tab.length || F.tab.includes(c.tab)));
+  const L = fl(), A = agg(L), rp = rotP(all);
+  const col = (p) => (p == null ? '#94A3B8' : p >= 70 ? '#22C55E' : p >= 45 ? '#FBBF24' : '#F43F5E');
+  const k = (lab, val, sub, c, meter) => `<div class="v5-k" style="--kc:${c}"><span>${lab}</span><b class="num" ${meter != null ? `style="color:${c}"` : ''}>${val}</b><small>${sub}</small>${meter != null ? `<div class="v5-m"><i style="width:${Math.max(0, Math.min(100, meter))}%;background:${c}"></i></div>` : ''}</div>`;
+  const out = all.length - L.length;
+  const cards = [k('Atendimentos', all.length, out ? `${out} fora da análise` : 'todos com negociação', '#94A3B8'),
+    k('Analisados', L.length, 'com possibilidade de negociação', '#818CF8', pc(L.length, all.length)).replace('style="color:#818CF8"', '')];
+  if (V2) {
+    const rec = L.filter((c) => c.it.apn !== 'NA').length;
+    cards.push(k('Esforço negocial', f1(A.p), 'média dos 5 critérios', col(A.p), A.p), k('Roteiro AGV', f1(rp), 'primeiros segundos', col(rp), rp),
+      k('Escada de ofertas', f1(A.I.esc.p), 'desceu a escada de ofertas', col(A.I.esc.p)), k('Após o primeiro não', f1(A.I.apn.p), `${lg(rec)} com recusa`, col(A.I.apn.p)));
+  } else {
+    cards.push(k('Esforço negocial', f1(A.p), `média dos ${IT.length} itens`, col(A.p), A.p), k('Proposta com valor', f1(A.I.prop.p), `${A.I.prop.s} de ${A.I.prop.n} negociações`, col(A.I.prop.p)),
+      k('Alternativa após o não', f1(A.I.alt.p), `${A.I.alt.s} de ${A.I.alt.n} recusas`, col(A.I.alt.p)), k('Sem acordo', f1(pc(A.sem, A.calls)), `${A.sem} de ${lg(A.calls)}`, '#F43F5E'));
+  }
+  return `<div class="v5-kpis">${cards.join('')}</div>`;
+}
+const PRODL = { VEICULOS: 'Veículos', CARTOES: 'Sem Garantia', CONSIGNADO: 'Sem Garantia', REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável' };
 function cover() {
   const L = inPer(), A = agg(L), g = G(), has = L.length;
-  const col = (p) => (p >= 70 ? '#34D399' : p >= 45 ? '#FBBF24' : '#FB7185');
-  return `<div class="cover"><div class="cv">
-  <div class="cv-top">${LOGOS}<span class="cv-tag"><i></i>${has ? `${lg(A.calls)} · ${perLabel(L)}` : 'Relatório AGV'}</span></div>
+  const prods = [...new Set(L.map((c) => PRODL[c.product] || c.product).filter(Boolean))];
+  const chs = new Set(L.map((c) => c.ch));
+  const aud = [...new Set(inPer().map((c) => c.aud).filter((u) => /^https:\/\//.test(u)))];
+  const all = ALL.filter((c) => (!GERS.length || GERS.includes(c.ger)) && chOk(c) && perOk(c));
+  const teams = Object.entries(all.reduce((a, c) => { if (c.team) a[c.team] = (a[c.team] || 0) + 1; return a; }, {})).sort((a, b) => b[1] - a[1]);
+  return `<div class="cover v5"><div class="cv">
+  <div class="cv-top"><div class="v5-brand">${pxLogo(40)}<div><b>Qualidade ${esc(CART().label.replace(/^Banco /, ''))}</b><small>${esc(prods.join(' · ') || 'Esforço negocial')}${chs.has('AGV') ? ' · Atendimentos AGV' : ''}</small></div></div>${logos()}</div>
   <div class="cv-hero"><div>
-    <div class="kick">Monitoria de qualidade · ${esc(g.op)}</div>
-    <h1>Esforço negocial<span>${g.all || g.many ? esc(g.nome) : `gerência ${esc(g.nome)}`}</span></h1>
-    <p class="lead">${V2 ? 'Leitura das ligações <b>AGV</b> pela transcrição completa: os 5 critérios do esforço negocial (sondagem, valor da dívida, escada de ofertas, tentativa após o não e consequências) e o roteiro dos primeiros segundos, com o material de feedback de cada ligação.' : 'Análise das ligações <b>AGV com negociação</b>, conferindo item a item o roteiro de negociação: sondagem, proposta, alternativa e argumentação.'}</p>
-    <div class="cv-sel">${selRot('')}${selGer('')}${selPer('')}</div>
-    <div class="cv-btns"><button class="cbtn pri" data-go="geral">Abrir a análise →</button>${has ? '<button class="cbtn" data-go="lid">Ver por liderança</button><button class="cbtn" data-go="evo">Ver evolução</button>' : ''}</div>
-    ${has ? `<div class="cv-chips"><span class="cv-chip">Operadores: <b>${A.ops}</b></span><span class="cv-chip">Lideranças: <b>${A.lids}</b></span><span class="cv-chip">Motivos: <b>${new Set(L.map((c) => c.tab)).size}</b></span><span class="cv-chip">Análises: <b>${periodsOf(inGer()).length}</b></span></div>` : ''}
+    <span class="v5-badge"><i></i>${chs.size === 1 && chs.has('AGV') ? 'Análise AGV' : 'Análise'} · ${esc(CART().label.replace(/^Banco /, ''))} ${esc(prods.join(' e '))}${has ? ` · ${perLabel(L)}` : ''}</span>
+    <h1>Esforço negocial<span>${g.all || g.many ? (chs.size === 1 && chs.has('AGV') ? 'no AGV' : esc(g.nome)) : `gerência ${esc(g.nome)}`}</span></h1>
+    <p class="lead">${V2 ? 'Ouvi e li uma a uma as ligações tabuladas como <b>Sem Condições</b> para medir como o operador negociou: sondagem, valor da dívida, escada de ofertas, tentativa após o não e consequências, além do roteiro dos primeiros segundos, com o material de feedback de cada ligação.' : 'Análise das ligações <b>AGV com negociação</b>, conferindo item a item o roteiro de negociação: sondagem, proposta, alternativa e argumentação.'}</p>
+    <div class="cv-sel">${selRot('')}${selGer('')}${selCh('')}${selPer('')}</div>
+    <div class="cv-btns"><button class="cbtn pri" data-go="geral">Entrar no painel →</button>${aud.length ? `<a class="cbtn" href="${esc(aud[0])}" target="_blank" rel="noopener">${ICO.folder}Pasta de áudios</a>` : ''}${has ? '<button class="cbtn" data-go="lid">Ver por liderança</button>' : ''}</div>
   </div>
-  <div class="cv-panel">${has ? `<div class="cv-ph"><div><small>Esforço negocial</small><strong>itens do roteiro cumpridos</strong></div><div class="cv-big num" style="color:${col(A.p)}">${fp(A.p)}<em style="color:#A9BCE3">referência 70%</em></div></div>
-    <div class="cv-rows">${IT.map((i) => { const v = A.I[i.k]; return `<div class="cv-row"><span>${i.t}</span><div class="trk"><i style="width:${(v.p || 0).toFixed(1)}%;background:${col(v.p)}"></i></div><b class="num">${fp(v.p)}</b></div>`; }).join('')}</div>`
-    : '<div class="cv-ph"><div><small>Situação</small><strong>Sem ligações neste recorte</strong></div></div><div class="cv-rows" style="font-size:14px;line-height:1.6;color:#D7E1F5">Ainda não há ligações AGV com negociação para esta gerência e análise. Troque o recorte acima ou importe as ligações em Análises AGV.</div>'}</div></div>
-  ${has ? `<div class="cv-cards">
-    <button class="cvc" data-go="geral"><div class="ic">${ICO.grid}</div><h3>Visão geral</h3><p>Esforço etapa por etapa, faixas, motivos e dispersões.</p></button>
+  ${has ? evoHero() : '<div class="cv-panel"><div class="cv-ph"><div><small>Situação</small><strong>Sem ligações neste recorte</strong></div></div><div class="cv-rows" style="font-size:14px;line-height:1.6;color:#D7E1F5">Ainda não há ligações com negociação para esta gerência e análise. Troque o recorte acima ou importe as ligações em Análises AGV.</div></div>'}</div>
+  ${has ? kpisV5() : ''}
+  ${has ? `<p class="v5-note">${lg(all.length)} de ${esc(prods.join(' e '))}${perLabel(L) ? ` em ${perLabel(L)}` : ''}, tabuladas como Sem Condições · ${A.calls} com possibilidade real de negociação${chs.size > 1 ? ` · ${L.filter((c) => c.ch === 'AGV').length} AGV e ${L.filter((c) => c.ch !== 'AGV').length} convencionais` : ''}${teams.length ? ` · ${teams.slice(0, 3).map(([t, n]) => `${n} de ${esc(t)}`).join(' e ')}` : ''} · nomes e lideranças pela Capacity</p>
+  <div class="cv-cards">
+    <button class="cvc" data-go="geral"><div class="ic">${ICO.grid}</div><h3>Visão geral</h3><p>Ofensores, ranking, evolução por dia e mapa de desempenho.</p></button>
     <button class="cvc" data-go="lid"><div class="ic">${ICO.team}</div><h3>Lideranças</h3><p>Cada equipe com seus operadores e onde focar.</p></button>
     <button class="cvc" data-go="ops"><div class="ic">${ICO.user}</div><h3>Operadores</h3><p>Mapa de calor item a item, do menor esforço ao maior.</p></button>
-    <button class="cvc" data-go="lig"><div class="ic">${ICO.phone}</div><h3>Ligações</h3><p>Roteiro de cada ligação e o que desenvolver.</p></button>
+    <button class="cvc" data-go="lig"><div class="ic">${ICO.phone}</div><h3>Ligações</h3><p>Roteiro de cada ligação, áudio e o que desenvolver.</p></button>
     <button class="cvc" data-go="evo"><div class="ic">${ICO.trend}</div><h3>Evolução</h3><p>O que subiu e o que caiu entre as análises.</p></button>
   </div>` : ''}
-  <div class="cv-foot"><span>Fonte: ligações AGV da plataforma (discador, relatório do speech e dashboards AGV)</span><span>Ligações com negociação · abertura e confirmação de dados não entram no esforço</span></div></div></div>`;
+  <div class="cv-foot"><span>Fonte: ligações lidas pela transcrição completa (dashboards de esforço negocial importados)</span><span>Abertura e confirmação de dados não entram no esforço</span></div></div></div>`;
 }
 function header() {
   const g = G(), L = fl();
   const ops = new Set(L.map((c) => c.login || c.op)).size;
   const ct = { geral: '', lid: new Set(L.map((c) => c.lid)).size, ops, lig: L.length, evo: periodsOf(inGer()).length };
-  return `<div class="topw"><header class="hdr"><div class="hdr-in">${LOGOS}<div class="hdr-t"><h1>Esforço negocial · ${esc(g.curto)}</h1><p>${g.all || g.many ? esc(g.nome) : `gerência ${esc(g.nome)}`}${perLabel(inPer()) ? ` · ${perLabel(inPer())}` : ''} · ligações AGV com negociação</p></div>
-  ${selRot('hsel')}${selGer('hsel')}${selPer('hsel')}
+  return `<div class="topw"><header class="hdr"><div class="hdr-in">${logos()}<div class="hdr-t"><h1>Esforço negocial · ${esc(g.curto)}</h1><p>${g.all || g.many ? esc(g.nome) : `gerência ${esc(g.nome)}`}${perLabel(inPer()) ? ` · ${perLabel(inPer())}` : ''} · ligações AGV com negociação</p></div>
+  ${selRot('hsel')}${selGer('hsel')}${selCh('hsel')}${selPer('hsel')}
   <button class="hbtn" data-act="capa" aria-label="Capa">${ICO.home}<span>Capa</span></button><button class="hbtn" data-act="print" aria-label="Imprimir">${ICO.print}<span>Imprimir</span></button></div></header>
   <div class="bar"><div class="bar-in"><nav class="tabs" role="tablist">${Object.entries(VIEWS).map(([k, v]) => `<button class="tab${VIEW === k ? ' on' : ''}" role="tab" aria-selected="${VIEW === k}" data-go="${k}">${v.t}${RAW.length && ct[k] !== '' ? `<span class="ct num">${ct[k]}</span>` : ''}</button>`).join('')}</nav>
   ${RAW.length ? `<div class="flt">${LIDS.length > 1 ? msHtml({ id: 'f-lid', cls: 'fsel', allLabel: 'Todas as lideranças', noun: 'lideranças', options: LIDS.map((l) => [l, l, inPer().filter((c) => c.lid === l).length]), selected: F.lid }) : ''}
@@ -507,6 +646,7 @@ function header() {
 function bindFilters() {
   bindMultiSelect(root, 'f-ger', (v) => { GERS = v; PERS = latestPers(); F = { lid: [], tab: [] }; draw(); });
   bindMultiSelect(root, 'f-per', (v) => { PERS = v; draw(); });
+  bindMultiSelect(root, 'f-ch', (v) => { CHS = v; PERS = latestPers(); draw(); });
   bindMultiSelect(root, 'f-lid', (v) => { F.lid = v; draw(); });
   bindMultiSelect(root, 'f-tab', (v) => { F.tab = v; draw(); });
 }
@@ -654,6 +794,7 @@ async function load(ctx = loadCtx) {
   const d = await api.get(`/agv/data${qs({ roteiro: ROTSEL })}`);
   if (!ctx.isCurrent()) return false;
   const all = prep(d);
+  ALL = all;
   RAW = all.filter((c) => c.n > 0);
   ROTC = all.filter((c) => c.rp != null);
   GERS = GERS.filter((g) => gers().includes(g));
