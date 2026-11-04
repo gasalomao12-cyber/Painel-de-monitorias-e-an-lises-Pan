@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { sb, recoveryUrl } from '../sb.js';
+import { sb, recoveryUrl, SSO, ssoSignIn, ssoPause } from '../sb.js';
 import { html, icon, pxLogo, $, $$, toast, busy, greeting, modal } from '../ui.js';
 import { applyTheme } from '../app.js';
 import { openShortcut } from '../desktop.js';
@@ -19,6 +19,8 @@ const authMessage = (m = '') => (/banned/i.test(m) ? 'Seu acesso está desativad
   : 'E-mail ou senha inválidos.');
 
 export function renderLogin(app, { onLogin, store, error = '' }) {
+  // Login Microsoft ligado: só o botão da conta da empresa (o e-mail e senha ficam em ?senha=1, para emergência)
+  const sso = SSO && !new URLSearchParams(location.search).has('senha');
   document.title = 'Entrar · PX Monitorias';
   const remembered = localStorage.getItem('px_last_email') || '';
   app.innerHTML = String(html`
@@ -42,7 +44,10 @@ export function renderLogin(app, { onLogin, store, error = '' }) {
       <div class="auth-card">
         <div class="auth-mobile-brand row">${pxLogo(44)}<b>PX Monitorias &amp; Feedbacks</b></div>
         <h2>${greeting()}! 👋</h2>
-        <p class="sub">Entre com o acesso fornecido pela equipe de Qualidade.</p>
+        ${sso ? html`<p class="sub">Entre com a sua conta Microsoft da ${store.company}, a mesma do computador.</p>
+        <div id="l-err" class="banner warn" ${error ? '' : 'hidden'}>${error ? html`${icon('alert')}<span>${error}</span>` : ''}</div>
+        <button class="btn primary lg block" id="l-sso"><span class="ms-logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Entrar com a conta Microsoft</button>`
+        : html`        <p class="sub">Entre com o acesso fornecido pela equipe de Qualidade.</p>
         <form id="login-form" autocomplete="on">
           <div class="field"><label for="l-user">E-mail corporativo</label><input class="input lg" id="l-user" name="email" type="email" autocomplete="username" required value="${remembered}" placeholder="nome.sobrenome@paschoalotto.com.br"></div>
           <div class="field"><label for="l-pass">Senha</label><div class="pw-wrap"><input class="input lg" id="l-pass" name="password" type="password" autocomplete="current-password" required placeholder="••••••••"><button type="button" class="btn-icon" data-pw aria-label="Mostrar senha">${icon('eye')}</button></div></div>
@@ -50,11 +55,17 @@ export function renderLogin(app, { onLogin, store, error = '' }) {
           <div id="l-err" class="banner warn" ${error ? '' : 'hidden'}>${error ? html`${icon('alert')}<span>${error}</span>` : ''}</div>
           <button class="btn primary lg block" id="l-btn">Entrar ${icon('arrowRight')}</button>
         </form>
+`}
         <p class="tiny muted center mt">Ainda não tem acesso? Peça ao administrador da plataforma.</p>
         <p class="center" style="margin:6px 0 0"><button type="button" class="btn sm ghost" id="l-shortcut">${icon('download')}Criar atalho na área de trabalho</button></p>
       </div>
     </section>
   </div>`);
+  if (sso) {
+    $('#l-sso').onclick = async (e) => { busy(e.currentTarget, true, 'Abrindo a Microsoft'); ssoPause(false); const er = await ssoSignIn(); if (er) { busy(e.currentTarget, false); toast(er.message, 'err'); } };
+    $('#l-shortcut').onclick = () => openShortcut();
+    return;
+  }
   pwToggle(app);
   const form = $('#login-form');
   $('#l-forgot').onclick = () => forgotPassword(form.email.value.trim());
@@ -76,6 +87,13 @@ export function renderLogin(app, { onLogin, store, error = '' }) {
       form.password.select();
     }
   });
+}
+
+// Tela rápida enquanto vai para o login da Microsoft
+export function renderSsoRedirect(app, { store }) {
+  app.innerHTML = String(html`<div class="auth sso-wait"><section class="auth-panel" style="grid-column:1/-1"><div class="auth-card center">
+    ${pxLogo(56)}<h2 style="margin-top:18px">Entrando com a sua conta Microsoft…</h2>
+    <p class="sub">${store.company} · PX Monitorias &amp; Feedbacks</p><div class="spinner" style="margin:18px auto 0"></div></div></section></div>`);
 }
 
 export function renderChangePassword(app, { store, onDone, onLogout }) {

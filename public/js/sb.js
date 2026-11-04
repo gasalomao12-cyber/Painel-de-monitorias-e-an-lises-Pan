@@ -99,5 +99,35 @@ export async function accessToken() {
   return data.session?.access_token || null;
 }
 
+// ---------------- Login com a conta Microsoft da empresa (Entra ID) ----------------
+// Ligado quando config.js tem sso: 'azure'. No computador da empresa o Edge já está conectado à conta Microsoft:
+// a pessoa abre a plataforma e entra direto, sem digitar senha.
+export const SSO = !LOCAL && cfg.sso ? cfg.sso : '';
+const SSO_TRY = 'px_sso_try';
+const homeUrl = () => location.href.split('#')[0].split('?')[0];
+export async function ssoSignIn() {
+  try { sessionStorage.setItem(SSO_TRY, String(Date.now())); } catch { /* sem storage */ }
+  const { error } = await sb.auth.signInWithOAuth({
+    provider: SSO,
+    options: { redirectTo: homeUrl(), scopes: 'openid email profile', queryParams: cfg.ssoDomain ? { domain_hint: cfg.ssoDomain } : {} },
+  });
+  return error;
+}
+// Tentou há pouco e voltou sem sessão: não redireciona de novo sozinho (evita ficar em ciclo)
+export const ssoRecentTry = () => { try { return Date.now() - Number(sessionStorage.getItem(SSO_TRY) || 0) < 60000; } catch { return false; } };
+export const ssoPaused = () => { try { return sessionStorage.getItem('px_sso_out') === '1'; } catch { return false; } };
+export const ssoPause = (v) => { try { if (v) sessionStorage.setItem('px_sso_out', '1'); else sessionStorage.removeItem('px_sso_out'); } catch { /* sem storage */ } };
+// Volta da Microsoft: a sessão chega no endereço (#access_token=…); guarda e limpa o endereço
+export async function handleSsoReturn() {
+  const h = location.hash.startsWith('#') ? location.hash.slice(1) : '';
+  if (!/(^|&)(access_token|error)=/.test(h)) return null;
+  const p = new URLSearchParams(h);
+  history.replaceState(null, '', `${homeUrl()}#/painel`);
+  if (p.get('error')) return { error: p.get('error_description') || p.get('error') };
+  const { error } = await sb.auth.setSession({ access_token: p.get('access_token'), refresh_token: p.get('refresh_token') });
+  try { sessionStorage.removeItem(SSO_TRY); } catch { /* sem storage */ }
+  return error ? { error: error.message } : { ok: true };
+}
+
 // Endereço da página de recuperação de senha (mesma pasta do site)
 export const recoveryUrl = () => new URL('redefinir-senha.html', location.href.split('#')[0]).href;

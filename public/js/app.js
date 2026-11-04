@@ -1,8 +1,8 @@
 import { api } from './api.js';
-import { sb } from './sb.js';
+import { sb, SSO, ssoSignIn, ssoRecentTry, ssoPaused, ssoPause, handleSsoReturn } from './sb.js';
 import { html, raw, icon, pxLogo, $, $$, toast, modal, avatar, userName, ROLE, esc, busy, readFileAsBase64, fmtRel } from './ui.js';
 import { destroyAll } from './charts.js';
-import { renderLogin, renderChangePassword, renderWelcome } from './views/auth.js';
+import { renderLogin, renderChangePassword, renderWelcome, renderSsoRedirect } from './views/auth.js';
 import { openShortcut, offerShortcut, markShortcutLaunch } from './desktop.js';
 import { CARTEIRA_INFO, applyCarteira, chooseCarteira, viewCarteira, userCarteiras, carteiraLogo, carteiraTheme } from './carteira.js';
 
@@ -212,7 +212,9 @@ function shell() {
 
 async function logout() {
   store.user = null; store.meta = null;
+  document.querySelectorAll('.overlay').forEach((x) => x.remove());
   applyCarteira(null);
+  if (SSO) ssoPause(true);
   await sb.auth.signOut().catch(() => {});
   location.hash = '';
   start();
@@ -453,8 +455,9 @@ function unsubscribeRealtime() {
 // ---------------- Inicialização ----------------
 export async function start(opts = {}) {
   const boot = document.getElementById('boot');
+  const back = SSO ? await handleSsoReturn() : null;
   const { data } = await sb.auth.getSession();
-  let loginError = '';
+  let loginError = back?.error ? `Não foi possível entrar com a conta Microsoft: ${back.error}` : '';
   store.user = null;
   if (data.session) {
     try {
@@ -467,6 +470,13 @@ export async function start(opts = {}) {
     }
   }
   boot?.classList.add('hide');
+  // Login Microsoft: sem sessão, vai direto para a conta da empresa (exceto depois de sair, de um erro ou de ?senha=1)
+  if (!store.user && SSO && !loginError && !ssoPaused() && !ssoRecentTry() && !new URLSearchParams(location.search).has('senha')) {
+    renderSsoRedirect(app, { store });
+    const er = await ssoSignIn();
+    if (!er) return;
+    loginError = er.message;
+  }
   if (!store.user) { unsubscribeRealtime(); renderLogin(app, { onLogin: start, store, error: loginError }); return; }
   applyTheme(store.user.theme);
   applyCarteira(store.user);

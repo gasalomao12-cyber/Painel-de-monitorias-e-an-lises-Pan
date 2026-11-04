@@ -715,3 +715,10 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .fbp-pick { display: flex; flex-direction: column; gap: 4px; max-height: 210px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px; background: var(--surface-2); }
 .fbp-ex-tg svg { transition: transform .2s; }
 @media (max-width: 720px) { .fbp-grid { grid-template-columns: 1fr; } .fbp-nums { grid-template-columns: repeat(2, 1fr); } }
+
+/* Login com a conta Microsoft */
+.ms-logo { display: inline-grid; grid-template-columns: 9px 9px; gap: 2px; margin-right: 10px; vertical-align: -2px; }
+.ms-logo i { width: 9px; height: 9px; display: block; }
+.ms-logo i:nth-child(1) { background: #f25022; } .ms-logo i:nth-child(2) { background: #7fba00; } .ms-logo i:nth-child(3) { background: #00a4ef; } .ms-logo i:nth-child(4) { background: #ffb900; }
+.sso-wait .auth-card .spinner { width: 26px; height: 26px; border-width: 3px; color: var(--brand); }
+.sso-wait .auth-card .px-logo { margin: 0 auto; }

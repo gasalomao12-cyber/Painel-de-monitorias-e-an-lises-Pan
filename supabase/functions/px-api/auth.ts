@@ -56,7 +56,19 @@ export async function authenticate(req, _res, next) {
     if (uid) {
       req.authUserId = uid;
       req.accessToken = token;
-      const profile = await loadProfile(uid);
+      let profile = await loadProfile(uid);
+      // Login com a conta Microsoft da empresa: vale o acesso já cadastrado com o mesmo e-mail corporativo
+      // (cadastrado em Usuários & acessos). Sem senha da plataforma, não há troca de senha a fazer.
+      if (!LOCAL && (!profile || profile.must_change_password)) {
+        const { data } = await admin().auth.getUser(token);
+        const u = data?.user;
+        const sso = u && (u.app_metadata?.provider === 'azure' || (u.app_metadata?.providers || []).includes('azure'));
+        if (sso) {
+          if (!profile && u.email) profile = (await must(admin().from('px_profiles').select('*').ilike('email', String(u.email).replace(/[%_\\]/g, '')).limit(1)))[0] || null;
+          if (profile) profile = { ...profile, must_change_password: false };
+          req.sso = true;
+        }
+      }
       if (profile && profile.active) req.user = profile;
     }
     next();

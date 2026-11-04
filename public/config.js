@@ -5,6 +5,9 @@ window.PX_CONFIG = {
   publishableKey: 'sb_publishable_10wGU6JMGnG2tzH0Jih6Iw_D-q70EHF',
   // URL da Edge Function px-api (padrão: <supabaseUrl>/functions/v1/px-api)
   apiUrl: '',
+  // Login com a conta Microsoft da empresa: 'azure' liga (some a tela de e-mail e senha); vazio = e-mail e senha
+  sso: '',
+  ssoDomain: 'paschoalotto.com.br',
 };
 // Para testes locais: localStorage.setItem('px_dev_config', JSON.stringify({ supabaseUrl, publishableKey, apiUrl }))
 try { Object.assign(window.PX_CONFIG, JSON.parse(localStorage.getItem('px_dev_config') || '{}')); } catch (e) { /* sem override */ }
