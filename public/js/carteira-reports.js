@@ -81,9 +81,59 @@ function conversionReport(doc) {
   };
 }
 
+// Report de qualidade do mês ("Nota de Qualidade"): nota fechada da carteira e das supervisões, ranking dos
+// operadores, distribuição, contestações e ações da analista
+const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const num = (v) => { const m = String(v ?? '').replace(/\./g, '').match(/-?\d+(?:,\d+)?/); return m ? Number(m[0].replace(',', '.')) : null; };
+const monthIdx = (s) => MONTHS.findIndex((m) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(m.normalize('NFD').replace(/[\u0300-\u036f]/g, '')));
+function qualityReport(doc) {
+  if (!doc.querySelector('.rkl .or') || !doc.querySelector('.score')) return null;
+  const sectionBy = (re) => [...doc.querySelectorAll('section, .r2 > div')].find((x) => re.test(t(x.querySelector('.sec h2'))));
+  const pill = t(doc.querySelector('.pill'));
+  const mi = monthIdx(pill || doc.title);
+  const now = new Date();
+  const year = mi > now.getMonth() + 1 ? now.getFullYear() - 1 : now.getFullYear();
+  const month = mi >= 0 ? `${year}-${String(mi + 1).padStart(2, '0')}` : null;
+  const label = mi >= 0 ? `${MONTHS[mi][0].toUpperCase()}${MONTHS[mi].slice(1)}/${year}` : pill;
+  const sc = doc.querySelector('.score');
+  const kpis = [...doc.querySelectorAll('.kpis .kpi')].map((k) => ({ label: t(k.querySelector('.kl')), value: t(k.querySelector('.kv')), tag: t(k.querySelector('.tag')) }));
+  const supSec = sectionBy(/supervis/i);
+  const sups = supSec ? [...supSec.querySelectorAll('.mo .r')].map((r) => { const sp = r.querySelectorAll('.t > span'); return { name: t(sp[0]), score: num(t(sp[1]?.querySelector('b'))), prev: num(t(sp[1]?.querySelector('small'))) }; }) : [];
+  const carteiraRow = sups.find((x) => /carteira/i.test(x.name));
+  const ranking = [...doc.querySelectorAll('.rkl .or')].map((r) => ({ rank: Number(t(r.querySelector('.rk'))) || null, name: t(r.querySelector('.nm')), score: num(t(r.querySelector('.vv'))) })).filter((x) => x.name);
+  const lgs = (re) => { const sec = sectionBy(re); return sec ? [...sec.querySelectorAll('.lgs .lg')].map((g) => ({ label: t(g.querySelector('span')), n: num(t(g.querySelector('b'))), pct: t(g.querySelector('em')) })) : []; };
+  const cmpSec = [...doc.querySelectorAll('.card.sg')][0];
+  const cmp = cmpSec ? { cols: [...cmpSec.querySelectorAll('.h > span')].map(t), rows: [...cmpSec.querySelectorAll('.r')].map((r) => [...r.children].map(t)) } : null;
+  const evo = doc.querySelector('.teaser');
+  const prevScore = carteiraRow?.prev ?? num(t(evo?.querySelector('.fl .a')));
+  const data = {
+    month, month_label: label,
+    score: num(t(sc.querySelector('.sv b, b.num'))), prev_score: prevScore,
+    prev_label: cmp?.cols?.[1] || null,
+    operators: num(t(sc.querySelector('.sf b'))) ?? ranking.length,
+    avg_operators: num(kpis.find((k) => /m[ée]dia/i.test(k.label))?.value),
+    goal: 80,
+    supervisors: sups.filter((x) => !/carteira/i.test(x.name)),
+    ranking,
+    dist: lgs(/quantitativo/i),
+    contests: { status: lgs(/situa/i), accept_rate: t(doc.querySelector('.zr .big b')), compare: cmp },
+    kpis,
+    actions: [...doc.querySelectorAll('.acoes li')].map((li) => t(li.querySelector('span:last-child'))).filter(Boolean),
+    analyst: t(doc.querySelector('.acoes')?.closest('.card')?.querySelector('.ofn b')),
+    reading: t(doc.querySelector('.leit')),
+    evolution_note: t(evo?.querySelector('.ct2')),
+    highlight: t(doc.querySelector('.card.alert:not(.ins)')),
+    attention: (() => { const a = doc.querySelector('.ins.alert'); if (!a) return ''; const c = a.cloneNode(true); c.querySelector('.lb')?.remove(); return t(c); })(),
+    summary: t(doc.querySelector('.resumo')),
+  };
+  if (data.score == null || !ranking.length) return null;
+  const cart = carteiraOfTitle(`${doc.title} ${t(doc.querySelector('.un'))} ${t(sc.querySelector('.sl'))}`);
+  return { kind: 'nota_qualidade', title: `Nota de qualidade · ${label}`, period: label, carteira: cart, calls: [], data };
+}
+
 // Reconhece os relatórios de carteira; devolve null para os outros formatos (dashboards PAN e AGV)
 export function readCarteiraReport(doc, text, file) {
-  const out = speechSafra(doc, text) || conversionReport(doc);
+  const out = speechSafra(doc, text) || qualityReport(doc) || conversionReport(doc);
   if (!out) return null;
   if (out.carteira && !CARTEIRAS.includes(out.carteira)) out.carteira = null;
   return { ...out, name: file.name, html: text };

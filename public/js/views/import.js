@@ -257,7 +257,7 @@ function drawDash(el, ctx) {
 }
 
 // ---------------------------------------------------------------- análises por carteira (HTML)
-const REPORT_KIND = { speech_safra: 'Análise de speech (ligação a ligação)', conversao: 'Análise da carteira (relatório)' };
+const REPORT_KIND = { speech_safra: 'Análise de speech (ligação a ligação)', conversao: 'Análise da carteira (relatório)', nota_qualidade: 'Nota de qualidade do mês' };
 function drawCarteiraReport(el, ctx, box) {
   const d = dash, user = ctx.store.user;
   const own = userCarteiras(user);
@@ -299,10 +299,10 @@ function drawCarteiraReport(el, ctx, box) {
       }
       prog.textContent = 'Guardando a análise…';
       await api.post('/reports', { kind: d.kind, title: d.title, period: d.period, carteira, file_name: d.name, data: d.kind === 'speech_safra' ? d.summary : d.data, html: d.html });
-      toast(d.kind === 'speech_safra' ? `${tot.created} ligação(ões) importada(s)${tot.skipped ? ` · ${tot.skipped} já existiam` : ''}${tot.operators_created ? ` · ${tot.operators_created} operador(es) cadastrado(s)` : ''}.` : 'Análise guardada em Análises da carteira.');
+      toast(d.kind === 'speech_safra' ? `${tot.created} ligação(ões) importada(s)${tot.skipped ? ` · ${tot.skipped} já existiam` : ''}${tot.operators_created ? ` · ${tot.operators_created} operador(es) cadastrado(s)` : ''}.` : d.kind === 'nota_qualidade' ? `Nota de qualidade de ${d.period} guardada.` : 'Análise guardada em Análises da carteira.');
       dash = null;
       await ctx.refreshMeta();
-      ctx.navigate('analises');
+      ctx.navigate(d.kind === 'nota_qualidade' ? 'nota-qualidade' : 'analises');
     } catch (ex) { toast(ex.message, 'err', 8000); busy(btn, false); prog.textContent = ''; }
   };
 }
@@ -425,7 +425,7 @@ export async function render(el, _p, ctx) {
   const handleDash = async (f) => {
     if (!f) return;
     $('#dash-name').textContent = `${f.name} · lendo…`;
-    try { dash = await readDashboard(f); $('#dash-name').textContent = `${f.name} · ${dash.kind === 'conversao' ? 'análise da carteira' : `${dash.calls.length} ligações`}`; drawDash(el, ctx); }
+    try { dash = await readDashboard(f); $('#dash-name').textContent = `${f.name} · ${dash.kind === 'conversao' ? 'análise da carteira' : dash.kind === 'nota_qualidade' ? 'nota de qualidade do mês' : `${dash.calls.length} ligações`}`; drawDash(el, ctx); }
     catch (ex) { dash = null; toast(ex.message, 'err', 7000); $('#dash-name').textContent = '.html exportado do dashboard'; drawDash(el, ctx); }
   };
   $('#dash-file').onchange = (e) => handleDash(e.target.files[0]);

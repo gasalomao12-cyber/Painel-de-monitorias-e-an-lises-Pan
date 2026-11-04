@@ -180,7 +180,7 @@ export async function importSpeechSafra({ rows, period, file, carteira }, userId
 }
 
 // ---------------------------------------------------------------- análises da carteira (relatórios)
-const REPORT_KINDS = ['conversao', 'speech_safra', 'relatorio'];
+const REPORT_KINDS = ['conversao', 'speech_safra', 'nota_qualidade', 'relatorio'];
 export async function readingFor(req, logins) {
   const scope = carteiraScope(req);
   let q = sb().from('px_reports').select('id, portfolio, title, period, created_at, data').order('created_at', { ascending: false }).limit(60);

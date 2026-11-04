@@ -4,7 +4,7 @@ import { CARTEIRA_INFO } from '../carteira.js';
 
 // Análises da carteira: relatórios trazidos em HTML (conversão e eficiência, speech Safra Pay…), com os dados
 // extraídos na tela e o arquivo original para consulta. Cada carteira vê só as suas.
-const KIND = { conversao: 'Conversão e eficiência', speech_safra: 'Análise de speech', relatorio: 'Relatório' };
+const KIND = { conversao: 'Conversão e eficiência', speech_safra: 'Análise de speech', nota_qualidade: 'Nota de qualidade', relatorio: 'Relatório' };
 const pctNum = (v) => { const m = String(v ?? '').match(/-?\d+(?:[.,]\d+)?/); return m ? Number(m[0].replace(',', '.')) : null; };
 const bandOf = (p) => (p == null ? 'na' : p >= 70 ? 'ok' : p >= 45 ? 'warn' : 'bad');
 const bar = (label, value, extra = '', p = pctNum(value)) => html`<div class="an-bar"><span class="lb">${label}</span><div class="trk"><i class="b-${bandOf(p)}" style="width:${Math.max(0, Math.min(100, p ?? 0))}%"></i></div><b class="num">${value ?? '—'}</b>${extra ? html`<em>${extra}</em>` : ''}</div>`;
@@ -37,9 +37,11 @@ async function renderOne(el, id, ctx) {
       <p>${[CARTEIRA_INFO[r.portfolio]?.label || r.portfolio, KIND[r.kind], r.period].filter(Boolean).join(' · ')}</p></div><div class="grow"></div>
     <button class="btn" id="an-orig">${icon('eye')}Ver arquivo original</button>
     ${ctx.can('admin', 'qualidade') ? html`<button class="btn ghost danger" id="an-del">${icon('trash')}Excluir</button>` : ''}</div>`;
-  const kpis = (d.kpis || []).length ? html`<div class="grid g-4 mb">${(d.score ? [d.score, ...d.kpis] : d.kpis).slice(0, 6).map((k) => html`<div class="card kpi"><div class="k-label">${k.label}</div><div class="k-val num">${k.value}</div>${k.sub ? html`<div class="tiny muted" style="margin-top:8px">${k.sub}${k.tag ? ` · ${k.tag}` : ''}</div>` : ''}</div>`)}</div>` : '';
+  const kpis = (d.kpis || []).length ? html`<div class="grid g-4 mb">${(d.score && typeof d.score === 'object' ? [d.score, ...d.kpis] : d.kpis).slice(0, 6).map((k) => html`<div class="card kpi"><div class="k-label">${k.label}</div><div class="k-val num">${k.value}</div>${k.sub ? html`<div class="tiny muted" style="margin-top:8px">${k.sub}${k.tag ? ` · ${k.tag}` : ''}</div>` : ''}</div>`)}</div>` : '';
   let body = '';
-  if (r.kind === 'speech_safra') {
+  if (r.kind === 'nota_qualidade') {
+    body = html`<div class="card card-pad"><p style="margin:0">Nota fechada de <b>${d.month_label}</b>: <b class="num">${String(d.score ?? '—').replace('.', ',')}</b> pontos · ${d.ranking?.length || 0} operadores.</p><a class="btn primary mt" href="#/nota-qualidade">${icon('target')}Abrir em Nota de qualidade</a></div>`;
+  } else if (r.kind === 'speech_safra') {
     body = html`<div class="grid g-2">
       <div class="card card-pad"><h3>Critérios</h3><p class="small t2">Percentual de ligações em que o critério foi identificado.</p>${(d.criteria || []).map((c) => bar(c.label, c.value == null ? '—' : `${String(c.value).replace('.', ',')}%`))}</div>
       <div class="card card-pad"><h3>Logins</h3><p class="small t2">Aderência média por login (do maior para o menor).</p><div class="an-scroll">${(d.logins || []).map((l) => bar(l.login, l.value == null ? '—' : `${String(l.value).replace('.', ',')}%`, `${l.calls} lig.`))}</div></div>

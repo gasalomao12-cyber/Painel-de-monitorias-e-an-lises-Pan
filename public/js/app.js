@@ -41,6 +41,8 @@ setInterval(checkVersion, 5 * 60 * 1000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkVersion(); });
 
 // ---------------- Navegação ----------------
+// Páginas só de algumas carteiras (ex.: Nota de qualidade): aparecem para quem vê uma delas
+const navCarteiraOk = (n, u) => !n.carteiras || (viewCarteira(u) ? n.carteiras.includes(viewCarteira(u)) : userCarteiras(u).some((c) => n.carteiras.includes(c)));
 const NAV = [
   { sec: 'Visão geral' },
   { id: 'painel', label: 'Painel', icon: 'dashboard' },
@@ -50,6 +52,7 @@ const NAV = [
   { id: 'esforco', label: 'Esforço negocial', icon: 'target' },
   { id: 'quedas', label: 'Queda de ligação', icon: 'phoneOff' },
   { id: 'analises', label: 'Análises da carteira', icon: 'report' },
+  { id: 'nota-qualidade', label: 'Nota de qualidade', icon: 'target', carteiras: ['SAFRA BS', 'SAFRA ADM', 'PORTO'] },
   { sec: 'Qualidade', roles: ['admin', 'qualidade'] },
   { id: 'analise-ia', label: 'Análise com IA', icon: 'sparkles', roles: ['admin'] },
   { id: 'importar', label: 'Importar monitorias', icon: 'upload', roles: ['admin', 'qualidade'] },
@@ -79,6 +82,7 @@ const ROUTES = [
   [/^esforco$/, () => import('./views/esforco.js'), 'Esforço negocial'],
   [/^quedas$/, () => import('./views/quedas.js'), 'Queda de ligação'],
   [/^analises(?:\/(\d+))?$/, () => import('./views/analises.js'), 'Análises da carteira'],
+  [/^nota-qualidade$/, () => import('./views/nota.js'), 'Nota de qualidade'],
   [/^analise-ia$/, () => import('./views/ai.js'), 'Análise com IA', ['admin']],
   [/^contestacoes$/, () => import('./views/contests.js'), 'Contestações'],
   [/^acoes$/, () => import('./views/actions.js'), 'Controle de ações'],
@@ -138,7 +142,7 @@ function shell() {
   const u = store.user;
   applyCarteira(u);
   const collapsed = sidebarCollapsed();
-  const navHtml = NAV.filter((n) => !n.roles || n.roles.includes(u.role)).map((n) => n.sec
+  const navHtml = NAV.filter((n) => (!n.roles || n.roles.includes(u.role)) && navCarteiraOk(n, u)).map((n) => n.sec
     ? html`<div class="sb-sec">${n.sec}</div>`
     : html`<a class="sb-link" href="#/${n.id}" data-nav="${n.id}" title="${n.id === 'bugs' && u.role !== 'admin' ? 'Meus reports' : n.label}">${icon(n.icon)}<span>${n.id === 'bugs' && u.role !== 'admin' ? 'Meus reports de bug' : n.label}</span>${n.count ? html`<b class="count ${n.hot ? 'hot' : ''}" data-count="${n.count}" hidden></b>` : ''}</a>`);
   app.innerHTML = String(html`
@@ -373,7 +377,7 @@ window.addEventListener('px:zoom', () => {
 // ---------------- Paleta de comandos (Ctrl+K) ----------------
 function openPalette() {
   if ($('.overlay .palette')) return;
-  const pages = NAV.filter((n) => n.id && (!n.roles || n.roles.includes(store.user.role))).map((n) => ({ label: n.label, icon: n.icon, href: `#/${n.id}`, kind: 'Página' }));
+  const pages = NAV.filter((n) => n.id && (!n.roles || n.roles.includes(store.user.role)) && navCarteiraOk(n, store.user)).map((n) => ({ label: n.label, icon: n.icon, href: `#/${n.id}`, kind: 'Página' }));
   pages.push({ label: 'Meu perfil', icon: 'user', href: '#/perfil', kind: 'Página' }, { label: 'Reportar bug', icon: 'bug', action: openBugReport, kind: 'Ação' });
   const ops = (store.meta?.operators || []).map((o) => ({ label: o.name, icon: 'user', href: `#/operadores/${o.id}`, kind: o.team || 'Operador' }));
   const ov = document.createElement('div');
