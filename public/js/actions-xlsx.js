@@ -53,18 +53,20 @@ function addControl(wb, name, rows, ranges, { tab, withCarteira = false } = {}) 
     columns: cols.map((c) => ({ name: c.header, filterButton: true })),
     rows: data.length ? data : [cols.map(() => null)],
   });
-  styleHead(ws.getRow(1), cols.length);
   const off = withCarteira ? 1 : 0, L = (i) => String.fromCharCode(65 + i + off);
   const last = Math.max(2, data.length + 1);
-  ws.getColumn(5 + off).numFmt = 'dd/mm/yyyy';
-  ws.getColumn(5 + off).alignment = { horizontal: 'center' };
-  ws.getColumn(6 + off).alignment = { wrapText: true, vertical: 'top' };
+  const dateCol = 5 + off, obsCol = 6 + off;
+  ws.getColumn(dateCol).numFmt = 'dd/mm/yyyy';
   for (let r = 2; r <= last; r++) {
     const row = ws.getRow(r);
-    row.font = { name: 'Calibri', size: 10.5 };
-    row.alignment = { vertical: 'top' };
-    for (let c = 1; c <= cols.length; c++) row.getCell(c).border = { bottom: { style: 'hair', color: { argb: LINE } } };
+    for (let c = 1; c <= cols.length; c++) {
+      const cell = row.getCell(c);
+      cell.font = { name: 'Calibri', size: 10.5 };
+      cell.alignment = c === dateCol ? { vertical: 'top', horizontal: 'center' } : c === obsCol ? { vertical: 'top', wrapText: true } : { vertical: 'top' };
+      cell.border = { bottom: { style: 'hair', color: { argb: LINE } } };
+    }
   }
+  styleHead(ws.getRow(1), cols.length);
   // Listas suspensas como na planilha atual (também para as próximas linhas digitadas à mão)
   const dv = (col, range) => { ws.dataValidations.add(`${L(col)}2:${L(col)}${last + 500}`, { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [range] }); };
   dv(1, ranges['SEGMENTO']); dv(2, ranges['TEMA']); dv(3, ranges['AÇÃO']); dv(6, ranges['RESPONSÁVEL']);
