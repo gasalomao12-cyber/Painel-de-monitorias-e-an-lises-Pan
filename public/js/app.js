@@ -4,6 +4,7 @@ import { html, raw, icon, pxLogo, $, $$, toast, modal, avatar, userName, ROLE, e
 import { destroyAll } from './charts.js';
 import { renderLogin, renderChangePassword, renderWelcome, renderSsoRedirect } from './views/auth.js';
 import { openShortcut, offerShortcut, markShortcutLaunch } from './desktop.js';
+import { mountHelp, maybeStartTour } from './camalotto.js';
 import { CARTEIRA_INFO, applyCarteira, chooseCarteira, viewCarteira, userCarteiras, carteiraLogo, carteiraTheme } from './carteira.js';
 
 const app = document.getElementById('app');
@@ -218,7 +219,7 @@ function shell() {
 
 async function logout() {
   store.user = null; store.meta = null;
-  document.querySelectorAll('.overlay').forEach((x) => x.remove());
+  document.querySelectorAll('.overlay, #cm-fab, .cm-panel, .cm-tour, .cm-ring').forEach((x) => x.remove());
   applyCarteira(null);
   if (SSO) ssoPause(true);
   await sb.auth.signOut().catch(() => {});
@@ -492,7 +493,9 @@ export async function start(opts = {}) {
   shell();
   subscribeRealtime();
   route();
-  offerShortcut();
+  // Camalotto: botão de ajuda sempre; introdução guiada só na primeira vez (o convite do atalho fica para depois)
+  mountHelp(store, { navigate });
+  if (!maybeStartTour(store)) offerShortcut();
 }
 sb.auth.onAuthStateChange((event) => { if (event === 'SIGNED_OUT' && store.user) { store.user = null; start(); } });
 

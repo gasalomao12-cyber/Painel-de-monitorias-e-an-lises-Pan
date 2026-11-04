@@ -13,6 +13,7 @@ import { importCalls } from './discador.ts';
 import { importSpeechAgv, importAgvDashboard, importAgvEsforco } from './agv.ts';
 import { registerQuedas } from './quedas.ts';
 import { registerSafra, readingFor } from './safra.ts';
+import { registerHelp } from './help.ts';
 import { CARTEIRAS, carteiraScope, carteiraNew, inScope, scopeValues } from './carteira.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
@@ -62,7 +63,7 @@ router.get('/auth/me', h(async (req, res) => {
     u = await must(sb().from('px_profiles').update({ last_login: nowIso() }).eq('id', u.id).select().single());
     await audit(u.id, 'login', 'user', null);
   }
-  res.json({ user: auth.publicUser(u), company });
+  res.json({ user: { ...auth.publicUser(u), guide_done: !!getSetting(`guide_done:${u.id}`) }, company });
 }));
 
 router.post('/auth/onboarding', requireAuth, h(async (req, res) => {
@@ -1647,6 +1648,7 @@ router.get('/export/feedbacks', h(async (req, res) => {
 // --------------------------------------------------------------- Força-tarefa de quedas de ligação
 registerQuedas(router, { h, QUALITY, ADMIN });
 registerSafra(router, { h, QUALITY, audit });
+registerHelp(router, { h });
 
 // --------------------------------------------------------------- Erros
 router.use((err, req, res, _next) => {
