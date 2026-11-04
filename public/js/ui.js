@@ -107,9 +107,9 @@ export const pxLogo = (size = 40) => raw(`<span class="px-logo" style="width:${s
 
 // ---------------- Formatação ----------------
 // Carteiras PAN (dashboards importados) + Refinanciamento/Entrega Amigável lançados à mão
-export const PRODUCTS = ['VEICULOS', 'CARTOES', 'CONSIGNADO', 'REFIN', 'ENTREGA'];
-export const PRODUCT = { VEICULOS: 'Veículos', CARTOES: 'Cartões', CONSIGNADO: 'Consignado', REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável' };
-export const PRODUCT_SHORT = { VEICULOS: 'Veículos', CARTOES: 'Cartões', CONSIGNADO: 'Consignado', REFIN: 'Refin', ENTREGA: 'Entrega' };
+export const PRODUCTS = ['VEICULOS', 'CARTOES', 'CONSIGNADO', 'REFIN', 'ENTREGA', 'CHEQUE', 'EMPRESTIMOS', 'PARCELAMENTO', 'PDD', 'ADIANTAMENTO'];
+export const PRODUCT = { VEICULOS: 'Veículos', CARTOES: 'Cartões', CONSIGNADO: 'Consignado', REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável', CHEQUE: 'Cheque especial/empresarial', EMPRESTIMOS: 'Empréstimos', PARCELAMENTO: 'Parcelamento de dívidas', PDD: 'PDD', ADIANTAMENTO: 'Adiantamento ao depositante' };
+export const PRODUCT_SHORT = { VEICULOS: 'Veículos', CARTOES: 'Cartões', CONSIGNADO: 'Consignado', REFIN: 'Refin', ENTREGA: 'Entrega', CHEQUE: 'Cheque', EMPRESTIMOS: 'Empréstimos', PARCELAMENTO: 'Parcelamento', PDD: 'PDD', ADIANTAMENTO: 'Adiantamento' };
 export const SEGMENT = { CLEAN_CURTO: 'Clean Curto', CLEAN_LONGO: 'Clean Longo', PUBLICO: 'Público', PRIVADO: 'Privado', none: 'Segmento a definir' };
 export const SEGMENTS_OF = { CARTOES: ['CLEAN_CURTO', 'CLEAN_LONGO'], CONSIGNADO: ['PUBLICO', 'PRIVADO'] };
 export const CRITERIA_GROUP = { VEICULOS: 'Veículos', SEM_GARANTIA: 'Sem Garantia (Cartões e Consignado)', CARTOES: 'Só Cartões', CONSIGNADO: 'Só Consignado', AMBOS: 'Refin e Entrega', REFIN: 'Refinanciamento', ENTREGA: 'Entrega Amigável', AGV: 'AGV (campanhas com assistente virtual)' };

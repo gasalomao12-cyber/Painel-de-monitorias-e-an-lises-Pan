@@ -254,6 +254,7 @@ hr.sep { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
 .chip.entrega { background: color-mix(in srgb, var(--s-entrega) 16%, transparent); color: color-mix(in srgb, var(--s-entrega) 70%, var(--text)); }
 .chip.p-refin { --pc: var(--s-refin); } .chip.p-entrega { --pc: var(--s-entrega); } .chip.p-veiculos { --pc: var(--s-veiculos); }
 .chip.p-cartoes { --pc: var(--s-cartoes); } .chip.p-consignado { --pc: var(--s-consignado); }
+.chip.p-cheque { --pc: #c98a2b; } .chip.p-emprestimos { --pc: #2f9e6e; } .chip.p-parcelamento { --pc: #5b7bd5; } .chip.p-pdd { --pc: #b5577a; } .chip.p-adiantamento { --pc: #3aa6b9; }
 .chip[class*="p-"] { background: color-mix(in srgb, var(--pc) 16%, transparent); color: color-mix(in srgb, var(--pc) 70%, var(--text)); }
 .chip .sg { margin-left: 6px; padding-left: 6px; border-left: 1px solid color-mix(in srgb, currentColor 35%, transparent); font-weight: 500; }
 .chip.alert { background: var(--bad-soft); color: var(--bad-ink); }

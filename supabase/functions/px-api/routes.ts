@@ -25,9 +25,11 @@ const QUALITY = requireRole('admin', 'qualidade');
 const CONTESTER = requireRole('admin', 'supervisor');
 const RESULTS = ['C', 'P', 'NC', 'NA'];
 // Carteiras PAN importadas dos dashboards + Refinanciamento/Entrega Amigável lançados à mão
-const PRODUCTS = ['VEICULOS', 'CARTOES', 'CONSIGNADO', 'REFIN', 'ENTREGA'];
+const PRODUCTS = ['VEICULOS', 'CARTOES', 'CONSIGNADO', 'REFIN', 'ENTREGA', 'CHEQUE', 'EMPRESTIMOS', 'PARCELAMENTO', 'PDD', 'ADIANTAMENTO'];
+// Produtos de cada carteira que aparecem nos filtros mesmo antes de haver análises
+const CARTEIRA_PRODUCTS = { 'SAFRA BS': ['CARTOES', 'CHEQUE', 'EMPRESTIMOS', 'PARCELAMENTO', 'PDD', 'ADIANTAMENTO'] };
 const SEGMENTS = { CARTOES: ['CLEAN_CURTO', 'CLEAN_LONGO'], CONSIGNADO: ['PUBLICO', 'PRIVADO'] };
-const CRITERIA_PRODUCTS = ['REFIN', 'ENTREGA', 'AMBOS', 'VEICULOS', 'SEM_GARANTIA', 'CARTOES', 'CONSIGNADO', 'AGV'];
+const CRITERIA_PRODUCTS = ['REFIN', 'ENTREGA', 'AMBOS', 'VEICULOS', 'SEM_GARANTIA', 'CARTOES', 'CONSIGNADO', 'AGV', 'CHEQUE', 'EMPRESTIMOS', 'PARCELAMENTO', 'PDD', 'ADIANTAMENTO'];
 const CRITERIA_FOR = { REFIN: ['AMBOS', 'REFIN'], ENTREGA: ['AMBOS', 'ENTREGA'], VEICULOS: ['VEICULOS'], CARTOES: ['SEM_GARANTIA', 'CARTOES'], CONSIGNADO: ['SEM_GARANTIA', 'CONSIGNADO'] };
 // Ligações das campanhas AGV (assistente virtual que transfere para o operador) usam o roteiro AGV em qualquer carteira
 const CHANNELS = ['AGV', 'Convencional'];
@@ -208,12 +210,15 @@ router.get('/meta', h(async (req, res) => {
   const openContests = await count(contestQuery(req, { status: 'aberta' }, { head: true })).catch(() => 0);
   const sheetErrors = req.user.role === 'supervisor' ? 0 : await count(sb().from('px_actions').select('id', { count: 'exact', head: true }).eq('sync_status', 'erro')).catch(() => 0);
   // Quantas monitorias existem por produto e segmento (os filtros só mostram o que tem dado)
-  const products = PRODUCTS.map((p) => {
+  const scope = carteiraScope(req);
+  const fixed = new Set(scope ? scope.flatMap((c) => CARTEIRA_PRODUCTS[c] || []) : []);
+  const order = fixed.size ? [...fixed, ...PRODUCTS.filter((p) => !fixed.has(p))] : PRODUCTS;
+  const products = order.map((p) => {
     const rows = mix.filter((r) => r.product === p);
     const segs = (SEGMENTS[p] || []).map((sg) => ({ segment: sg, total: rows.filter((r) => r.segment === sg).length }));
     const none = rows.filter((r) => !r.segment).length;
     return { product: p, total: rows.length, segments: SEGMENTS[p] ? [...segs, ...(none ? [{ segment: 'none', total: none }] : [])] : [] };
-  }).filter((p) => p.total);
+  }).filter((p) => p.total || fixed.has(p.product));
   res.json({
     cycles, operators: ops, criteria, supervisors, products, segments: SEGMENTS,
     // Campanhas AGV com ligações (filtros da divisão AGV)

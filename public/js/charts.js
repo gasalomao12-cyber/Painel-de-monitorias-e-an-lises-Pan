@@ -28,6 +28,7 @@ export function cssVar(name, el = document.documentElement) {
 export function palette() {
   return {
     refin: cssVar('--s-refin'), entrega: cssVar('--s-entrega'), geral: cssVar('--s-geral'), speech: cssVar('--s-speech'), veiculos: cssVar('--s-veiculos'), cartoes: cssVar('--s-cartoes'), consignado: cssVar('--s-consignado'),
+    cheque: '#c98a2b', emprestimos: '#2f9e6e', parcelamento: '#5b7bd5', pdd: '#b5577a', adiantamento: '#3aa6b9',
     ok: cssVar('--ok'), warn: cssVar('--warn'), bad: cssVar('--bad'), na: cssVar('--na'),
     text: cssVar('--text'), text2: cssVar('--text-2'), muted: cssVar('--muted'), grid: cssVar('--grid'), axis: cssVar('--axis'),
     surface: cssVar('--surface'), brand: cssVar('--brand'),
