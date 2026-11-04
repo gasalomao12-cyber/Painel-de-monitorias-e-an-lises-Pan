@@ -3,7 +3,7 @@
 // análise colaborativa (com reserva do atendimento por quem está analisando) e anexos de áudio/transcrição.
 import { admin, must, fetchAll } from './supa.ts';
 import { getSetting, setSetting, audit } from './db.ts';
-import { carteiraScope, carteiraGroup, inScope } from './carteira.ts';
+import { carteiraScope, carteiraGroup, inScope, carteirasOfText } from './carteira.ts';
 
 const sb = () => admin();
 const BUCKET = 'px-quedas';
@@ -59,20 +59,24 @@ async function managers(portfolio) {
   return new Map(rows.map((r) => [nameKey(r.leader), r.manager]));
 }
 // Um operador por login dentro da carteira: o capacity do próprio usuário vale primeiro, depois o mais recente
+// Capacity em uso para cada login: o da própria pessoa; depois o do setor (anexado em Importar); depois o mais recente
 function pickRoster(rows, scope) {
   const out = new Map();
+  const rank = (r) => (r.scope === scope ? 3 : String(r.scope || '').startsWith('setor:') ? 2 : 1);
   for (const r of rows) {
     const prev = out.get(r.login);
-    const better = !prev || (r.scope === scope && prev.scope !== scope) || (prev.scope !== scope && r.updated_at > prev.updated_at);
+    const better = !prev || rank(r) > rank(prev) || (rank(r) === rank(prev) && r.updated_at > prev.updated_at);
     if (better) out.set(r.login, r);
   }
   return out;
 }
+// Valores da coluna portfolio do capacity que valem para a carteira (o raw de quem anexou e as carteiras dele)
+const rosterPortfolios = (pf) => [...new Set([pf, ...carteirasOfText(pf)])];
 // Liderança, gerência, campanha e segmento do operador a partir do capacity da carteira
 async function enrich(rows, portfolio, scope) {
   const logins = [...new Set(rows.map((r) => r.login).filter(Boolean))];
   const found = [];
-  for (let i = 0; i < logins.length; i += 200) found.push(...await must(sb().from('px_roster').select('*').eq('portfolio', portfolio).in('login', logins.slice(i, i + 200))));
+  for (let i = 0; i < logins.length; i += 200) found.push(...await must(sb().from('px_roster').select('*').in('portfolio', rosterPortfolios(portfolio)).in('login', logins.slice(i, i + 200))));
   const roster = pickRoster(found, scope);
   const mgr = await managers(portfolio);
   return rows.map((r) => {
@@ -133,7 +137,7 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
     const pf = portfolioOf(req.user);
     const [rows, rosterAll, leaders, profiles] = await Promise.all([
       fetchAll(() => sb().from('px_drop_reviews').select(LIST_COLS).order('call_at', { ascending: false, nullsFirst: false }).order('id', { ascending: false })),
-      fetchAll(() => sb().from('px_roster').select('scope, login, name, name_key, registration, shift, status, campaign, segment, leader, active, updated_at').eq('portfolio', pf).order('name')),
+      fetchAll(() => sb().from('px_roster').select('scope, login, name, name_key, registration, shift, status, campaign, segment, leader, active, updated_at').in('portfolio', rosterPortfolios(pf)).order('name')),
       must(sb().from('px_roster_leaders').select('portfolio, leader, manager').order('leader')),
       must(sb().from('px_profiles').select('id, portfolio, name, display_name, role, active')),
     ]);

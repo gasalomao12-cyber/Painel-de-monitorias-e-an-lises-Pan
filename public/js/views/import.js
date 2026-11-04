@@ -3,6 +3,7 @@ import { html, icon, $, toast, busy, fmtDate, fmtScore, fmtInt, PRODUCT, SEGMENT
 import { parseSheetFile, downloadTemplate } from '../files.js';
 import { sendAgvDashboard, AGV_DASH_KIND } from './agv.js';
 import { CARTEIRA_INFO, viewCarteira, userCarteiras } from '../carteira.js';
+import { readCarteiraReport } from '../carteira-reports.js';
 
 // ------------------------------------------------------------------ Lista de ligações do discador (.csv)
 // Colunas do relatório do discador → campos da plataforma (sem acento e sem diferenciar maiúsculas)
@@ -167,6 +168,9 @@ function readV5(list, doc, text, file) {
 export async function readDashboard(file) {
   const text = await file.text();
   const doc = new DOMParser().parseFromString(text, 'text/html');
+  // Análises por carteira (speech Safra Pay, relatório de conversão e eficiência…)
+  const rep = readCarteiraReport(doc, text, file);
+  if (rep) return rep;
   const v5 = doc.querySelector('script#data[type="application/json"]');
   if (v5 && !doc.querySelector('script#dados')) {
     let list;
@@ -201,6 +205,7 @@ function drawDash(el, ctx) {
   const box = $('#dash-prev', el);
   if (!dash) { box.innerHTML = ''; return; }
   if (AGV_DASH_KIND[dash.kind]) { drawAgvDash(el, ctx, box); return; }
+  if (REPORT_KIND[dash.kind]) { drawCarteiraReport(el, ctx, box); return; }
   const { kind, calls } = dash;
   const groups = {};
   for (const c of calls) { const [p, s] = productOf(kind, c); const k = `${p}|${s || ''}`; groups[k] = (groups[k] || 0) + 1; }
@@ -251,6 +256,95 @@ function drawDash(el, ctx) {
   };
 }
 
+// ---------------------------------------------------------------- análises por carteira (HTML)
+const REPORT_KIND = { speech_safra: 'Análise de speech (ligação a ligação)', conversao: 'Análise da carteira (relatório)' };
+function drawCarteiraReport(el, ctx, box) {
+  const d = dash, user = ctx.store.user;
+  const own = userCarteiras(user);
+  const chosen = d.carteira && own.includes(d.carteira) ? d.carteira : viewCarteira(user) || own[0];
+  const r = d.data || d.summary || {};
+  const logins = d.kind === 'speech_safra' ? new Set(d.rows.map((x) => x.login)).size : (r.reading || []).length;
+  box.innerHTML = String(html`<div class="card mt"><div class="card-head"><div><h3>${d.title}</h3>
+      <div class="sub">${d.name}${d.period ? ` · ${d.period}` : ''} · ${REPORT_KIND[d.kind]}</div></div><div class="grow"></div>
+      <button class="btn ghost" id="dash-cancel">Cancelar</button><button class="btn primary lg" id="dash-go">${icon('upload')}${d.kind === 'speech_safra' ? `Importar ${fmtInt(d.rows.length)} ligações` : 'Guardar a análise'}</button></div>
+    <div class="card-body">
+      <div class="grid g-4">
+        ${d.kind === 'speech_safra' ? html`
+          <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('headset')}</span><div><b>${fmtInt(d.rows.length)} ligações</b><div class="t2 small">${d.period}</div></div></div>
+          <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('users')}</span><div><b>${logins} logins</b><div class="t2 small">nome e liderança pelo capacity do setor</div></div></div>
+          <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('list')}</span><div><b>11 critérios</b><div class="t2 small">roteiro Safra Pay · produto Cartões</div></div></div>
+          <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('report')}</span><div><b>Análise da carteira</b><div class="t2 small">o arquivo também fica em Análises da carteira</div></div></div>`
+        : html`${(r.kpis || []).slice(0, 4).map((k) => html`<div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('report')}</span><div><b>${k.value} · ${k.label}</b><div class="t2 small">${k.sub}</div></div></div>`)}`}
+      </div>
+      ${d.kind === 'conversao' ? html`<p class="small t2 mt">${r.lead || ''} ${logins ? html`A leitura de <b>${logins} login(s)</b> aparece no feedback de cada operador.` : ''}</p>` : ''}
+      <div class="grid g-2 mt">
+        <div class="field"><label for="rep-cart">Carteira</label><select class="select" id="rep-cart" ${own.length > 1 ? '' : 'disabled'}>${own.map((c) => html`<option value="${c}" ${c === chosen ? 'selected' : ''}>${CARTEIRA_INFO[c].label}</option>`)}</select>
+          <span class="hint">${d.carteira ? `O arquivo é da carteira ${CARTEIRA_INFO[d.carteira]?.label || d.carteira}.` : 'Confira a carteira antes de importar.'} Só quem é dessa carteira vê a análise.</span></div>
+        <div id="dash-progress" class="small t2" style="align-self:end"></div>
+      </div>
+    </div></div>`);
+  $('#dash-cancel', box).onclick = () => { dash = null; $('#dash-name').textContent = '.html exportado do dashboard'; drawDash(el, ctx); };
+  $('#dash-go', box).onclick = async (e) => {
+    const btn = e.currentTarget; busy(btn, true, 'Importando');
+    const prog = $('#dash-progress', box);
+    const carteira = $('#rep-cart', box).value;
+    const tot = { created: 0, skipped: 0, operators_created: 0 };
+    try {
+      if (d.kind === 'speech_safra') {
+        for (let i = 0; i < d.rows.length; i += 100) {
+          prog.textContent = `Enviando ${Math.min(i + 100, d.rows.length)} de ${d.rows.length}…`;
+          const x = await api.post('/import/speech-safra', { rows: d.rows.slice(i, i + 100), period: d.period, filename: d.name, carteira });
+          tot.created += x.created; tot.skipped += x.skipped; tot.operators_created += x.operators_created;
+        }
+      }
+      prog.textContent = 'Guardando a análise…';
+      await api.post('/reports', { kind: d.kind, title: d.title, period: d.period, carteira, file_name: d.name, data: d.kind === 'speech_safra' ? d.summary : d.data, html: d.html });
+      toast(d.kind === 'speech_safra' ? `${tot.created} ligação(ões) importada(s)${tot.skipped ? ` · ${tot.skipped} já existiam` : ''}${tot.operators_created ? ` · ${tot.operators_created} operador(es) cadastrado(s)` : ''}.` : 'Análise guardada em Análises da carteira.');
+      dash = null;
+      await ctx.refreshMeta();
+      ctx.navigate('analises');
+    } catch (ex) { toast(ex.message, 'err', 8000); busy(btn, false); prog.textContent = ''; }
+  };
+}
+
+// ---------------------------------------------------------------- capacity por setor
+async function drawCapacity(el, ctx) {
+  const box = $('#cap-box', el);
+  let list = [];
+  try { list = await api.get('/capacity'); } catch { list = []; }
+  const editable = list.filter((c) => c.can_edit);
+  if (!ctx.isCurrent()) return;
+  if (!editable.length) { box.closest('.card').hidden = true; return; }
+  box.innerHTML = String(html`<div class="cap-grid">${list.map((c) => html`<div class="cap-it">
+      <div class="row between"><b>${CARTEIRA_INFO[c.carteira]?.label || c.carteira}</b>${c.active != null ? html`<span class="chip ok">${c.active} ativos</span>` : html`<span class="chip outline">sem capacity</span>`}</div>
+      <div class="tiny muted">${c.updated_at ? `${c.file || 'capacity'} · ${fmtDate(c.updated_at)}` : 'Nenhum capacity anexado para o setor.'}</div>
+      ${c.can_edit ? html`<label class="btn sm mt-0" style="margin-top:8px">${icon('upload')}Anexar capacity<input type="file" accept=".xlsx,.xls,.csv" data-cap="${c.carteira}" hidden></label>` : ''}
+    </div>`)}</div><div id="cap-pv"></div>`);
+  box.querySelectorAll('[data-cap]').forEach((inp) => inp.addEventListener('change', async () => {
+    const f = inp.files[0]; if (!f) return;
+    const carteira = inp.dataset.cap, pv = $('#cap-pv', box);
+    pv.innerHTML = '<p class="small t2 mt">Lendo o capacity…</p>';
+    try {
+      const [{ parseWorkbook }, { capacityRows }] = await Promise.all([import('../files.js'), import('./quedas.js')]);
+      const { rows } = capacityRows(await parseWorkbook(f));
+      const act = rows.filter((r) => r.active);
+      if (!act.length) throw new Error('Não encontrei operadores ativos no arquivo (colunas de login, nome e liderança).');
+      pv.innerHTML = String(html`<div class="banner info mt">${icon('users')}<div><b>${f.name}</b>: ${act.length} operadores ativos${rows.length > act.length ? `, ${rows.length - act.length} desligados ou remanejados` : ''} para <b>${CARTEIRA_INFO[carteira].label}</b>.
+        Os logins de fora do arquivo ficam inativos no capacity do setor; os operadores já cadastrados ganham nome, matrícula e liderança.
+        <div class="row mt-0" style="margin-top:8px"><button class="btn primary sm" id="cap-go">${icon('check')}Atualizar o capacity do setor</button><button class="btn ghost sm" id="cap-no">Cancelar</button></div></div></div>`);
+      $('#cap-no', pv).onclick = () => { pv.innerHTML = ''; inp.value = ''; };
+      $('#cap-go', pv).onclick = async (ev) => {
+        busy(ev.currentTarget, true, 'Atualizando');
+        try {
+          const r = await api.post('/capacity', { carteira, rows, file: f.name });
+          toast(`Capacity de ${CARTEIRA_INFO[carteira].label} atualizado: ${r.active} ativos${r.removed ? `, ${r.removed} saíram` : ''}${r.operators_updated ? `, ${r.operators_updated} operador(es) atualizado(s)` : ''}.`);
+          await ctx.refreshMeta(); drawCapacity(el, ctx);
+        } catch (ex) { toast(ex.message, 'err', 7000); busy(ev.currentTarget, false); }
+      };
+    } catch (ex) { pv.innerHTML = ''; toast(ex.message, 'err', 7000); inp.value = ''; }
+  }));
+}
+
 export async function render(el, _p, ctx) {
   const { store } = ctx;
   preview = null; dash = null; calls = null;
@@ -259,14 +353,18 @@ export async function render(el, _p, ctx) {
     <div class="page-head"><div><h2>Importar monitorias</h2><p>Traga o dashboard de monitoria da quinzena (.html) ou a planilha de auditorias do speech (Excel ou CSV). Cada ligação vira um card de atendimento.</p></div></div>
     ${(() => { const c = viewCarteira(store.user) || 'PAN'; const many = userCarteiras(store.user).length > 1;
       return html`<div class="banner info mb">${icon('info')}<div>Os atendimentos importados entram na carteira <b>${CARTEIRA_INFO[c].label}</b> e só quem é dessa carteira vê as análises, os gráficos e os feedbacks.${many && !viewCarteira(store.user) ? ' Para importar em outra carteira, escolha-a no seletor do topo antes.' : ''}</div></div>`; })()}
+    <div class="card card-pad mb"><span class="chip brand">Capacity</span><h3 style="margin:10px 0 6px">Capacity atualizado por setor</h3>
+      <p class="small t2" style="margin-top:0">A planilha de operadores de cada setor (login, nome, matrícula, liderança e campanha). A plataforma usa o capacity para dar nome e liderança aos operadores nas importações e na força-tarefa de quedas.</p>
+      <div id="cap-box"><p class="small t2">Carregando…</p></div>
+    </div>
     <div class="card card-pad mb"><span class="chip brand">Discador</span><h3 style="margin:10px 0 6px">Lista de ligações do discador (.csv)</h3>
       <p class="small t2" style="margin-top:0">O relatório de ligações exportado do discador (IdContato, Campanha, Operação, Login, Data, Duração, Finalização, Nome do arquivo…). Cada ligação entra como atendimento pendente, com o operador e a carteira certos; depois é só enviar o áudio ou a transcrição.</p>
       <label class="drop" id="calls-drop" style="padding:20px"><input type="file" id="calls-file" accept=".csv,.txt,.xlsx" hidden>
         <div class="ic">${icon('upload')}</div><h4>Arraste o .csv do discador ou clique</h4><p class="muted small" style="margin:0" id="calls-name">.csv exportado do discador</p></label>
       <div id="calls-prev"></div>
     </div>
-    <div class="card card-pad mb"><span class="chip brand">Dashboard PAN</span><h3 style="margin:10px 0 6px">Dashboard de monitoria já trabalhado (.html)</h3>
-      <p class="small t2" style="margin-top:0">Aceita o <b>Speech E.A. e Refin</b> (Veículos), o <b>Roteiro Sem Garantia</b> (Cartões em Clean Curto/Longo e Consignado em Público/Privado) e os <b>dashboards AGV</b> (teste do speech por gerência e comparativo), que vão para a divisão Análises AGV. Vêm junto o roteiro item a item, os ajustes de coerência com o motivo, líder e gerência, tabulação, desfecho, aptidão a E.A./refin, alertas de sigilo e conduta, transcrição, resumo e feedback sugerido.</p>
+    <div class="card card-pad mb"><span class="chip brand">Dashboards e análises</span><h3 style="margin:10px 0 6px">Dashboard ou análise já trabalhada (.html)</h3>
+      <p class="small t2" style="margin-top:0">Aceita a <b>análise de speech Safra Pay</b> e os <b>relatórios de conversão e eficiência</b> das carteiras (vão para Análises da carteira), o <b>Speech E.A. e Refin</b> (Veículos), o <b>Roteiro Sem Garantia</b> (Cartões em Clean Curto/Longo e Consignado em Público/Privado) e os <b>dashboards AGV</b> (teste do speech por gerência e comparativo), que vão para a divisão Análises AGV. Vêm junto o roteiro item a item, os ajustes de coerência com o motivo, líder e gerência, tabulação, desfecho, aptidão a E.A./refin, alertas de sigilo e conduta, transcrição, resumo e feedback sugerido.</p>
       <label class="drop" id="dash-drop" style="padding:20px"><input type="file" id="dash-file" accept=".html,.htm" hidden>
         <div class="ic">${icon('upload')}</div><h4>Arraste o arquivo do dashboard ou clique</h4><p class="muted small" style="margin:0" id="dash-name">.html exportado do dashboard</p></label>
       <div id="dash-prev"></div>
@@ -285,6 +383,7 @@ export async function render(el, _p, ctx) {
       </div>
     </div>
     <div id="im-prev" class="mt"></div>`);
+  drawCapacity(el, ctx);
   $('#tpl').onclick = async (e) => {
     const btnEl = e.currentTarget;
     busy(btnEl, true); try { await downloadTemplate(store.meta.criteria.filter((c) => c.active)); } catch (ex) { toast(ex.message, 'err'); } busy(btnEl, false); };
@@ -326,7 +425,7 @@ export async function render(el, _p, ctx) {
   const handleDash = async (f) => {
     if (!f) return;
     $('#dash-name').textContent = `${f.name} · lendo…`;
-    try { dash = await readDashboard(f); $('#dash-name').textContent = `${f.name} · ${dash.calls.length} ligações`; drawDash(el, ctx); }
+    try { dash = await readDashboard(f); $('#dash-name').textContent = `${f.name} · ${dash.kind === 'conversao' ? 'análise da carteira' : `${dash.calls.length} ligações`}`; drawDash(el, ctx); }
     catch (ex) { dash = null; toast(ex.message, 'err', 7000); $('#dash-name').textContent = '.html exportado do dashboard'; drawDash(el, ctx); }
   };
   $('#dash-file').onchange = (e) => handleDash(e.target.files[0]);

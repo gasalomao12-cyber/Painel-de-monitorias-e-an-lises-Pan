@@ -49,6 +49,7 @@ async function renderPending(el, ctx) {
         <div class="d"><b class="num">${o.last_call ? fmtDate(o.last_call) : '—'}</b><span>último atendimento</span></div>
       </div>
       ${o.worst.length ? html`<div class="fbp-worst"><span class="tiny muted">Pontos para conversar</span><div class="row" style="gap:6px;flex-wrap:wrap">${o.worst.map((w) => html`<span class="chip ${w.critical ? 'bad' : 'warn'}">${w.name}<b style="margin-left:4px">${w.nc}${w.p ? ` + ${w.p}½` : ''}</b></span>`)}</div></div>` : html`<p class="small t2" style="margin:0">Sem pontos de melhoria: bom momento para um feedback de reconhecimento.</p>`}
+      ${(o.reading || []).slice(0, 2).map((x) => html`<div class="fbp-read"><b>${x.title}${x.period ? ` · ${x.period}` : ''}</b><span>${x.text}</span>${x.action ? html`<span><b style="text-transform:none;letter-spacing:0">Ação:</b> ${x.action}</span>` : ''}</div>`)}
       ${Object.keys(o.alerts || {}).length ? html`<div class="row" style="gap:6px;flex-wrap:wrap">${Object.entries(o.alerts).map(([a, n]) => html`<span class="chip bad">${ALERT_LABEL[a] || a} · ${n}</span>`)}</div>` : ''}
       ${excluded ? html`<div class="banner info">${icon('info')}<div>Fora da lista desde ${fmtDate(o.excluded.at)}${o.excluded.by ? ` por ${o.excluded.by}` : ''}: <b>${o.excluded.reason}</b></div></div>` : ''}
       ${pst.open.has(o.operator_id) ? html`<div class="fbp-evs">${o.evaluations.map((e) => html`<a class="fbp-ev" href="#/atendimentos/${e.id}">
@@ -122,7 +123,9 @@ function applyFeedback(o, ctx, reload) {
         const worst = o.worst.slice(0, 4).map((w) => w.name.toLowerCase());
         if (!fm.content.value.trim()) fm.content.value = `Feedback com base em ${ids().length} atendimento(s) auditado(s)${dates.length ? ` de ${fmtDate(dates[0])} a ${fmtDate(dates[dates.length - 1])}` : ''}, nota média ${fmtScore(o.avg_final)}. ${worst.length ? `Conversamos sobre: ${worst.join(', ')}.` : 'Reconhecemos o bom desempenho nos atendimentos.'}`;
         if (!fm.strengths.value.trim()) fm.strengths.value = strengths.join('; ');
+        const reads = (o.reading || []).map((x) => x.action).filter(Boolean);
         if (!fm.improvements.value.trim()) fm.improvements.value = [worst.length ? `Reforçar: ${worst.join(', ')}.` : '', ...tips].filter(Boolean).join(' ');
+        if (!fm.action_plan.value.trim() && reads.length) fm.action_plan.value = reads.join(' ');
         toast('Campos vazios preenchidos com a sugestão. Revise antes de salvar.');
       };
       $('#fo-save', m).onclick = async (e) => {

@@ -190,7 +190,7 @@ function cycleName(from) {
   return `${d.getDate() <= 15 ? '1ª' : '2ª'} quinzena · ${mes}/${d.getFullYear()}`;
 }
 
-async function resolveCycle(cycleId, dates) {
+export async function resolveCycle(cycleId, dates) {
   if (cycleId) {
     const c = await must(sb().from('px_cycles').select('id').eq('id', Number(cycleId)).maybeSingle());
     if (c) return c.id;

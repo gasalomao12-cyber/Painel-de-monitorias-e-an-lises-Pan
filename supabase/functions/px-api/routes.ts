@@ -12,6 +12,7 @@ import { importDashboard } from './dashboard.ts';
 import { importCalls } from './discador.ts';
 import { importSpeechAgv, importAgvDashboard, importAgvEsforco } from './agv.ts';
 import { registerQuedas } from './quedas.ts';
+import { registerSafra, readingFor } from './safra.ts';
 import { CARTEIRAS, carteiraScope, carteiraNew, inScope, scopeValues } from './carteira.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
@@ -825,6 +826,8 @@ router.get('/feedbacks/pending', h(async (req, res) => {
   const exInfo = excludedIds.length ? await must(sb().from('px_operators').select('id, feedback_excluded_at, feedback_excluded_reason, feedback_excluded_by').in('id', excludedIds)) : [];
   const who = new Map((await must(sb().from('px_profiles').select('id, name, display_name'))).map((p) => [p.id, p.display_name || p.name]));
   const avg = (a) => { const v = a.filter((x) => x != null); return v.length ? Math.round((v.reduce((s, x) => s + Number(x), 0) / v.length) * 10) / 10 : null; };
+  // Leitura de cada login nas análises da carteira (relatórios importados)
+  const reading = await readingFor(req, ops.map((o) => o.login)).catch(() => new Map());
   const out = ops.map((o) => {
     const ev = o.evaluations;
     const miss = new Map();
@@ -844,6 +847,7 @@ router.get('/feedbacks/pending', h(async (req, res) => {
       worst: [...miss.values()].sort((a, b) => (b.nc + b.p / 2) - (a.nc + a.p / 2)).slice(0, 5), alerts,
       evaluations: ev.map((e) => ({ id: e.id, protocol: e.protocol, call_date: e.call_date, call_time: e.call_time, product: e.product, segment: e.segment, channel: e.channel, final_score: e.final_score, status: e.status, critical_fail: e.critical_fail, alerts: e.alerts, outcome: e.outcome, source: e.source })),
       excluded: ex ? { at: ex.feedback_excluded_at, reason: ex.feedback_excluded_reason, by: who.get(ex.feedback_excluded_by) || null } : null,
+      reading: reading.get(String(o.login || '').toLowerCase()) || [],
     };
   }).sort((a, b) => b.total - a.total || (a.avg_final ?? 101) - (b.avg_final ?? 101));
   res.json({ operators: out.filter((o) => !o.excluded), excluded: out.filter((o) => o.excluded), reasons: EXCLUSION_REASONS });
@@ -1642,6 +1646,7 @@ router.get('/export/feedbacks', h(async (req, res) => {
 
 // --------------------------------------------------------------- Força-tarefa de quedas de ligação
 registerQuedas(router, { h, QUALITY, ADMIN });
+registerSafra(router, { h, QUALITY, audit });
 
 // --------------------------------------------------------------- Erros
 router.use((err, req, res, _next) => {
