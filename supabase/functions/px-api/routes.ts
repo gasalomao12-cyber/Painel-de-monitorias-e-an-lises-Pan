@@ -12,7 +12,7 @@ import { importDashboard } from './dashboard.ts';
 import { importCalls } from './discador.ts';
 import { importSpeechAgv, importAgvDashboard, importAgvEsforco } from './agv.ts';
 import { registerQuedas } from './quedas.ts';
-import { CARTEIRAS, carteiraOf } from './carteira.ts';
+import { CARTEIRAS, carteiraScope, carteiraNew, inScope } from './carteira.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
 
@@ -115,14 +115,31 @@ router.use((req, res, next) => {
 // --------------------------------------------------------------- Escopo e filtros
 const supervisorTeamOnly = (req) => req.user.role === 'supervisor' && getSetting('supervisor_scope', 'all') === 'team';
 
-// Carteira de quem cadastra (operadores novos vindos de importações)
-const carteiraNew = (req) => carteiraOf(req) || 'PAN';
-
 function scoped(query, req) {
   const q = supervisorTeamOnly(req) ? query.eq('supervisor_user_id', req.user.id) : query;
-  const pf = carteiraOf(req);
-  return pf ? q.eq('portfolio', pf) : q;
+  const pf = carteiraScope(req);
+  return !pf ? q : pf.length === 1 ? q.eq('portfolio', pf[0]) : q.in('portfolio', pf);
 }
+
+// Quem vê só a própria carteira não abre atendimento, operador ou ação de outra carteira nem pelo endereço direto
+const CARTEIRA_GUARD = [
+  [/^\/evaluations\/(\d+)(\/|$)/, 'px_v_eval_cards', 'Atendimento não encontrado.'],
+  [/^\/operators\/(\d+)(\/|$)/, 'px_operators', 'Operador não encontrado.'],
+  [/^\/actions\/(\d+)(\/|$)/, 'px_v_actions', 'Ação não encontrada.'],
+  [/^\/contests\/(\d+)(\/|$)/, 'px_v_contests', 'Contestação não encontrada.'],
+];
+router.use(h(async (req, res, next) => {
+  const scope = carteiraScope(req);
+  if (scope) {
+    for (const [re, table, msg] of CARTEIRA_GUARD) {
+      const m = req.path.match(re);
+      if (!m) continue;
+      const row = await must(sb().from(table).select('portfolio').eq('id', Number(m[1])).maybeSingle());
+      if (row && !inScope(scope, row.portfolio)) return res.status(404).json({ error: msg });
+    }
+  }
+  next();
+}));
 
 // Filtros comuns às views px_v_eval_cards e px_v_item_facts
 // Filtros de seleção múltipla chegam separados por "|" (ids também aceitam vírgula)
@@ -1253,7 +1270,7 @@ router.post('/import/preview', QUALITY, h(async (req, res) => {
   const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 5000) : [];
   const [criteria, operators] = await Promise.all([
     must(sb().from('px_criteria').select('*').eq('active', true).order('sort')),
-    must(sb().from('px_operators').select('id, name, registration')),
+    must(sb().from('px_operators').select('id, name, registration').eq('portfolio', carteiraNew(req))),
   ]);
   res.json(normalizeRows(rows, criteria, operators));
 }));
@@ -1263,7 +1280,7 @@ router.post('/import/commit', QUALITY, h(async (req, res) => {
   const rows = (Array.isArray(b.rows) ? b.rows : []).filter((r) => !(r.errors && r.errors.length));
   if (!rows.length) return res.status(400).json({ error: 'Nenhuma linha válida para importar.' });
   const cycleId = intOrNull(b.cycle_id);
-  const operators = await must(sb().from('px_operators').select('id, name, registration'));
+  const operators = await must(sb().from('px_operators').select('id, name, registration').eq('portfolio', carteiraNew(req)));
   const sups = await must(sb().from('px_profiles').select('id, name, display_name, email').eq('role', 'supervisor'));
   const low = (s) => String(s || '').trim().toLowerCase();
   let created = 0, newOps = 0;
@@ -1494,8 +1511,7 @@ router.post('/operators', QUALITY, h(async (req, res) => {
 router.put('/operators/:id', QUALITY, h(async (req, res) => {
   const id = Number(req.params.id);
   const o = await must(sb().from('px_operators').select('*').eq('id', id).maybeSingle());
-  const view = carteiraOf(req);
-  if (!o || (view && (o.portfolio || 'PAN') !== view)) return res.status(404).json({ error: 'Operador não encontrado.' });
+  if (!o || !inScope(carteiraScope(req), o.portfolio)) return res.status(404).json({ error: 'Operador não encontrado.' });
   const b = { ...o, ...req.body };
   const sup = await supName(b.supervisor_user_id);
   const pf = String(b.portfolio || '').toUpperCase();

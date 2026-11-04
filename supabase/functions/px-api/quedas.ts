@@ -3,7 +3,7 @@
 // análise colaborativa (com reserva do atendimento por quem está analisando) e anexos de áudio/transcrição.
 import { admin, must, fetchAll } from './supa.ts';
 import { getSetting, setSetting, audit } from './db.ts';
-import { carteiraOf, carteiraGroup } from './carteira.ts';
+import { carteiraScope, carteiraGroup } from './carteira.ts';
 
 const sb = () => admin();
 const BUCKET = 'px-quedas';
@@ -138,8 +138,8 @@ export function registerQuedas(router, { h, QUALITY, ADMIN }) {
       must(sb().from('px_profiles').select('id, portfolio, name, display_name, role, active')),
     ]);
     // Cada pessoa vê os atendimentos da própria carteira (o admin, todas ou a escolhida no seletor)
-    const view = carteiraOf(req);
-    if (view) rows.splice(0, rows.length, ...rows.filter((r) => (carteiraGroup(r.carteira) || r.portfolio || 'PAN') === view));
+    const view = carteiraScope(req);
+    if (view) rows.splice(0, rows.length, ...rows.filter((r) => view.includes(carteiraGroup(r.carteira) || carteiraGroup(r.portfolio) || 'PAN')));
     const now = Date.now();
     for (const r of rows) if (r.locked_by && !(r.locked_at && now - new Date(r.locked_at).getTime() < LOCK_MS)) { r.locked_by = null; r.locked_name = null; }
     const roster = [...pickRoster(rosterAll, req.user.id).values()].sort((a, z) => a.name.localeCompare(z.name));

@@ -67,7 +67,7 @@ export async function importCalls({ calls, cycle_id, portfolio = 'PAN' }, userId
 
   // Operadores pelo login (cria os que faltam, com o login como nome até alguém completar o cadastro)
   const logins = [...new Set(rows.map((r) => r.login))];
-  const ops = await must(sb().from('px_operators').select('id, login, team'));
+  const ops = await must(sb().from('px_operators').select('id, login, team').eq('portfolio', portfolio));
   const byLogin = new Map(ops.filter((o) => o.login).map((o) => [o.login.toLowerCase(), o]));
   let opsCreated = 0;
   for (const lg of logins) {

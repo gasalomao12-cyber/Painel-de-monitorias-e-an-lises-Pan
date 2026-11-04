@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { html, icon, $, toast, busy, fmtDate, fmtScore, fmtInt, PRODUCT, SEGMENT } from '../ui.js';
 import { parseSheetFile, downloadTemplate } from '../files.js';
 import { sendAgvDashboard, AGV_DASH_KIND } from './agv.js';
+import { CARTEIRA_INFO, viewCarteira, userCarteiras } from '../carteira.js';
 
 // ------------------------------------------------------------------ Lista de ligações do discador (.csv)
 // Colunas do relatório do discador → campos da plataforma (sem acento e sem diferenciar maiúsculas)
@@ -256,6 +257,8 @@ export async function render(el, _p, ctx) {
   const open = store.meta.cycles.find((c) => c.status === 'aberto');
   el.innerHTML = String(html`
     <div class="page-head"><div><h2>Importar monitorias</h2><p>Traga o dashboard de monitoria da quinzena (.html) ou a planilha de auditorias do speech (Excel ou CSV). Cada ligação vira um card de atendimento.</p></div></div>
+    ${(() => { const c = viewCarteira(store.user) || 'PAN'; const many = userCarteiras(store.user).length > 1;
+      return html`<div class="banner info mb">${icon('info')}<div>Os atendimentos importados entram na carteira <b>${CARTEIRA_INFO[c].label}</b> e só quem é dessa carteira vê as análises, os gráficos e os feedbacks.${many && !viewCarteira(store.user) ? ' Para importar em outra carteira, escolha-a no seletor do topo antes.' : ''}</div></div>`; })()}
     <div class="card card-pad mb"><span class="chip brand">Discador</span><h3 style="margin:10px 0 6px">Lista de ligações do discador (.csv)</h3>
       <p class="small t2" style="margin-top:0">O relatório de ligações exportado do discador (IdContato, Campanha, Operação, Login, Data, Duração, Finalização, Nome do arquivo…). Cada ligação entra como atendimento pendente, com o operador e a carteira certos; depois é só enviar o áudio ou a transcrição.</p>
       <label class="drop" id="calls-drop" style="padding:20px"><input type="file" id="calls-file" accept=".csv,.txt,.xlsx" hidden>

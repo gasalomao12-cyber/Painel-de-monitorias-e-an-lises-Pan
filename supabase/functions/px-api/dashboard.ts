@@ -210,7 +210,8 @@ async function resolveCycle(cycleId, dates) {
 
 async function resolveOperators(calls, mapped, portfolio = 'PAN') {
   const logins = [...new Set(calls.map((c) => String(c.log || '').trim().toLowerCase()).filter(Boolean))];
-  const existing = await must(sb().from('px_operators').select('*'));
+  // Só operadores da carteira de quem importa: a mesma pessoa em outra carteira é outro cadastro
+  const existing = await must(sb().from('px_operators').select('*').eq('portfolio', portfolio));
   const supervisors = await must(sb().from('px_profiles').select('id, name').eq('role', 'supervisor').eq('active', true));
   const supByName = new Map(supervisors.map((s) => [norm(s.name), s.id]));
   const byLogin = new Map(existing.filter((o) => o.login).map((o) => [o.login.toLowerCase(), o]));

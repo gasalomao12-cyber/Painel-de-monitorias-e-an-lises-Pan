@@ -237,7 +237,7 @@ function cmpCall(c, meta) {
 }
 
 async function resolveAgvOperators(calls, portfolio = 'PAN') {
-  const ops = await must(sb().from('px_operators').select('*'));
+  const ops = await must(sb().from('px_operators').select('*').eq('portfolio', portfolio));
   const supervisors = await must(sb().from('px_profiles').select('id, name').eq('role', 'supervisor').eq('active', true));
   const norm = (s) => plain(s).toLowerCase();
   const supByName = new Map(supervisors.map((s) => [norm(s.name), s.id]));
