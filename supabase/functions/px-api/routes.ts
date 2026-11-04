@@ -12,7 +12,7 @@ import { importDashboard } from './dashboard.ts';
 import { importCalls } from './discador.ts';
 import { importSpeechAgv, importAgvDashboard, importAgvEsforco } from './agv.ts';
 import { registerQuedas } from './quedas.ts';
-import { CARTEIRAS, carteiraScope, carteiraNew, inScope } from './carteira.ts';
+import { CARTEIRAS, carteiraScope, carteiraNew, inScope, scopeValues } from './carteira.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
 
@@ -118,7 +118,9 @@ const supervisorTeamOnly = (req) => req.user.role === 'supervisor' && getSetting
 function scoped(query, req) {
   const q = supervisorTeamOnly(req) ? query.eq('supervisor_user_id', req.user.id) : query;
   const pf = carteiraScope(req);
-  return !pf ? q : pf.length === 1 ? q.eq('portfolio', pf[0]) : q.in('portfolio', pf);
+  if (!pf) return q;
+  const v = scopeValues(pf);
+  return v.length === 1 ? q.eq('portfolio', v[0]) : q.in('portfolio', v);
 }
 
 // Quem vê só a própria carteira não abre atendimento, operador ou ação de outra carteira nem pelo endereço direto

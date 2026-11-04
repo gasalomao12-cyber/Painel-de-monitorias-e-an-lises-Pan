@@ -38,7 +38,7 @@ const BANDS = [
   { k: 'ok', t: 'Bom', r: '70% ou mais', c: 'var(--okf)', test: (p) => p >= 70 }];
 const REF = 70;
 const PAL = ['#0A8FD6', '#7C5CE0', '#0E9F8E', '#E07B0B', '#D2477E', '#5B6B86'];
-const CART = () => CARTEIRA_INFO[document.documentElement.dataset.carteira] || CARTEIRA_INFO.PAN;
+const CART = () => CARTEIRA_INFO[document.documentElement.dataset.carteiraKey] || CARTEIRA_INFO.PAN;
 const logos = () => `<div class="logos"><img src="brand/paschoalotto-branco.png" alt="Paschoalotto"><i></i><img src="${CART().logo}" alt="${CART().label}"></div>`;
 const TAB_LABEL = {
   'VENC. NAO ATENDE': 'Vencimento não atende', 'VENCIMENTO NAO ATENDE': 'Vencimento não atende', 'ATRASO DE SALARIO': 'Atraso de salário', 'REDUCAO DE RENDA': 'Redução de renda',

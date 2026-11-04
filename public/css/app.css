@@ -683,6 +683,9 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .lg-l { display: none !important; }
 :root[data-theme="light"] .lg-d { display: none !important; } :root[data-theme="light"] .lg-l { display: block !important; }
 .shell.collapsed .sb-carteira { display: none; }
+.sb-carteira:has(.lg-tag) { display: flex; justify-content: center; gap: 12px; }
+.lg-tag { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--brand); padding: 4px 9px; border-radius: 99px; background: var(--brand-soft); border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent); white-space: nowrap; }
+.tb-carteira .lg-tag { margin-left: 10px; font-size: 10px; padding: 3px 7px; }
 /* Logo da carteira também na barra superior (fica visível com o menu recolhido) */
 .tb-carteira { display: flex; align-items: center; height: 38px; padding: 0 14px; margin-left: 14px; border-radius: 11px; background: var(--grad-soft); border: 1px solid color-mix(in srgb, var(--brand) 22%, transparent); flex: none; }
 .tb-carteira img { height: 18px; width: auto; display: block; } .tb-carteira.tb-pan img { height: 22px; } .tb-carteira.tb-safra img { height: 24px; } .tb-carteira.tb-porto img { height: 17px; }

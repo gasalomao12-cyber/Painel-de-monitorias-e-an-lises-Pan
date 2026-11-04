@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { html, icon, $, toast, busy, avatar, ROLE, fmtDate } from '../ui.js';
 import { applyTheme } from '../app.js';
-import { downloadWindowsShortcut } from '../desktop.js';
+import { openShortcut } from '../desktop.js';
 
 export async function render(el, _p, ctx) {
   const u = ctx.store.user;
@@ -25,20 +25,14 @@ export async function render(el, _p, ctx) {
       </form>
       <div class="card card-pad span-2" id="desk">
         <div class="row" style="align-items:flex-start;gap:18px">
-          <img src="icons/px-128.png" alt="Ícone PX" width="72" height="72" style="border-radius:18px;box-shadow:0 12px 30px -10px rgba(124,108,255,.7)">
+          <img src="icons/px-128.png" alt="Ícone PX" width="72" height="72" style="border-radius:18px;box-shadow:0 12px 30px -10px color-mix(in srgb, var(--brand) 70%, transparent)">
           <div style="flex:1;min-width:260px"><h3 style="margin:0 0 4px;font-size:16px">Atalho na área de trabalho</h3>
             <p class="small t2" style="margin:0 0 12px">Abra a plataforma com um clique, em janela própria e com o ícone <b>PX</b> — igual ao simulador de negociação.</p>
-            <div class="row"><button class="btn primary" id="dk-win">${icon('download')}Atalho para Windows</button>
-              <button class="btn" id="dk-pwa">${icon('plus')}Instalar como aplicativo</button></div>
-            <p class="tiny muted" style="margin:10px 0 0">Windows: baixe e dê dois cliques no arquivo .bat — o atalho “PX Monitorias” aparece na área de trabalho. Mac/Linux: use “Instalar como aplicativo” (Chrome ou Edge) para fixar o ícone PX no Dock/menu.</p></div>
+            <div class="row"><button class="btn primary" id="dk-open">${icon('plus')}Criar atalho na área de trabalho</button></div>
+            <p class="tiny muted" style="margin:10px 0 0">Instala a plataforma como aplicativo do Edge ou do Chrome, sem baixar nem executar nenhum arquivo. Se o navegador não oferecer a instalação, salva um atalho direto na área de trabalho.</p></div>
         </div></div>
     </div>`);
-  $('#dk-win').onclick = () => { downloadWindowsShortcut(); toast('Abra o arquivo baixado para criar o atalho.'); };
-  $('#dk-pwa').onclick = async () => {
-    const pr = ctx.store.installPrompt;
-    if (pr) { pr.prompt(); const r = await pr.userChoice; if (r.outcome === 'accepted') toast('Aplicativo instalado!'); ctx.store.installPrompt = null; }
-    else toast('Use o menu do navegador › “Instalar PX Monitorias” (ou “Apps › Instalar este site”). Requer HTTPS.', 'ok', 6000);
-  };
+  $('#dk-open').onclick = () => openShortcut();
   $('#pf-form').addEventListener('submit', async (e) => {
     e.preventDefault(); const f = e.target;
     busy($('#pf-save'), true);

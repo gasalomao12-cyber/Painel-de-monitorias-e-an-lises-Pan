@@ -2,7 +2,7 @@ import { api } from '../api.js';
 import { sb, recoveryUrl } from '../sb.js';
 import { html, icon, pxLogo, $, $$, toast, busy, greeting, modal } from '../ui.js';
 import { applyTheme } from '../app.js';
-import { downloadWindowsShortcut } from '../desktop.js';
+import { openShortcut } from '../desktop.js';
 
 function pwToggle(root) {
   $$('[data-pw]', root).forEach((b) => b.addEventListener('click', () => {
@@ -58,7 +58,7 @@ export function renderLogin(app, { onLogin, store, error = '' }) {
   pwToggle(app);
   const form = $('#login-form');
   $('#l-forgot').onclick = () => forgotPassword(form.email.value.trim());
-  $('#l-shortcut').onclick = () => { downloadWindowsShortcut(); toast('Abra o arquivo baixado para criar o atalho PX na área de trabalho.', 'ok', 6000); };
+  $('#l-shortcut').onclick = () => openShortcut();
   setTimeout(() => (remembered ? $('#l-pass') : $('#l-user')).focus(), 50);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();

@@ -4,7 +4,7 @@ import { html, raw, icon, pxLogo, $, $$, toast, modal, avatar, userName, ROLE, e
 import { destroyAll } from './charts.js';
 import { renderLogin, renderChangePassword, renderWelcome } from './views/auth.js';
 import { openShortcut, offerShortcut, markShortcutLaunch } from './desktop.js';
-import { CARTEIRA_INFO, applyCarteira, chooseCarteira, viewCarteira, userCarteiras, carteiraLogo } from './carteira.js';
+import { CARTEIRA_INFO, applyCarteira, chooseCarteira, viewCarteira, userCarteiras, carteiraLogo, carteiraTheme } from './carteira.js';
 
 const app = document.getElementById('app');
 export const store = { user: null, meta: null, company: 'Paschoalotto', cycle: localStorage.getItem('px_cycle') || '' };
@@ -147,7 +147,7 @@ function shell() {
         <div class="sb-title">Monitorias<br>&amp; Feedbacks<small>${store.company}</small></div>
         <button class="btn-icon sb-toggle" id="sb-toggle" aria-label="Recolher menu" title="Recolher menu">${icon('panel')}</button>
       </div>
-      ${viewCarteira(u) ? html`<div class="sb-carteira sb-${viewCarteira(u).toLowerCase()}" title="${CARTEIRA_INFO[viewCarteira(u)].label}">${raw(carteiraLogo(viewCarteira(u)))}</div>` : ''}
+      ${viewCarteira(u) ? html`<div class="sb-carteira sb-${carteiraTheme(viewCarteira(u)).toLowerCase()}" title="${CARTEIRA_INFO[viewCarteira(u)].label}">${raw(carteiraLogo(viewCarteira(u)))}</div>` : ''}
       <nav class="sb-nav">${navHtml}</nav>
       <div class="sb-foot">
         <div class="me">
@@ -164,7 +164,7 @@ function shell() {
       <header class="topbar">
         <button class="btn-icon mobile-only" id="nav-open" aria-label="Abrir menu">${icon('menu')}</button>
         <div style="min-width:0"><div class="crumb" id="page-crumb"></div><h1 id="page-title">PX</h1></div>
-        ${viewCarteira(u) ? html`<div class="tb-carteira tb-${viewCarteira(u).toLowerCase()}" title="Carteira ${CARTEIRA_INFO[viewCarteira(u)].label}">${raw(carteiraLogo(viewCarteira(u)))}</div>` : ''}
+        ${viewCarteira(u) ? html`<div class="tb-carteira tb-${carteiraTheme(viewCarteira(u)).toLowerCase()}" title="Carteira ${CARTEIRA_INFO[viewCarteira(u)].label}">${raw(carteiraLogo(viewCarteira(u)))}</div>` : ''}
         <div class="grow"></div>
         <label class="search"><span class="sr-only">Buscar</span>${icon('search')}<input id="global-search" placeholder="Buscar operador, protocolo, página…" autocomplete="off"><kbd>Ctrl K</kbd></label>
         ${userCarteiras(u).length > 1 ? html`<label class="carteira-pick" title="Carteira que você está vendo"><span class="sr-only">Carteira</span><select class="select sm" id="carteira-sel"><option value="">${u.role === 'admin' ? 'Todas as carteiras' : 'Todas as minhas carteiras'}</option>${userCarteiras(u).map((c) => html`<option value="${c}" ${viewCarteira(u) === c ? 'selected' : ''}>${CARTEIRA_INFO[c].label}</option>`)}</select></label>` : ''}
@@ -200,7 +200,7 @@ function shell() {
   $('#logout-btn').onclick = logout;
   $('#bug-fab').onclick = openBugReport;
   $('#bug-top').onclick = openBugReport;
-  $('#shortcut-btn').onclick = () => openShortcut(store);
+  $('#shortcut-btn').onclick = () => openShortcut();
   $('#carteira-sel')?.addEventListener('change', async (e) => {
     chooseCarteira(e.target.value);
     shell(); await refreshMeta().catch(() => {}); route();
@@ -476,7 +476,7 @@ export async function start(opts = {}) {
   shell();
   subscribeRealtime();
   route();
-  offerShortcut(store);
+  offerShortcut();
 }
 sb.auth.onAuthStateChange((event) => { if (event === 'SIGNED_OUT' && store.user) { store.user = null; start(); } });
 
@@ -486,7 +486,6 @@ window.addEventListener('px:must-change-password', () => start());
 setInterval(() => { if (store.user && store.meta && document.visibilityState === 'visible') refreshMeta().catch(() => {}); }, 60000);
 
 markShortcutLaunch();
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); store.installPrompt = e; });
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 
 start();
