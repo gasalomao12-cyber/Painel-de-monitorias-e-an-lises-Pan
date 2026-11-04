@@ -6,20 +6,28 @@ O que ele faz
   ("Formalizar no Beedoo"). O Beedoo só abre de dentro da rede da Paschoalotto, por isso
   o envio sai do seu computador, com a sua sessão do Beedoo.
 
-Instalar (uma vez)
+Instalar (uma vez só)
   1. Tenha o Python 3.10 ou mais novo e o Microsoft Edge.
-  2. No Prompt de Comando:  pip install playwright truststore
-     (não precisa de "playwright install": o agente usa o Edge do computador)
-  3. Na PX Monitorias, abra "Envios ao Beedoo" > "Conectar agente" e baixe o px_beedoo.ini.
-     Coloque o px_beedoo.ini na mesma pasta deste arquivo.
-  4. (Opcional) No px_beedoo.ini, em pasta_audios, informe a pasta dos áudios das ligações
-     (ex.: a pasta do OneDrive sincronizada) para o áudio ir anexado na monitoria.
+  2. Na PX Monitorias, abra "Envios ao Beedoo" > "Conectar agente" e baixe os arquivos e o
+     px_beedoo.ini. Deixe todos na mesma pasta (ex.: Documentos\PX Beedoo).
+  3. Dê dois cliques em iniciar_agente.bat. Na primeira vez ele instala o que precisa e,
+     se o Beedoo pedir, abre o Edge para você entrar com a sua conta Microsoft.
 
-Usar
-  Dê dois cliques em iniciar_agente.bat (ou: python px_beedoo_agente.py).
-  Na primeira vez o Edge abre o Beedoo: entre com a sua conta Microsoft. A sessão fica salva
-  na pasta perfil_beedoo; o agente não guarda senha.
-  Deixe a janela aberta. Na plataforma, "Envios ao Beedoo" mostra "Agente conectado".
+Depois disso não precisa abrir mais nada
+  - O agente abre sozinho, minimizado na barra de tarefas, sempre que você entra no Windows.
+  - Ele fica enviando: confirmou na plataforma, a mensagem sai em segundos.
+  - O Edge trabalha escondido. Ele só aparece quando o Beedoo pedir login de novo.
+  - Se o agente parar por algum motivo, a janela reabre sozinha em 15 segundos.
+  - Computador desligado? As mensagens esperam na fila e saem quando ele ligar.
+  Na plataforma, "Envios ao Beedoo" mostra "Agente conectado".
+
+Opções no px_beedoo.ini
+  pasta_audios = pasta dos áudios das ligações (ex.: a pasta do OneDrive sincronizada),
+                 para o áudio ir anexado na monitoria.
+  janela = visivel   deixa o Edge do agente aberto na tela (o padrão é escondido).
+
+Parar de abrir com o Windows
+  No Prompt de Comando, nesta pasta:  py px_beedoo_agente.py --desinstalar
 
 Segurança
   A chave do px_beedoo.ini é só sua. Se perder o computador ou a chave vazar, gere outra em

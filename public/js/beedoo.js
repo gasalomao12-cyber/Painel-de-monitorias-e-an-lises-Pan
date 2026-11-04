@@ -90,7 +90,7 @@ export async function formalizeBeedoo(params, { onSent } = {}) {
             </div>
           </div>
           ${pr.length ? html`<div class="bd-warn bad">${icon('alert')}<span>${pr.join(' ')}</span></div>`
-            : !d.agent_online ? html`<div class="bd-warn">${icon('info')}<span>${d.has_agent ? 'Seu agente PX Beedoo está fechado. A mensagem fica na fila e sai assim que ele abrir.' : 'Você ainda não conectou o agente PX Beedoo. A mensagem fica na fila; conecte em Envios ao Beedoo, ou use “Copiar e abrir no Beedoo”.'}</span></div>` : ''}`);
+            : !d.agent_online ? html`<div class="bd-warn">${icon('info')}<span>${d.has_agent ? 'Seu agente PX Beedoo está desligado agora (computador desligado ou agente fechado). A mensagem fica na fila e sai assim que ele voltar.' : 'Você ainda não conectou o agente PX Beedoo. A mensagem fica na fila; conecte em Envios ao Beedoo, ou use “Copiar e abrir no Beedoo”.'}</span></div>` : ''}`);
         $('#bd-send', m).disabled = pr.length > 0;
       };
       const show = (t) => {

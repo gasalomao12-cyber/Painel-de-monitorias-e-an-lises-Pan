@@ -30,7 +30,7 @@ export async function render(el, _p, ctx) {
     const on = data.agent_online;
     $('#bd-agent', el).innerHTML = String(html`<div class="bd-agent ${on ? 'on' : ''}">
       <span class="bd-dot"></span><div class="grow"><b>${on ? 'Agente PX Beedoo conectado' : data.agents.length ? 'Agente PX Beedoo desconectado' : 'Agente PX Beedoo ainda não conectado'}</b>
-      <div class="tiny muted">${on ? `${data.agent_name || 'Seu computador'} · as mensagens confirmadas saem em segundos` : data.agent_seen ? `Visto pela última vez ${fmtRel(data.agent_seen)}. Abra o iniciar_agente.bat no seu computador.` : 'Clique em “Conectar agente” para baixar o agente e a sua chave. Enquanto isso, use “Copiar e abrir no Beedoo” na revisão.'}</div></div>
+      <div class="tiny muted">${on ? `${data.agent_name || 'Seu computador'} · as mensagens confirmadas saem em segundos` : data.agent_seen ? `Visto pela última vez ${fmtRel(data.agent_seen)}. Ele abre sozinho quando o computador liga; se não abriu, dê dois cliques no iniciar_agente.bat.` : 'Clique em “Conectar agente” para baixar o agente e a sua chave. Enquanto isso, use “Copiar e abrir no Beedoo” na revisão.'}</div></div>
       ${['pendente', 'enviando', 'erro', 'enviado'].map((s) => html`<div class="bd-num"><b>${data.rows.filter((r) => r.status === s || (s === 'enviado' && r.status === 'manual')).length}</b><span>${STATUS[s][0]}</span></div>`)}
     </div>`);
   };
@@ -85,12 +85,12 @@ function connect(reload) {
     body: html`<ol class="bd-steps">
       <li><b>Baixe o agente</b> e salve os 3 arquivos numa pasta (ex.: Documentos\\PX Beedoo).
         <div class="row" style="margin-top:8px"><a class="btn sm" href="agente/px_beedoo_agente.py" download>${icon('download')}px_beedoo_agente.py</a><a class="btn sm" href="agente/iniciar_agente.bat" download>${icon('download')}iniciar_agente.bat</a><a class="btn sm ghost" href="agente/LEIA-ME.txt" download>${icon('download')}LEIA-ME.txt</a></div></li>
-      <li><b>Instale uma vez</b> no Prompt de Comando: <code>pip install playwright truststore</code> (usa o Edge do computador).</li>
+      <li><b>Tenha o Python 3</b> no computador (o agente usa o Edge que já está instalado).</li>
       <li><b>Gere a sua chave</b> e baixe o <code>px_beedoo.ini</code> na mesma pasta. ${''}
         <div class="field" style="margin:8px 0 0"><label for="bd-aud">Pasta dos áudios das ligações (opcional, para anexar o áudio na monitoria)</label><input class="input" id="bd-aud" placeholder="ex.: C:\\Users\\voce\\OneDrive - Paschoalotto\\Áudios"></div>
         <button class="btn primary" id="bd-key" style="margin-top:4px">${icon('key')}Gerar chave e baixar px_beedoo.ini</button>
         <div id="bd-keybox"></div></li>
-      <li><b>Abra o iniciar_agente.bat.</b> Na primeira vez, entre no Beedoo com a sua conta Microsoft na janela do Edge. Pronto: esta página mostra “Agente conectado”.</li>
+      <li><b>Dê dois cliques no iniciar_agente.bat uma vez só.</b> Ele instala o que precisa e, se o Beedoo pedir, abre o Edge para você entrar com a conta Microsoft. A partir daí <b>abre sozinho, minimizado, sempre que você entra no Windows</b> e fica enviando; se parar, reabre sozinho. Esta página mostra “Agente conectado”.</li>
     </ol>`,
     foot: html`<button class="btn" data-close>Fechar</button>`,
     onMount: (m) => {
@@ -129,7 +129,7 @@ function drawHelp(box) {
   box.innerHTML = String(html`<div class="grid g-3" style="gap:14px">
     <div class="card"><div class="bd-n">1</div><b>Formalize</b><p class="small muted">Em Feedbacks aplicados, no atendimento (monitoria) ou no Controle de ações, clique em “Formalizar no Beedoo”. Ao aplicar um feedback, a revisão já abre em seguida.</p></div>
     <div class="card"><div class="bd-n">2</div><b>Revise e confirme</b><p class="small muted">A aba Mensagem traz o texto pronto pelo modelo; ajuste o que quiser. A aba Revisão mostra para quem vai, o login, o anexo e a prévia no chat. “Confirmar e enviar” coloca na fila.</p></div>
-    <div class="card"><div class="bd-n">3</div><b>O agente envia</b><p class="small muted">O agente PX Beedoo, aberto no seu computador, envia pelo chat do Beedoo com a sua sessão e devolve o resultado aqui. Sem o agente, “Copiar e abrir no Beedoo” copia a mensagem e abre o chat do operador.</p></div>
+    <div class="card"><div class="bd-n">3</div><b>O agente envia</b><p class="small muted">O agente PX Beedoo abre sozinho com o Windows, envia pelo chat do Beedoo com a sua sessão e devolve o resultado aqui. Instale uma vez em “Conectar agente”. Sem o agente, “Copiar e abrir no Beedoo” copia a mensagem e abre o chat do operador.</p></div>
   </div>
   <p class="small muted">O Beedoo só abre de dentro da rede da Paschoalotto; por isso o envio sai do seu computador, não do servidor. O agente não guarda senha: a sessão do Beedoo fica no perfil do Edge que ele usa.</p>`);
 }
