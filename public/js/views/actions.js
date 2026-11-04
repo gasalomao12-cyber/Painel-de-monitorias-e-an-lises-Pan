@@ -1,8 +1,12 @@
 import { api, qs } from '../api.js';
 import { html, icon, $, $$, fmtDate, toast, modal, busy, debounce, emptyState, confirmDialog } from '../ui.js';
+import { CARTEIRA_INFO, userCarteiras, viewCarteira } from '../carteira.js';
+
+// Quem vê mais de uma carteira (admin, ou acesso com várias) baixa o consolidado; os demais, a planilha da carteira
+const consolidated = (u) => userCarteiras(u).length > 1 && !viewCarteira(u);
 
 // Ações (feedbacks, análises, calibragens e ações manuais) — cada linha vai para a planilha "CONTROLE DE AÇÕES"
-const SOURCE = { feedback: ['Feedback', 'ok'], analise: ['Análise', 'info'], ia: ['Análise com IA', 'brand'], contestacao: ['Calibragem', 'warn'], manual: ['Registro manual', 'outline'] };
+const SOURCE = { feedback: ['Feedback', 'ok'], analise: ['Análise', 'info'], ia: ['Análise com IA', 'brand'], contestacao: ['Calibragem', 'warn'], manual: ['Registro manual', 'outline'], planilha: ['Planilha importada', 'outline'], beedoo: ['Beedoo', 'info'] };
 const SYNC = { enviado: ['Na planilha', 'ok', 'checkCircle'], pendente: ['Na fila', '', 'msgClock'], enviando: ['Enviando', 'brand', 'refresh'], erro: ['Erro no envio', 'bad', 'alert'], ignorado: ['Planilha desligada', 'outline', 'minus'] };
 const state = { from: '', to: '', operator_id: '', source: '', status: '', q: '' };
 let data = null;
@@ -13,7 +17,9 @@ export async function render(el, _p, ctx) {
   el.innerHTML = String(html`
     <div class="page-head"><div><h2>Controle de ações</h2><p>Tudo o que é feito com os operadores, linha a linha, como na planilha “CONTROLE DE AÇÕES”. Feedbacks, análises e calibragens entram sozinhos; o resto você registra aqui.</p></div>
       <div class="grow"></div>
-      ${can('admin', 'qualidade') ? html`<button class="btn" id="ac-sync">${icon('refresh')}Reenviar pendentes</button><button class="btn primary" id="ac-new">${icon('plus')}Registrar ação</button>` : ''}</div>
+      <button class="btn" id="ac-xlsx" title="Planilha no modelo do controle de ações, com as ações registradas até agora">${icon('download')}${consolidated(store.user) ? 'Baixar consolidado (Excel)' : 'Baixar planilha (Excel)'}</button>
+      ${can('admin', 'qualidade') ? html`<button class="btn" id="ac-imp">${icon('upload')}Importar planilha</button><input type="file" id="ac-imp-file" accept=".xlsx,.xlsm" hidden>
+        <button class="btn" id="ac-sync">${icon('refresh')}Reenviar pendentes</button><button class="btn primary" id="ac-new">${icon('plus')}Registrar ação</button>` : ''}</div>
     <div id="ac-banner"></div>
     <div class="filters">
       <span class="muted">${icon('filter')}</span>
@@ -28,6 +34,53 @@ export async function render(el, _p, ctx) {
   [['#ac-from', 'from'], ['#ac-to', 'to'], ['#ac-op', 'operator_id'], ['#ac-src', 'source'], ['#ac-st', 'status']].forEach(([s, k]) => { $(s).onchange = (e) => { state[k] = e.target.value; reload(); }; });
   $('#ac-q').addEventListener('input', debounce((e) => { state.q = e.target.value; reload(); }, 300));
   $('#ac-new')?.addEventListener('click', () => newAction(el, ctx));
+  // Controle de ações em Excel, sempre com o que está registrado agora na plataforma
+  $('#ac-xlsx').addEventListener('click', async (e) => {
+    const b = e.currentTarget; busy(b, true, 'Gerando');
+    try {
+      const data = await api.get(`/actions/export${qs({ from: state.from, to: state.to })}`);
+      const { downloadActions } = await import('../actions-xlsx.js');
+      await downloadActions(data, { consolidated: consolidated(store.user) });
+      toast(`Planilha gerada com ${data.rows.length} ação(ões)${state.from || state.to ? ' do período filtrado' : ''}.`);
+    } catch (ex) { toast(ex.message, 'err'); }
+    busy(b, false);
+  });
+  $('#ac-imp')?.addEventListener('click', () => $('#ac-imp-file').click());
+  $('#ac-imp-file')?.addEventListener('change', async (e) => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try {
+      const { readActionsFile } = await import('../actions-xlsx.js');
+      const { carteiraOfTitle } = await import('../carteira-reports.js');
+      const { rows, sheet } = await readActionsFile(f);
+      if (!rows.length) throw new Error('A planilha não tem ações.');
+      const own = userCarteiras(store.user);
+      const guess = carteiraOfTitle(f.name.replace(/FINANCEIRA/i, 'ADM')) || viewCarteira(store.user) || own[0];
+      modal({
+        title: 'Importar planilha de controle de ações',
+        body: html`<p style="margin-top:0"><b>${f.name}</b> · aba “${sheet}” · ${rows.length} linha(s).</p>
+          <p class="small t2">Cada linha entra na carteira do próprio segmento (ex.: SAFRA CALL CENTER vai para Safra ADM e Call). Linhas sem segmento entram na carteira abaixo. A mesma planilha de novo não duplica.</p>
+          <div class="field"><label for="ai-cart">Carteira das linhas sem segmento</label><select class="select" id="ai-cart">${own.map((c) => html`<option value="${c}" ${c === guess ? 'selected' : ''}>${CARTEIRA_INFO[c].label}</option>`)}</select></div>
+          <div id="ai-prog" class="small t2"></div>`,
+        foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="ai-go">${icon('upload')}Importar ${rows.length} linha(s)</button>`,
+        onMount: (m, close) => {
+          $('#ai-go', m).onclick = async (ev) => {
+            const btn = ev.currentTarget; busy(btn, true, 'Importando');
+            const tot = { created: 0, already: 0, skipped: 0, outside: 0 };
+            try {
+              for (let i = 0; i < rows.length; i += 500) {
+                $('#ai-prog', m).textContent = `Enviando ${Math.min(i + 500, rows.length)} de ${rows.length}…`;
+                const r = await api.post('/actions/import', { rows: rows.slice(i, i + 500), carteira: $('#ai-cart', m).value, file: f.name });
+                for (const k of Object.keys(tot)) tot[k] += r[k] || 0;
+              }
+              close();
+              toast(`${tot.created} ação(ões) importada(s)${tot.already ? ` · ${tot.already} já estavam na plataforma` : ''}${tot.skipped ? ` · ${tot.skipped} sem login, ação ou data` : ''}${tot.outside ? ` · ${tot.outside} de outra carteira (ignoradas)` : ''}.`, 'ok', 8000);
+              load(el, ctx);
+            } catch (ex2) { toast(ex2.message, 'err'); busy(btn, false); }
+          };
+        },
+      });
+    } catch (ex) { toast(ex.message, 'err', 7000); }
+  });
   $('#ac-sync')?.addEventListener('click', async (e) => {
     const btnEl = e.currentTarget;
     busy(btnEl, true, 'Enviando');

@@ -744,6 +744,71 @@ router.post('/actions', QUALITY, h(async (req, res) => {
   res.json({ created, sync });
 }));
 
+// Controle de ações em Excel: todas as linhas da(s) carteira(s) de quem baixa, já com a carteira de cada uma
+router.get('/actions/export', h(async (req, res) => {
+  const q = req.query || {};
+  const rows = await fetchAll(() => {
+    let x = scoped(sb().from('px_v_actions').select('id, action_date, login, segment_label, theme, action, obs, responsible, responsible_name, operator_name, source, portfolio'), req);
+    if (q.from) x = x.gte('action_date', q.from);
+    if (q.to) x = x.lte('action_date', q.to);
+    return x.order('action_date', { ascending: true }).order('id', { ascending: true });
+  });
+  const staff = await must(sb().from('px_profiles').select('name, role, active').in('role', ['admin', 'qualidade']));
+  const up = (v) => String(v || '').trim().toUpperCase();
+  res.json({
+    rows: rows.map((r) => ({ carteira: r.portfolio || 'PAN', login: r.login, segmento: r.segment_label, tema: r.theme, acao: r.action, data: r.action_date, obs: r.obs, responsavel: up(r.responsible || r.responsible_name), operador: r.operator_name, origem: r.source })),
+    lists: {
+      themes: THEMES, actions: ACTIONS,
+      segments: [...new Set([...Object.values(segmentMap()), 'SAFRA ADM', 'SAFRA CALL CENTER', 'SAFRA BS', 'PORTO BANK', ...rows.map((r) => r.segment_label).filter(Boolean)])].sort(),
+      responsibles: [...new Set([...staff.filter((p) => p.active !== false).map((p) => up(p.name)), ...rows.map((r) => up(r.responsible || r.responsible_name)).filter(Boolean)])].sort(),
+    },
+    scope: carteiraScope(req) || CARTEIRAS,
+  });
+}));
+
+// Importa as planilhas "CONTROLE DE AÇÕES" que já existem (histórico): cada linha vai para a carteira do segmento
+const carteiraOfSegment = (seg, fallback) => {
+  const v = String(seg || '').toUpperCase();
+  if (/SAFRA/.test(v)) return /\bBS\b/.test(v) ? 'SAFRA BS' : 'SAFRA ADM';
+  if (/PORTO/.test(v)) return 'PORTO';
+  if (/PAN/.test(v)) return 'PAN';
+  return fallback;
+};
+router.post('/actions/import', QUALITY, h(async (req, res) => {
+  const b = req.body || {};
+  const scope = carteiraScope(req);
+  const fallback = CARTEIRAS.includes(String(b.carteira || '').toUpperCase()) ? String(b.carteira).toUpperCase() : carteiraNew(req);
+  const list = (Array.isArray(b.rows) ? b.rows : []).slice(0, 2000);
+  if (!list.length) return res.status(400).json({ error: 'Nenhuma linha recebida.' });
+  const ops = await fetchAll(() => sb().from('px_operators').select('id, login, portfolio').not('login', 'is', null).order('id'));
+  const opBy = new Map(ops.map((o) => [`${o.portfolio}|${String(o.login).toLowerCase()}`, o.id]));
+  const clipT = (v, n) => { const t = String(v ?? '').trim(); return t ? t.slice(0, n) : null; };
+  const seen = new Map(), out = [];
+  let skipped = 0, outside = 0;
+  for (const r of list) {
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(r.data || '') ? r.data : null;
+    const action = clipT(r.acao, 60);
+    if (!date || !action || !clipT(r.login, 80)) { skipped++; continue; }
+    const portfolio = carteiraOfSegment(r.segmento, fallback);
+    if (!inScope(scope, portfolio)) { outside++; continue; }
+    const base = [portfolio, String(r.login).trim().toLowerCase(), date, action, r.tema || '', r.obs || '', r.responsavel || ''].join('|');
+    const n = (seen.get(base) || 0) + 1; seen.set(base, n);
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${base}#${n}`)))).slice(0, 12).map((x) => x.toString(16).padStart(2, '0')).join('');
+    out.push({
+      action_date: date, login: clipT(r.login, 80), segment_label: clipT(r.segmento, 120), theme: clipT(r.tema, 60) || 'Conversão', action, obs: clipT(r.obs, 300),
+      responsible: clipT(r.responsavel, 120), source: 'planilha', portfolio, operator_id: opBy.get(`${portfolio}|${String(r.login).trim().toLowerCase()}`) || null,
+      dedupe_key: `planilha:${hash}`, sync_status: 'ignorado',
+    });
+  }
+  let created = 0;
+  for (let i = 0; i < out.length; i += 500) {
+    const ins = await must(sb().from('px_actions').upsert(out.slice(i, i + 500), { onConflict: 'dedupe_key', ignoreDuplicates: true }).select('id'));
+    created += ins.length;
+  }
+  await audit(req.user.id, 'acoes_importadas', 'actions', null, { arquivo: clipT(b.file, 200), linhas: list.length, novas: created });
+  res.json({ received: list.length, created, already: out.length - created, skipped, outside });
+}));
+
 router.delete('/actions/:id', QUALITY, h(async (req, res) => {
   const a = await must(sb().from('px_actions').select('id, sync_status, responsible_user').eq('id', Number(req.params.id)).maybeSingle());
   if (!a) return res.status(404).json({ error: 'Ação não encontrada.' });

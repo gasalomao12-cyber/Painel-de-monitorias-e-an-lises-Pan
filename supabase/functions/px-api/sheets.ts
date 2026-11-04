@@ -67,7 +67,7 @@ const clip = (s, n) => (s == null ? null : String(s).replace(/\s+/g, ' ').trim()
 
 // Registra uma ação (uma linha da planilha). dedupe_key evita duas linhas para o mesmo fato.
 export async function recordAction(a, user) {
-  const op = a.operator_id ? await must(sb().from('px_operators').select('id, name, login, registration, team').eq('id', a.operator_id).maybeSingle()) : null;
+  const op = a.operator_id ? await must(sb().from('px_operators').select('id, name, login, registration, team, portfolio').eq('id', a.operator_id).maybeSingle()) : null;
   let segment = a.segment_label || null;
   if (!segment && a.evaluation) segment = segmentLabel({ ...a.evaluation, team: a.evaluation.team ?? op?.team });
   const row = {
@@ -85,6 +85,7 @@ export async function recordAction(a, user) {
     feedback_id: a.feedback_id || null,
     contest_id: a.contest_id || null,
     dedupe_key: a.dedupe_key || null,
+    portfolio: op?.portfolio || a.portfolio || 'PAN',
     sync_status: sheetEnabled() ? 'pendente' : 'ignorado',
   };
   const { data, error } = row.dedupe_key
