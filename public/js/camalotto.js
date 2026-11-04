@@ -24,8 +24,16 @@ function search(articles, q, n = 3) {
 }
 
 // ---------------------------------------------------------------- destaque (spotlight) e cartão do Camalotto
-function placeCard(card, rect) {
-  const vw = innerWidth, vh = innerHeight, cw = card.offsetWidth, ch = card.offsetHeight, m = 16;
+// O zoom da interface (CSS zoom no <html>) faz getBoundingClientRect medir em pixels da tela, enquanto
+// left/top/width de um elemento fixo são pixels CSS. A escala real é medida num elemento da própria camada
+// (largura na tela ÷ largura CSS), então o destaque cai certinho em qualquer zoom e em qualquer navegador.
+const scaleOf = (layer) => { const w = layer.offsetWidth; return w ? layer.getBoundingClientRect().width / w || 1 : 1; };
+function cssRect(el, layer) {
+  const k = scaleOf(layer), r = el.getBoundingClientRect();
+  return { left: r.left / k, top: r.top / k, right: r.right / k, bottom: r.bottom / k, width: r.width / k, height: r.height / k };
+}
+function placeCard(card, rect, layer) {
+  const vw = layer ? layer.offsetWidth : innerWidth, vh = layer ? layer.offsetHeight : innerHeight, cw = card.offsetWidth, ch = card.offsetHeight, m = 16;
   let x, y;
   if (!rect) { x = (vw - cw) / 2; y = (vh - ch) / 2; }
   else if (rect.right + cw + 28 < vw && rect.left < vw / 2) { x = rect.right + 20; y = rect.top + rect.height / 2 - ch / 2; }
@@ -83,7 +91,8 @@ function runTour(store) {
   function draw() {
     const s = steps[i];
     const el = s.sel ? visibleEl(s.sel) : null;
-    const r = el?.getBoundingClientRect();
+    el?.scrollIntoView({ block: 'nearest' });
+    const r = el ? cssRect(el, ov) : null;
     if (r) { const p = 6; Object.assign(hole.style, { display: 'block', left: `${r.left - p}px`, top: `${r.top - p}px`, width: `${r.width + p * 2}px`, height: `${r.height + p * 2}px` }); }
     else hole.style.display = 'none';
     ov.classList.toggle('dim', !r);
@@ -94,7 +103,7 @@ function runTour(store) {
           ${i > 0 ? html`<button class="btn sm" data-prev>${icon('chevLeft')}Voltar</button>` : ''}
           <button class="btn primary sm" data-next>${s.intro ? 'Vamos lá' : s.last ? 'Concluir' : 'Próximo'}${s.last ? '' : html`${icon('chevRight')}`}</button></div></div>`);
     card.classList.remove('in'); void card.offsetWidth; card.classList.add('in');
-    placeCard(card, r);
+    placeCard(card, r, ov);
     $('[data-next]', card).onclick = () => { if (s.last) finish(false); else { i++; draw(); } };
     $('[data-prev]', card)?.addEventListener('click', () => { i--; draw(); });
     $('[data-skip]', card)?.addEventListener('click', () => finish(true));
@@ -122,7 +131,7 @@ function skippedCard(store) {
       <div class="cm-btns"><div class="grow"></div><button class="btn primary sm" data-ok>Combinado!</button></div></div></div>`);
   document.body.appendChild(ov);
   const card = $('.cm-card', ov);
-  placeCard(card, fab?.getBoundingClientRect() || null);
+  placeCard(card, fab ? cssRect(fab, ov) : null, ov);
   const close = () => { ov.remove(); setTimeout(() => fab?.classList.remove('pulse'), 4000); };
   $('[data-ok]', ov).onclick = close; $('[data-ok]', ov).focus();
   ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
@@ -167,10 +176,12 @@ function openPanel(store, navigate, onClose) {
     close();
     const el = visibleEl(sel); if (!el) return;
     el.scrollIntoView({ block: 'center' });
-    const r = el.getBoundingClientRect();
     const ring = document.createElement('div'); ring.className = 'cm-ring';
-    Object.assign(ring.style, { left: `${r.left - 6}px`, top: `${r.top - 6}px`, width: `${r.width + 12}px`, height: `${r.height + 12}px` });
-    document.body.appendChild(ring); setTimeout(() => ring.remove(), 3200);
+    Object.assign(ring.style, { left: '0px', top: '0px', width: '100px', height: '100px', visibility: 'hidden' });
+    document.body.appendChild(ring);
+    const r = cssRect(el, ring);
+    Object.assign(ring.style, { left: `${r.left - 6}px`, top: `${r.top - 6}px`, width: `${r.width + 12}px`, height: `${r.height + 12}px`, visibility: '' });
+    setTimeout(() => ring.remove(), 3200);
   };
   const article = (a) => html`<b>${a.title}</b><p>${a.text}</p>${a.route ? html`<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap"><button class="btn sm" data-go="${a.route}">${icon('arrowRight')}Ir para a tela</button>${document.querySelector(`.sb-nav [data-nav="${a.route}"]`) ? html`<button class="btn ghost sm" data-show="${a.route}">${icon('eye')}Me mostre no menu</button>` : ''}</div>` : ''}`;
   msgs.addEventListener('click', (e) => {
