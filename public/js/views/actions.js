@@ -1,6 +1,7 @@
 import { api, qs } from '../api.js';
 import { html, icon, $, $$, fmtDate, toast, modal, busy, debounce, emptyState, confirmDialog } from '../ui.js';
 import { CARTEIRA_INFO, userCarteiras, viewCarteira } from '../carteira.js';
+import { formalizeBeedoo } from '../beedoo.js';
 
 // Quem vê mais de uma carteira (admin, ou acesso com várias) baixa o consolidado; os demais, a planilha da carteira
 const consolidated = (u) => userCarteiras(u).length > 1 && !viewCarteira(u);
@@ -116,10 +117,11 @@ async function load(el, ctx) {
       <td class="small" style="max-width:360px"><div style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden" title="${r.obs || ''}">${r.obs || ''}</div></td>
       <td class="tiny">${r.responsible || '—'}</td>
       <td>${r.evaluation_id ? html`<a class="chip ${SOURCE[r.source]?.[1] || ''}" href="#/atendimentos/${r.evaluation_id}">${SOURCE[r.source]?.[0] || r.source}</a>` : html`<span class="chip ${SOURCE[r.source]?.[1] || ''}">${SOURCE[r.source]?.[0] || r.source}</span>`}</td>
-      <td><span class="chip ${SYNC[r.sync_status][1]}" title="${r.sync_error || (r.synced_at ? `Enviada ${fmtDate(r.synced_at, true)}` : '')}">${icon(SYNC[r.sync_status][2])}${SYNC[r.sync_status][0]}</span></td>
-      <td class="right">${canEdit && !['enviado', 'enviando'].includes(r.sync_status) ? html`<button class="btn-icon" data-del="${r.id}" aria-label="Excluir">${icon('trash')}</button>` : ''}</td>
+      <td>${r.source === 'planilha' ? html`<span class="chip outline" title="Linha trazida da planilha antiga da carteira">${icon('checkCircle')}Histórico</span>` : html`<span class="chip ${SYNC[r.sync_status][1]}" title="${r.sync_error || (r.synced_at ? `Enviada ${fmtDate(r.synced_at, true)}` : '')}">${icon(SYNC[r.sync_status][2])}${SYNC[r.sync_status][0]}</span>`}</td>
+      <td class="right nowrap">${canEdit && r.login ? html`<button class="btn-icon" data-bd="${r.id}" aria-label="Formalizar no Beedoo" title="Formalizar no Beedoo">${icon('send')}</button>` : ''}${canEdit && !['enviado', 'enviando'].includes(r.sync_status) ? html`<button class="btn-icon" data-del="${r.id}" aria-label="Excluir">${icon('trash')}</button>` : ''}</td>
     </tr>`)}</tbody></table></div></div>
     <p class="tiny muted mt">${rows.length} linha(s)${rows.length >= 500 ? ' · mostrando as 500 mais recentes; use os filtros para ver outras' : ''}.</p>`);
+  $$('[data-bd]', box).forEach((b) => b.addEventListener('click', () => formalizeBeedoo({ kind: 'acao', action_id: b.dataset.bd })));
   $$('[data-del]', box).forEach((b) => b.addEventListener('click', async () => {
     if (!(await confirmDialog('Excluir ação', 'A linha sai do histórico e não será enviada para a planilha.', { ok: 'Excluir', danger: true }))) return;
     try { await api.del(`/actions/${b.dataset.del}`); toast('Ação excluída.'); load(el, ctx); } catch (ex) { toast(ex.message, 'err'); }

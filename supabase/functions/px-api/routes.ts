@@ -14,6 +14,7 @@ import { importSpeechAgv, importAgvDashboard, importAgvEsforco } from './agv.ts'
 import { registerQuedas } from './quedas.ts';
 import { registerSafra, readingFor } from './safra.ts';
 import { registerHelp } from './help.ts';
+import { registerBeedoo, registerBeedooAgent } from './beedoo.ts';
 import { CARTEIRAS, carteiraScope, carteiraNew, inScope, scopeValues } from './carteira.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
@@ -108,6 +109,9 @@ router.patch('/auth/profile', requireAuth, h(async (req, res) => {
   const u = Object.keys(patch).length ? await must(sb().from('px_profiles').update(patch).eq('id', req.user.id).select().single()) : req.user;
   res.json({ user: auth.publicUser(u) });
 }));
+
+// Agente PX Beedoo: autentica pela própria chave, não pelo login
+registerBeedooAgent(router, { h });
 
 // A partir daqui tudo exige login
 router.use(requireAuth);
@@ -1714,6 +1718,7 @@ router.get('/export/feedbacks', h(async (req, res) => {
 registerQuedas(router, { h, QUALITY, ADMIN });
 registerSafra(router, { h, QUALITY, audit });
 registerHelp(router, { h });
+registerBeedoo(router, { h, QUALITY, ADMIN });
 
 // --------------------------------------------------------------- Erros
 router.use((err, req, res, _next) => {

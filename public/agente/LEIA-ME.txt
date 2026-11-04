@@ -1,0 +1,26 @@
+PX BEEDOO - AGENTE DE ENVIO
+===========================
+
+O que ele faz
+  Envia pelo chat do Beedoo as mensagens que você revisou e confirmou na PX Monitorias
+  ("Formalizar no Beedoo"). O Beedoo só abre de dentro da rede da Paschoalotto, por isso
+  o envio sai do seu computador, com a sua sessão do Beedoo.
+
+Instalar (uma vez)
+  1. Tenha o Python 3.10 ou mais novo e o Microsoft Edge.
+  2. No Prompt de Comando:  pip install playwright truststore
+     (não precisa de "playwright install": o agente usa o Edge do computador)
+  3. Na PX Monitorias, abra "Envios ao Beedoo" > "Conectar agente" e baixe o px_beedoo.ini.
+     Coloque o px_beedoo.ini na mesma pasta deste arquivo.
+  4. (Opcional) No px_beedoo.ini, em pasta_audios, informe a pasta dos áudios das ligações
+     (ex.: a pasta do OneDrive sincronizada) para o áudio ir anexado na monitoria.
+
+Usar
+  Dê dois cliques em iniciar_agente.bat (ou: python px_beedoo_agente.py).
+  Na primeira vez o Edge abre o Beedoo: entre com a sua conta Microsoft. A sessão fica salva
+  na pasta perfil_beedoo; o agente não guarda senha.
+  Deixe a janela aberta. Na plataforma, "Envios ao Beedoo" mostra "Agente conectado".
+
+Segurança
+  A chave do px_beedoo.ini é só sua. Se perder o computador ou a chave vazar, gere outra em
+  "Envios ao Beedoo" > "Conectar agente": a anterior deixa de valer na hora.

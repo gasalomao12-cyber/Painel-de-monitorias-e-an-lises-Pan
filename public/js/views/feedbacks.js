@@ -3,6 +3,7 @@ import { downloadFeedbacks } from '../files.js';
 import { html, icon, $, $$, fmtScore, fmtDate, avatar, productChip, emptyState, toast, busy, debounce, band, ROLE, modal } from '../ui.js';
 import { multiSelect, bindMultiSelect } from '../ui.js';
 import { filterBar, bindFilterBar } from './dashboard.js';
+import { formalizeBeedoo } from '../beedoo.js';
 
 const state = { product: '', segment: '', team: '', q: '', group: localStorage.getItem('px_fb_group') || 'operador' };
 
@@ -108,7 +109,7 @@ function applyFeedback(o, ctx, reload) {
       <div class="field"><label for="fo-plan">Plano de ação combinado</label><textarea class="textarea" id="fo-plan" name="action_plan" style="min-height:70px"></textarea></div>
       <label class="check"><input type="checkbox" name="operator_ack" checked> Operador ciente do feedback</label>
     </form>`,
-    foot: html`<button class="btn ghost" data-close>Cancelar</button><button class="btn success" id="fo-save">${icon('checkCircle')}Salvar feedback aplicado</button>`,
+    foot: html`<button class="btn ghost" data-close>Cancelar</button><div class="grow"></div><label class="check small" title="Depois de salvar, abre a revisão da mensagem para o chat do Beedoo do operador"><input type="checkbox" id="fo-bd" ${localStorage.getItem('px_fo_bd') === '0' ? '' : 'checked'}> Formalizar no Beedoo em seguida</label><button class="btn success" id="fo-save">${icon('checkCircle')}Salvar feedback aplicado</button>`,
     onMount: (m, close) => {
       const fm = $('#fo-form', m);
       const ids = () => $$('[name="ev"]:checked', m).map((c) => Number(c.value));
@@ -137,7 +138,9 @@ function applyFeedback(o, ctx, reload) {
             evaluation_ids: ids(), applied_at: new Date(fm.applied_at.value).toISOString(), modality: fm.modality.value, followup_date: fm.followup_date.value,
             content: fm.content.value, strengths: fm.strengths.value, improvements: fm.improvements.value, action_plan: fm.action_plan.value, operator_ack: fm.operator_ack.checked, sheet_theme: fm.sheet_theme.value,
           });
+          const toBd = $('#fo-bd', m)?.checked; try { localStorage.setItem('px_fo_bd', toBd ? '1' : '0'); } catch { /* sem armazenamento */ }
           close(); toast(`Feedback aplicado a ${o.operator_name} (${r.evaluations} atendimento(s)).`); ctx.refreshMeta(); reload();
+          if (toBd && r.batch_id) formalizeBeedoo({ kind: 'feedback', batch_id: r.batch_id });
         } catch (ex) { toast(ex.message, 'err'); busy(btnEl, false); }
       };
     },
@@ -172,6 +175,7 @@ async function renderApplied(el, ctx) {
   ctx.setTitle('Feedbacks aplicados', 'Feedbacks');
   const m = store.meta;
   const st = { operator_id: '', from: '', to: '' };
+  const canBd = ctx.can('admin', 'qualidade');
   el.innerHTML = String(html`
     <div class="page-head"><div><h2>Feedbacks aplicados</h2><p>Histórico completo do que foi passado a cada operador, por quem e quando.</p></div><div class="grow"></div>
       <button class="btn" id="fb-exp">${icon('download')}Exportar Excel</button></div>
@@ -201,9 +205,11 @@ async function renderApplied(el, ctx) {
         ${productChip(f.product, f.segment)}<span class="chip">${f._n.length > 1 ? 'nota média' : 'nota'} <b class="score-txt band-${band(f.final_score)}" style="margin-left:4px">${fmtScore(f.final_score)}</b></span>
         <span class="chip ok">${icon('checkCircle')}${fmtDate(f.applied_at)}</span></div>
       <p class="small">${f.content}</p>
-      <div class="row tiny muted mt-0" style="margin-top:10px">${icon('user')}<span>${f.applied_by_display || f.applied_by_name} · ${ROLE[f.applied_by_role] || ''}${f.modality ? ` · ${f.modality}` : ''}${f.operator_ack ? ' · operador ciente' : ''}${f.followup_date ? ` · reavaliar em ${fmtDate(f.followup_date)}` : ''}</span></div>
+      <div class="row tiny muted mt-0" style="margin-top:10px">${icon('user')}<span>${f.applied_by_display || f.applied_by_name} · ${ROLE[f.applied_by_role] || ''}${f.modality ? ` · ${f.modality}` : ''}${f.operator_ack ? ' · operador ciente' : ''}${f.followup_date ? ` · reavaliar em ${fmtDate(f.followup_date)}` : ''}</span>
+        ${canBd ? html`<div class="grow"></div><button class="btn sm" data-bd="${f.id}" title="Revisar e enviar a formalização no chat do Beedoo do operador">${icon('send')}Formalizar no Beedoo</button>` : ''}</div>
     </div>`)}</div>`);
-    $$('[data-ev]', box).forEach((c) => c.addEventListener('click', () => { sessionStorage.setItem('px_ev_tab', 'feedback'); ctx.navigate(`atendimentos/${c.dataset.ev}`); }));
+    $$('[data-ev]', box).forEach((c) => c.addEventListener('click', (e) => { if (e.target.closest('[data-bd]')) return; sessionStorage.setItem('px_ev_tab', 'feedback'); ctx.navigate(`atendimentos/${c.dataset.ev}`); }));
+    $$('[data-bd]', box).forEach((b) => b.addEventListener('click', () => formalizeBeedoo({ kind: 'feedback', feedback_id: b.dataset.bd })));
   };
   bindFilterBar(el, store, state, load);
   bindMultiSelect(el, 'fa-op', (v) => { st.operator_id = v.join('|'); load(); });

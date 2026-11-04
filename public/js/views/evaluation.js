@@ -1,4 +1,5 @@
 import { api, qs } from '../api.js';
+import { formalizeBeedoo } from '../beedoo.js';
 import {
   html, raw, icon, $, $$, esc, fmtScore, fmtDate, fmtDur, fmtRel, avatar, productChip, scoreRing, deltaTag, resChip, toast, modal, busy,
   confirmDialog, RESULT, ROLE, userName, emptyState, parseDate, PRODUCT, SEGMENT, SEGMENTS_OF, ALERT, origLabel, CONTEST,
@@ -89,6 +90,7 @@ function draw(el, ctx) {
           ${editor ? html`<button class="btn ${e.status === 'feedback_aplicado' ? '' : 'success'}" data-goto="feedback">${icon('msgCheck')}${e.status === 'feedback_aplicado' ? 'Ver / registrar feedback' : 'Aplicar feedback'}</button>`
             : html`<button class="btn" data-goto="feedback">${icon('msgCheck')}Ver feedbacks${e.feedbacks.length ? ` (${e.feedbacks.length})` : ''}</button>`}
           ${can('supervisor', 'admin') && !openContest ? html`<button class="btn ${editor ? '' : 'primary'}" id="btn-contest">${icon('flag')}Contestar monitoria</button>` : ''}
+          ${editor ? html`<button class="btn" id="btn-beedoo" title="Revisar e enviar o resultado desta monitoria no chat do Beedoo do operador">${icon('send')}Formalizar no Beedoo</button>` : ''}
           ${editor ? html`<button class="btn" id="btn-transcript">${icon('file')}${e.transcript ? 'Substituir transcrição' : 'Anexar transcrição'}</button>` : ''}
           ${isAdmin ? html`<button class="btn" id="btn-audio" title="Transcrever o áudio da ligação com o Azure Speech">${icon('audio')}Transcrever áudio</button>` : ''}
           ${isAdmin ? html`<button class="btn primary" id="btn-ai" ${e.transcript ? '' : raw('disabled title="Anexe a transcrição primeiro"')}>${icon('sparkles')}${e.ai_status === 'concluida' ? 'Reanalisar com IA' : 'Analisar com IA'}</button>` : ''}
@@ -106,6 +108,7 @@ function draw(el, ctx) {
     <div id="tab-body"></div>`);
 
   $$('.tabs button', el).forEach((b) => b.addEventListener('click', () => { tab = b.dataset.tab; draw(el, ctx); }));
+  $('#btn-beedoo', el)?.addEventListener('click', () => formalizeBeedoo({ kind: 'monitoria', evaluation_id: e.id }));
   $$('[data-goto]', el).forEach((b) => b.addEventListener('click', () => { tab = b.dataset.goto; draw(el, ctx); $('#tab-body').scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
   $('#del-ev', el)?.addEventListener('click', async () => {
     if (!(await confirmDialog('Excluir atendimento', 'A monitoria, os ajustes e os feedbacks registrados serão removidos. Esta ação não pode ser desfeita.', { ok: 'Excluir', danger: true }))) return;
