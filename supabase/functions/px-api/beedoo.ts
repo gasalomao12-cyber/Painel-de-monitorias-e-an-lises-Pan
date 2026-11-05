@@ -65,7 +65,10 @@ export const FIELDS = {
   monitoria: ['operador', 'primeiro_nome', 'login', 'protocolo', 'data_ligacao', 'produto', 'nota', 'pontos_atencao', 'pontos_positivos', 'resumo', 'responsavel', 'carteira'],
   acao: ['operador', 'primeiro_nome', 'login', 'acao', 'tema', 'data', 'obs', 'responsavel', 'carteira'],
 };
-const template = (kind) => getSetting(`beedoo_tpl:${kind}`) || DEFAULT_TEMPLATES[kind];
+// Modelo de cada pessoa (o que ela salvou) > modelo geral (do administrador) > padrão da plataforma
+const myKey = (kind, uid) => `beedoo_tpl:${kind}:u:${uid}`;
+const template = (kind, uid) => (uid && getSetting(myKey(kind, uid))) || getSetting(`beedoo_tpl:${kind}`) || DEFAULT_TEMPLATES[kind];
+const templateScope = (kind, uid) => (uid && getSetting(myKey(kind, uid)) ? 'pessoal' : getSetting(`beedoo_tpl:${kind}`) ? 'geral' : 'padrao');
 
 export function render(tpl, vals) {
   const lines = String(tpl).split('\n').flatMap((line) => {
@@ -210,7 +213,8 @@ export function registerBeedoo(router, { h, QUALITY, ADMIN }) {
     const d = await draftFor(req, kind, req.query);
     const prev = await must(sb().from('px_beedoo_messages').select('id, status, created_at, sent_at').eq('kind', kind).eq('source_id', d.source_id).neq('status', 'cancelado').order('id', { ascending: false }).limit(5));
     const agents = await must(sb().from('px_beedoo_agents').select('id, last_seen_at, revoked_at').eq('user_id', req.user.id));
-    res.json({ ...d, message: render(template(kind), d.vals), previous: prev, agent_online: !!onlineAgent(agents), has_agent: agents.some((a) => !a.revoked_at) });
+    const tpl = template(kind, req.user.id);
+    res.json({ ...d, message: render(tpl, d.vals), template: tpl, template_scope: templateScope(kind, req.user.id), fields: FIELDS[kind], can_edit_all: req.user.role === 'admin', previous: prev, agent_online: !!onlineAgent(agents), has_agent: agents.some((a) => !a.revoked_at) });
   }));
 
   // Confirmado na revisão: entra na fila do agente (ou fica registrado como enviado à mão)
@@ -284,15 +288,30 @@ export function registerBeedoo(router, { h, QUALITY, ADMIN }) {
     res.json({ key: raw });
   }));
 
-  router.get('/beedoo/templates', QUALITY, h(async (_req, res) => {
-    res.json(Object.fromEntries(KINDS.map((k) => [k, { text: template(k), custom: !!getSetting(`beedoo_tpl:${k}`), fields: FIELDS[k], default: DEFAULT_TEMPLATES[k] }])));
+  router.get('/beedoo/templates', QUALITY, h(async (req, res) => {
+    const uid = req.user.id;
+    res.json(Object.fromEntries(KINDS.map((k) => [k, {
+      text: template(k, uid), scope: templateScope(k, uid), custom: templateScope(k, uid) !== 'padrao',
+      general: getSetting(`beedoo_tpl:${k}`) || DEFAULT_TEMPLATES[k], fields: FIELDS[k], default: DEFAULT_TEMPLATES[k],
+    }])));
   }));
-  router.put('/beedoo/templates/:kind', ADMIN, h(async (req, res) => {
+  // Salvar o modelo: "me" (padrão) vale só para quem salvou; "all" (administrador) vale para todos.
+  // Texto vazio volta ao modelo de cima (o geral, ou o padrão da plataforma).
+  router.put('/beedoo/templates/:kind', QUALITY, h(async (req, res) => {
     const k = req.params.kind;
     if (!KINDS.includes(k)) throw httpError(400, 'Tipo de mensagem inválido.');
-    const t = String(req.body?.text || '').replace(/\r\n/g, '\n').trim();
-    await setSetting(`beedoo_tpl:${k}`, t && t !== DEFAULT_TEMPLATES[k] ? t.slice(0, 4000) : null);
-    await audit(req.user.id, 'beedoo_modelo', 'beedoo', null, { tipo: k });
-    res.json({ ok: true, text: template(k) });
+    const scope = req.body?.scope === 'all' ? 'all' : 'me';
+    if (scope === 'all' && req.user.role !== 'admin') throw httpError(403, 'Só o administrador altera o modelo de todos.');
+    const t = String(req.body?.text || '').replace(/\r\n/g, '\n').trim().slice(0, 4000);
+    if (t && t.length < 10) throw httpError(400, 'O modelo ficou curto demais.');
+    if (scope === 'all') {
+      await setSetting(`beedoo_tpl:${k}`, t && t !== DEFAULT_TEMPLATES[k] ? t : null);
+      // quem salvou para todos passa a usar o geral também
+      if (getSetting(myKey(k, req.user.id))) await setSetting(myKey(k, req.user.id), null);
+    } else {
+      await setSetting(myKey(k, req.user.id), t && t !== (getSetting(`beedoo_tpl:${k}`) || DEFAULT_TEMPLATES[k]) ? t : null);
+    }
+    await audit(req.user.id, 'beedoo_modelo', 'beedoo', null, { tipo: k, alcance: scope === 'all' ? 'todos' : 'pessoal', voltou_ao_padrao: !t });
+    res.json({ ok: true, text: template(k, req.user.id), scope: templateScope(k, req.user.id) });
   }));
 }

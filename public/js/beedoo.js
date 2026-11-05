@@ -10,6 +10,49 @@ export const STATUS = {
   pendente: ['Na fila', 'warn', 'msgClock'], enviando: ['Enviando', 'brand', 'refresh'], enviado: ['Enviado', 'ok', 'checkCircle'],
   erro: ['Erro', 'bad', 'alert'], cancelado: ['Cancelado', 'outline', 'x'], manual: ['Enviado à mão', 'info', 'copy'],
 };
+// Mesmo preenchimento do servidor: {campo} vira o valor; linha com todos os campos vazios some
+export function renderTpl(tpl, vals) {
+  const lines = String(tpl).split('\n').flatMap((line) => {
+    const keys = [...line.matchAll(/\{([a-z_]+)\}/g)].map((m) => m[1]);
+    if (keys.length && keys.every((k) => !String(vals[k] ?? '').trim())) return [];
+    return [line.replace(/\{([a-z_]+)\}/g, (_, k) => String(vals[k] ?? ''))];
+  });
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+// A mensagem editada vira modelo: os dados desta ligação/operador voltam a ser {campos}
+function derive(text, v) {
+  let t = String(text);
+  // Palavras curtas e comuns só viram campo no lugar onde aparecem no modelo
+  if (v.carteira) t = t.split(`Qualidade ${v.carteira}`).join('Qualidade {carteira}');
+  const SKIP = new Set(['modalidade', 'carteira']);
+  const entries = Object.entries(v).filter(([k, x]) => !SKIP.has(k) && String(x ?? '').trim().length >= 3).map(([k, x]) => [k, String(x)]).sort((a, b) => b[1].length - a[1].length);
+  for (const [k, x] of entries) t = t.split(x).join(`{${k}}`);
+  return t;
+}
+// A mensagem editada vira modelo: os dados deste envio voltam a ser {campos}. As linhas do modelo atual
+// que não apareceram porque estavam vazias neste envio (ex.: plano de ação) voltam no mesmo lugar.
+export function toTemplate(message, vals, current = '') {
+  const v = vals || {};
+  const out = derive(message, v).split('\n');
+  const tl = String(current).split('\n');
+  const empty = (line) => { const ks = [...line.matchAll(/\{([a-z_]+)\}/g)].map((m) => m[1]); return ks.length && ks.every((k) => !String(v[k] ?? '').trim()); };
+  let lastKept = -1;
+  const back = [];
+  tl.forEach((line, i) => {
+    if (!empty(line)) { lastKept = i; return; }
+    if (out.includes(line)) return;
+    const prev = lastKept >= 0 ? derive(tl[lastKept].replace(/\{([a-z_]+)\}/g, (_, k) => String(v[k] ?? '')), v) : null;
+    let at = prev == null ? -1 : out.indexOf(prev);
+    // linhas seguidas que estavam vazias entram uma depois da outra
+    const chain = back.length && back[back.length - 1].i === i - 1 ? back[back.length - 1].at + 1 : -1;
+    if (chain >= 0) at = chain - 1;
+    if (at < 0) return;
+    out.splice(at + 1, 0, line);
+    back.push({ i, at: at + 1 });
+  });
+  return out.join('\n');
+}
+const SCOPE = { pessoal: 'seu modelo', geral: 'modelo geral', padrao: 'modelo padrão' };
 export const statusChip = (s) => { const [l, c, ic] = STATUS[s] || [s, '', 'info']; return html`<span class="chip ${c}">${icon(ic)}${l}</span>`; };
 
 async function copy(text) {
@@ -50,7 +93,22 @@ export async function formalizeBeedoo(params, { onSent } = {}) {
         </div>
         <div class="field"><label for="bd-msg">Mensagem <span class="muted" style="font-weight:500">· edite à vontade e coloque emojis: é exatamente o que o operador vai receber</span></label>
           <textarea class="input textarea" id="bd-msg" rows="14" style="font-family:inherit">${st.message}</textarea>
-          <span class="hint" id="bd-count"></span></div>
+          <div class="bd-tplbar"><span class="hint" id="bd-count"></span><div class="grow"></div>
+            <span class="tiny muted" id="bd-scope">Usando o ${SCOPE[d.template_scope] || 'modelo padrão'}</span>
+            <button type="button" class="btn sm" id="bd-tpl-from" title="A formatação desta mensagem (emojis, ordem, textos fixos) passa a valer nos próximos envios">${icon('check')}Usar esta formatação nos próximos envios</button>
+            <button type="button" class="btn sm ghost" id="bd-tpl-edit">${icon('edit')}Editar modelo</button></div>
+          <div class="bd-tpl" id="bd-tpl" hidden>
+            <div class="row between"><b class="small">Modelo de ${KIND[d.kind].toLowerCase()}</b><span class="tiny muted">{campo} vira o dado de cada envio · linha com campos vazios some</span></div>
+            <div class="bd-fields">${(d.fields || []).map((f) => html`<button type="button" class="chip" data-field="${f}">{${f}}</button>`)}</div>
+            <textarea class="input textarea" id="bd-tpl-t" rows="12" style="font-family:inherit"></textarea>
+            <div class="row" style="gap:8px;flex-wrap:wrap">
+              ${d.can_edit_all ? html`<select class="select sm" id="bd-tpl-scope" style="width:auto"><option value="me">Salvar só para mim</option><option value="all">Salvar para todos</option></select>` : html`<span class="tiny muted">Vale só para os seus envios.</span>`}
+              <div class="grow"></div>
+              <button type="button" class="btn sm ghost" id="bd-tpl-reset" title="Volta ao modelo geral (ou ao padrão da plataforma)">Voltar ao padrão</button>
+              <button type="button" class="btn sm ghost" id="bd-tpl-cancel">Cancelar</button>
+              <button type="button" class="btn sm primary" id="bd-tpl-save">${icon('check')}Salvar modelo</button>
+            </div>
+          </div>
       </div>
       <div data-pane="revisao" hidden></div>`,
     foot: html`<button class="btn ghost" data-close>Cancelar</button><div class="grow"></div>
@@ -65,6 +123,28 @@ export async function formalizeBeedoo(params, { onSent } = {}) {
         $('#bd-count', m).textContent = `${st.message.length} caracteres · ${st.message.split('\n').length} linhas`;
       };
       attachEmoji(msg);
+      const tplBox = $('#bd-tpl', m), tplT = $('#bd-tpl-t', m);
+      attachEmoji(tplT);
+      const openTpl = (text) => { tplT.value = text; tplBox.hidden = false; tplT.focus(); tplBox.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };
+      $('#bd-tpl-from', m).onclick = () => { openTpl(toTemplate(msg.value, d.vals, d.template)); toast('Confira o modelo: os dados deste envio viraram {campos}. Depois clique em Salvar modelo.'); };
+      $('#bd-tpl-edit', m).onclick = () => openTpl(d.template || '');
+      $('#bd-tpl-cancel', m).onclick = () => { tplBox.hidden = true; };
+      $$('[data-field]', m).forEach((b) => b.addEventListener('click', () => { const s0 = tplT.selectionStart ?? tplT.value.length; tplT.setRangeText(`{${b.dataset.field}}`, s0, tplT.selectionEnd ?? s0, 'end'); tplT.focus(); }));
+      const saveTpl = async (btn, text) => {
+        busy(btn, true);
+        try {
+          const scope = $('#bd-tpl-scope', m)?.value || 'me';
+          const r = await api.put(`/beedoo/templates/${d.kind}`, { text, scope });
+          d.template = r.text; d.template_scope = r.scope;
+          msg.value = renderTpl(r.text, d.vals); sync();
+          $('#bd-scope', m).textContent = `Usando o ${SCOPE[r.scope] || 'modelo padrão'}`;
+          tplBox.hidden = true;
+          toast(text ? (scope === 'all' ? 'Modelo salvo para todos: os próximos envios usam esta formatação.' : 'Modelo salvo: os seus próximos envios usam esta formatação.') : 'Modelo de volta ao padrão.');
+        } catch (ex) { toast(ex.message, 'err'); }
+        busy(btn, false);
+      };
+      $('#bd-tpl-save', m).onclick = (e) => saveTpl(e.currentTarget, tplT.value);
+      $('#bd-tpl-reset', m).onclick = (e) => saveTpl(e.currentTarget, '');
       msg.addEventListener('input', sync); lg.addEventListener('input', sync); $('#bd-audio', m)?.addEventListener('change', sync); sync();
       const problems = () => [
         !st.login && 'Falta o login do operador no Beedoo.',

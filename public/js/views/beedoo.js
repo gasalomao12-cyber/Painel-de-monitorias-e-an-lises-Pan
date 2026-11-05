@@ -114,17 +114,20 @@ async function drawTemplates(box, isAdmin) {
   let t;
   try { t = await api.get('/beedoo/templates'); } catch (ex) { toast(ex.message, 'err'); return; }
   const NAME = { feedback: 'Feedback aplicado', monitoria: 'Resultado da monitoria', acao: 'Ação registrada' };
-  box.innerHTML = String(html`<p class="small muted" style="margin-top:0">Cada envio começa por este modelo e pode ser editado na revisão. <code>{campo}</code> vira o valor; uma linha com campos vazios some.${isAdmin ? '' : ' Só o administrador altera os modelos.'}</p>
+  const SC = { pessoal: ['seu modelo', 'info'], geral: ['modelo geral', 'brand'], padrao: ['padrão da plataforma', 'outline'] };
+  box.innerHTML = String(html`<p class="small muted" style="margin-top:0">Cada envio começa por este modelo e pode ser editado na revisão. <code>{campo}</code> vira o valor; uma linha com campos vazios some. O que você salvar vale para os seus próximos envios${isAdmin ? '; o administrador também pode salvar para todos' : ''}. Na revisão, “Usar esta formatação nos próximos envios” transforma a mensagem editada em modelo.</p>
     <div class="grid g-3" style="gap:14px">${Object.entries(t).map(([k, v]) => html`<div class="card">
-      <div class="row between"><b>${NAME[k]}</b>${v.custom ? html`<span class="chip info">personalizado</span>` : html`<span class="chip outline">padrão</span>`}</div>
-      <textarea class="input textarea" data-tpl="${k}" rows="16" style="margin-top:10px;font-size:12.5px" ${isAdmin ? '' : 'readonly'}>${v.text}</textarea>
+      <div class="row between"><b>${NAME[k]}</b><span class="chip ${SC[v.scope]?.[1] || 'outline'}">${SC[v.scope]?.[0] || 'padrão'}</span></div>
+      <textarea class="input textarea" data-tpl="${k}" rows="16" style="margin-top:10px;font-size:12.5px">${v.text}</textarea>
       <div class="tiny muted" style="margin:6px 0 10px">${v.fields.map((f) => `{${f}}`).join(' ')}</div>
-      ${isAdmin ? html`<div class="row"><button class="btn sm primary" data-save="${k}">${icon('check')}Salvar</button><button class="btn sm ghost" data-reset="${k}">Voltar ao padrão</button></div>` : ''}
+      <div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn sm primary" data-save="${k}" data-scope="me">${icon('check')}Salvar para mim</button>
+        ${isAdmin ? html`<button class="btn sm" data-save="${k}" data-scope="all">${icon('users')}Salvar para todos</button>` : ''}
+        <button class="btn sm ghost" data-reset="${k}">Voltar ao padrão</button></div>
     </div>`)}</div>`);
-  if (isAdmin) $$('[data-tpl]', box).forEach((ta) => attachEmoji(ta));
-  const save = async (k, text, b) => { busy(b, true); try { await api.put(`/beedoo/templates/${k}`, { text }); toast('Modelo salvo.'); drawTemplates(box, isAdmin); } catch (ex) { toast(ex.message, 'err'); busy(b, false); } };
-  $$('[data-save]', box).forEach((b) => b.addEventListener('click', () => save(b.dataset.save, $(`[data-tpl="${b.dataset.save}"]`, box).value, b)));
-  $$('[data-reset]', box).forEach((b) => b.addEventListener('click', () => save(b.dataset.reset, '', b)));
+  $$('[data-tpl]', box).forEach((ta) => attachEmoji(ta));
+  const save = async (k, text, scope, b) => { busy(b, true); try { await api.put(`/beedoo/templates/${k}`, { text, scope }); toast(text ? (scope === 'all' ? 'Modelo salvo para todos.' : 'Modelo salvo para os seus próximos envios.') : 'Modelo de volta ao padrão.'); drawTemplates(box, isAdmin); } catch (ex) { toast(ex.message, 'err'); busy(b, false); } };
+  $$('[data-save]', box).forEach((b) => b.addEventListener('click', () => save(b.dataset.save, $(`[data-tpl="${b.dataset.save}"]`, box).value, b.dataset.scope, b)));
+  $$('[data-reset]', box).forEach((b) => b.addEventListener('click', () => save(b.dataset.reset, '', 'me', b)));
 }
 
 function drawHelp(box) {
