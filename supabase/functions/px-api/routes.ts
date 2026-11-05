@@ -691,7 +691,9 @@ async function actionContext(evalId) {
   ]);
   return { ev, theme: suggestTheme(items, ev.alerts), ref: `ligação ${ev.protocol || '#' + ev.id}${ev.final_score != null ? ` (nota ${String(ev.final_score).replace('.', ',')})` : ''}` };
 }
-const FEEDBACK_ONLINE = ['Remoto (Teams)', 'Chat corporativo'];
+const FEEDBACK_ONLINE = ['Remoto (Teams)', 'Por telefone'];
+// No controle de ações o feedback aparece como Presencial ou Beedoo (o chat corporativo é o Beedoo)
+const feedbackAction = (modality) => (/beedoo|chat corporativo/i.test(modality || '') ? 'Feedback Beedoo' : FEEDBACK_ONLINE.includes(modality) ? 'Feedback online' : 'Feedback Presencial');
 
 async function recordAnalysisAction(req, evalId, source, detail) {
   const { ev, theme, ref } = await actionContext(evalId);
@@ -848,7 +850,7 @@ async function saveFeedback(req, evalId, fbId) {
     // Linha ainda não enviada para a planilha acompanha a edição
     const { ev } = await actionContext(evalId);
     await sb().from('px_actions').update({
-      action_date: dayInBrazil(appliedAt), action: FEEDBACK_ONLINE.includes(vals.modality) ? 'Feedback online' : 'Feedback',
+      action_date: dayInBrazil(appliedAt), action: feedbackAction(vals.modality),
       ...(THEMES.includes(b.sheet_theme) ? { theme: b.sheet_theme } : {}), obs: feedbackObs(ev, vals),
     }).eq('feedback_id', fbId).in('sync_status', ['pendente', 'erro', 'ignorado']);
   } else {
@@ -859,7 +861,7 @@ async function saveFeedback(req, evalId, fbId) {
     await notify([op.supervisor_user_id, e.reviewed_by].filter((u) => u && u !== req.user.id), 'Feedback aplicado', `${who} aplicou feedback para ${op.name}.`, `#/atendimentos/${evalId}`);
     const { ev, theme } = await actionContext(evalId);
     await recordAction({
-      source: 'feedback', action: FEEDBACK_ONLINE.includes(vals.modality) ? 'Feedback online' : 'Feedback',
+      source: 'feedback', action: feedbackAction(vals.modality),
       theme: THEMES.includes(b.sheet_theme) ? b.sheet_theme : theme, evaluation: ev, operator_id: e.operator_id,
       action_date: dayInBrazil(appliedAt), obs: feedbackObs(ev, vals), feedback_id: f.id, dedupe_key: `feedback:${f.id}`,
     }, req.user);
@@ -962,7 +964,7 @@ router.post('/operators/:id/feedback', QUALITY, h(async (req, res) => {
   const first = pend[0];
   const its = await must(sb().from('px_v_eval_items').select('final_result, weight, stage').in('evaluation_id', ids.slice(0, 300)));
   await recordAction({
-    source: 'feedback', action: FEEDBACK_ONLINE.includes(vals.modality) ? 'Feedback online' : 'Feedback',
+    source: 'feedback', action: feedbackAction(vals.modality),
     theme: THEMES.includes(b.sheet_theme) ? b.sheet_theme : suggestTheme(its, [...new Set(pend.flatMap((e) => e.alerts || []))]),
     evaluation: first, operator_id: opId, action_date: dayInBrazil(appliedAt),
     obs: `Feedback de ${ids.length} atendimento(s)${vals.modality ? ` (${vals.modality})` : ''}: ${content}`, feedback_id: rows[0].id, dedupe_key: `feedback-lote:${batch}`,

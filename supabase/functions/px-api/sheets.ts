@@ -15,7 +15,7 @@ const GRAPH_BASE = () => env('MS_GRAPH_BASE') || 'https://graph.microsoft.com/v1
 
 // Listas da aba APOIO da planilha
 export const THEMES = ['Conversão', 'Eficiência', 'Tabulação', 'Formação inicial', 'Abordagem', 'Checklist', 'Produto', 'Oferta', 'Processo', 'PIX'];
-export const ACTIONS = ['Acompanhamento in loco', 'Análise', 'Calibragem', 'Dúvida operacional', 'Feedback', 'Feedback online', 'Formação inicial', 'Material de apoio', 'Recado', 'Reciclagem', 'Reunião', 'Simulador', 'Treinamento'];
+export const ACTIONS = ['Acompanhamento in loco', 'Análise', 'Calibragem', 'Dúvida operacional', 'Feedback Presencial', 'Feedback Beedoo', 'Feedback', 'Feedback online', 'Formação inicial', 'Material de apoio', 'Recado', 'Reciclagem', 'Reunião', 'Simulador', 'Treinamento'];
 export const DEFAULT_SEGMENT_MAP = {
   'VEICULOS:CONTACT': 'PAN VEÍCULOS - CONTACT',
   'VEICULOS:ATIVAS': 'PAN VEÍCULOS - ATIVAS',

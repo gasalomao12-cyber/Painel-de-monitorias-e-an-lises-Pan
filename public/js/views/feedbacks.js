@@ -13,7 +13,7 @@ export async function render(el, [kind], ctx) {
 }
 
 const SHEET_THEMES = ['Conversão', 'Eficiência', 'Tabulação', 'Formação inicial', 'Abordagem', 'Checklist', 'Produto', 'Oferta', 'Processo', 'PIX'];
-const MODALITIES = ['Presencial', 'Remoto (Teams)', 'Por telefone', 'Chat corporativo'];
+const MODALITIES = ['Presencial', 'Beedoo', 'Remoto (Teams)', 'Por telefone'];
 const ALERT_LABEL = { conduta: 'Conduta', sigilo: 'Sigilo', oferta_perdida: 'Oferta perdida', sem_proposta: 'Sem proposta', postura: 'Postura', audio_ruim: 'Áudio ruim', sem_speech: 'Sem speech' };
 const localDT = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 const themeFor = (o) => (o.alerts?.oferta_perdida ? 'Oferta' : o.alerts?.conduta || o.alerts?.postura ? 'Abordagem' : 'Conversão');

@@ -2,6 +2,7 @@
 // aba "Revisão" e confirma. O agente PX Beedoo (no computador dela) envia pelo chat do Beedoo.
 import { api, qs } from './api.js';
 import { html, icon, $, $$, toast, modal, busy, fmtDate, avatar } from './ui.js';
+import { attachEmoji } from './emoji.js';
 
 export const BEEDOO_URL = 'https://paschoalotto.beedoo.io';
 const KIND = { feedback: 'Feedback aplicado', monitoria: 'Resultado da monitoria', acao: 'Ação registrada' };
@@ -47,7 +48,7 @@ export async function formalizeBeedoo(params, { onSent } = {}) {
               <span class="hint" title="${d.attachments[0].file}">${d.attachments[0].file.length > 60 ? `${d.attachments[0].file.slice(0, 57)}…` : d.attachments[0].file} (da pasta de áudios configurada no agente)</span>`
             : html`<span class="hint">Sem anexo para este envio.</span>`}</div>
         </div>
-        <div class="field"><label for="bd-msg">Mensagem <span class="muted" style="font-weight:500">· edite à vontade, é exatamente o que o operador vai receber</span></label>
+        <div class="field"><label for="bd-msg">Mensagem <span class="muted" style="font-weight:500">· edite à vontade e coloque emojis: é exatamente o que o operador vai receber</span></label>
           <textarea class="input textarea" id="bd-msg" rows="14" style="font-family:inherit">${st.message}</textarea>
           <span class="hint" id="bd-count"></span></div>
       </div>
@@ -63,6 +64,7 @@ export async function formalizeBeedoo(params, { onSent } = {}) {
         $('#bd-lg', m).textContent = st.login || 'login';
         $('#bd-count', m).textContent = `${st.message.length} caracteres · ${st.message.split('\n').length} linhas`;
       };
+      attachEmoji(msg);
       msg.addEventListener('input', sync); lg.addEventListener('input', sync); $('#bd-audio', m)?.addEventListener('change', sync); sync();
       const problems = () => [
         !st.login && 'Falta o login do operador no Beedoo.',

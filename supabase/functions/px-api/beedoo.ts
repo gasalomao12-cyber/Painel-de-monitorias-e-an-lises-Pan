@@ -21,14 +21,14 @@ const STALE_MS = 10 * 60 * 1000;
 
 // Modelos de mensagem: {campo} é trocado pelo valor; uma linha cujos campos ficaram todos vazios some
 export const DEFAULT_TEMPLATES = {
-  feedback: `Olá, {primeiro_nome}! Tudo bem?
+  feedback: `Olá, {primeiro_nome}! 👋 Tudo bem?
 
-Segue a formalização do feedback aplicado em {data}{modalidade_txt}.
+📝 Segue a formalização do feedback aplicado em {data}{modalidade_txt}.
 
-Atendimentos avaliados: {atendimentos}
-Nota: {nota}
+🎧 Atendimentos avaliados: {atendimentos}
+📊 Nota: {nota}
 
-O que conversamos:
+💬 O que conversamos:
 {conteudo}
 
 ✅ Pontos fortes: {pontos_fortes}
@@ -36,28 +36,28 @@ O que conversamos:
 🎯 Plano de ação: {plano_acao}
 📅 Reavaliação: {reavaliacao}
 
-Qualquer dúvida, estou à disposição.
+Conte comigo no que precisar! 💪🚀
 {responsavel} · Qualidade {carteira}`,
-  monitoria: `Olá, {primeiro_nome}! Tudo bem?
+  monitoria: `Olá, {primeiro_nome}! 👋 Tudo bem?
 
-Segue o resultado da monitoria da sua ligação {protocolo} de {data_ligacao} ({produto}).
-Nota: {nota}
+🎧 Segue o resultado da monitoria da sua ligação {protocolo} de {data_ligacao} ({produto}).
+📊 Nota: {nota}
 
 📌 Pontos de atenção:
 {pontos_atencao}
 
-✅ Mandou bem em: {pontos_positivos}
+🌟 Mandou bem em: {pontos_positivos}
 
-{resumo}
+💡 {resumo}
 
-Qualquer dúvida, estou à disposição.
+Qualquer dúvida, estou à disposição! 😉
 {responsavel} · Qualidade {carteira}`,
-  acao: `Olá, {primeiro_nome}! Tudo bem?
+  acao: `Olá, {primeiro_nome}! 👋 Tudo bem?
 
-Registro da ação "{acao}" realizada em {data} (tema: {tema}).
-{obs}
+📋 Registro da ação "{acao}" realizada em {data} (tema: {tema}).
+💬 {obs}
 
-Qualquer dúvida, estou à disposição.
+Conte comigo! 🤝
 {responsavel} · Qualidade {carteira}`,
 };
 export const FIELDS = {
@@ -140,6 +140,19 @@ const sha256 = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-2
 const cleanLogin = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9._@-]/g, '').slice(0, 80);
 const onlineAgent = (agents) => agents.find((a) => !a.revoked_at && a.last_seen_at && Date.now() - new Date(a.last_seen_at).getTime() < AGENT_ONLINE_MS);
 
+// Feedback formalizado no Beedoo: a linha do controle de ações passa a indicar isso (enquanto não foi para a planilha online)
+async function markActionBeedoo(m) {
+  if (m.kind !== 'feedback' || !m.source_id) return;
+  const rows = await must(sb().from('px_actions').select('id, action, obs, sync_status').eq('feedback_id', m.source_id).limit(1));
+  const a = rows[0];
+  if (!a || ['enviado', 'enviando'].includes(a.sync_status)) return;
+  const when = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const patch = a.action === 'Feedback Presencial' || a.action === 'Feedback Beedoo'
+    ? (/formalizado no Beedoo/i.test(a.obs || '') ? null : { obs: `${a.obs || ''} · Formalizado no Beedoo em ${when}`.slice(0, 2000) })
+    : { action: 'Feedback Beedoo', obs: `${a.obs || ''} · Formalizado no Beedoo em ${when}`.slice(0, 2000) };
+  if (patch) await sb().from('px_actions').update(patch).eq('id', a.id);
+}
+
 // --------------------------------------------------------------- Agente (antes do login: autentica pela chave)
 export function registerBeedooAgent(router, { h }) {
   const agentOf = async (req) => {
@@ -181,6 +194,7 @@ export function registerBeedooAgent(router, { h }) {
     const error = ok ? (b.warning ? String(b.warning).slice(0, 500) : null) : String(b.error || 'Falha no envio.').slice(0, 500);
     await must(sb().from('px_beedoo_messages').update({ status: ok ? 'enviado' : 'erro', error, sent_at: ok ? nowIso() : null }).eq('id', m.id));
     await audit(ag.user_id, ok ? 'beedoo_enviado' : 'beedoo_erro', 'beedoo', m.id, { login: m.login, tipo: m.kind, erro: ok ? undefined : error });
+    if (ok) await markActionBeedoo(m).catch(() => {});
     if (!ok) await notify([ag.user_id], 'Beedoo: mensagem não enviada', `${m.operator_name || m.login}: ${error}`, '#/beedoo');
     res.json({ ok: true });
   }));
@@ -223,6 +237,7 @@ export function registerBeedoo(router, { h, QUALITY, ADMIN }) {
       message, attachments, status: manual ? 'manual' : 'pendente', sent_at: manual ? nowIso() : null, created_by: req.user.id,
     }).select().single());
     await audit(req.user.id, manual ? 'beedoo_manual' : 'beedoo_fila', 'beedoo', row.id, { login, tipo: kind, origem: row.source_id });
+    if (manual) await markActionBeedoo(row).catch(() => {});
     res.json(row);
   }));
 
@@ -256,6 +271,7 @@ export function registerBeedoo(router, { h, QUALITY, ADMIN }) {
   router.post('/beedoo/messages/:id/manual', QUALITY, h(async (req, res) => {
     const m = await mine(req);
     if (m.status === 'enviado') throw httpError(400, 'Esta mensagem já foi enviada.');
+    await markActionBeedoo(m).catch(() => {});
     res.json(await must(sb().from('px_beedoo_messages').update({ status: 'manual', sent_at: nowIso(), error: null }).eq('id', m.id).select().single()));
   }));
 

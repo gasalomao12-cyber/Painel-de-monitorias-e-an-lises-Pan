@@ -646,7 +646,7 @@ function drawFeedback(body, el, ctx) {
           <form id="fb-form">
             <div class="grid g-3">
               <div class="field"><label for="fb-at">Data e hora do feedback</label><input class="input" id="fb-at" name="applied_at" type="datetime-local" required value="${f ? localDateTime(parseDate(f.applied_at)) : localDateTime()}"></div>
-              <div class="field"><label for="fb-mod">Modalidade</label><select class="select" id="fb-mod" name="modality">${['Presencial', 'Remoto (Teams)', 'Por telefone', 'Chat corporativo'].map((x) => html`<option ${f?.modality === x ? 'selected' : ''}>${x}</option>`)}</select></div>
+              <div class="field"><label for="fb-mod">Modalidade</label><select class="select" id="fb-mod" name="modality">${['Presencial', 'Beedoo', 'Remoto (Teams)', 'Por telefone', ...(f?.modality && !['Presencial', 'Beedoo', 'Remoto (Teams)', 'Por telefone'].includes(f.modality) ? [f.modality] : [])].map((x) => html`<option ${f?.modality === x ? 'selected' : ''}>${x}</option>`)}</select></div>
               <div class="field"><label for="fb-fu">Reavaliar em</label><input class="input" id="fb-fu" name="followup_date" type="date" value="${f?.followup_date || ''}"></div>
             </div>
             <div class="field"><label for="fb-theme">Tema na planilha de ações</label><select class="select" id="fb-theme" name="sheet_theme">${SHEET_THEMES.map((t) => html`<option ${t === suggestTheme(e) ? 'selected' : ''}>${t}</option>`)}</select>

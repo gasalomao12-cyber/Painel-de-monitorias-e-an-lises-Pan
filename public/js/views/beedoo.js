@@ -2,6 +2,7 @@ import { api, qs, saveBlob } from '../api.js';
 import { API_URL } from '../sb.js';
 import { html, icon, $, $$, fmtDate, fmtRel, toast, modal, busy, emptyState, confirmDialog, avatar } from '../ui.js';
 import { STATUS, statusChip, BEEDOO_URL } from '../beedoo.js';
+import { attachEmoji } from '../emoji.js';
 
 // Envios ao Beedoo: a fila de mensagens confirmadas, o agente PX Beedoo e os modelos de mensagem
 const KIND = { feedback: 'Feedback', monitoria: 'Monitoria', acao: 'Ação' };
@@ -120,6 +121,7 @@ async function drawTemplates(box, isAdmin) {
       <div class="tiny muted" style="margin:6px 0 10px">${v.fields.map((f) => `{${f}}`).join(' ')}</div>
       ${isAdmin ? html`<div class="row"><button class="btn sm primary" data-save="${k}">${icon('check')}Salvar</button><button class="btn sm ghost" data-reset="${k}">Voltar ao padrão</button></div>` : ''}
     </div>`)}</div>`);
+  if (isAdmin) $$('[data-tpl]', box).forEach((ta) => attachEmoji(ta));
   const save = async (k, text, b) => { busy(b, true); try { await api.put(`/beedoo/templates/${k}`, { text }); toast('Modelo salvo.'); drawTemplates(box, isAdmin); } catch (ex) { toast(ex.message, 'err'); busy(b, false); } };
   $$('[data-save]', box).forEach((b) => b.addEventListener('click', () => save(b.dataset.save, $(`[data-tpl="${b.dataset.save}"]`, box).value, b)));
   $$('[data-reset]', box).forEach((b) => b.addEventListener('click', () => save(b.dataset.reset, '', b)));
