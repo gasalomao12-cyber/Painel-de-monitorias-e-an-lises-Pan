@@ -1048,3 +1048,11 @@ textarea[data-emoji] { border-top-left-radius: 0 !important; border-top-right-ra
 .ri-img { margin-top: 14px; border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; }
 .ri-img summary { cursor: pointer; font-weight: 700; display: flex; gap: 8px; align-items: center; }
 .ri-img img { margin-top: 10px; border-radius: 10px; max-width: 100%; }
+/* análise manual AGV: editar e áudio */
+.am-n svg { width: 14px; height: 14px; }
+.am-saved .am-list { max-height: 150px; }
+.am-editing { margin: 0; align-items: center; }
+.am-audio { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.am-audio #am-acur { display: inline-flex; gap: 6px; align-items: center; }
+.am-aplayer:not(:empty) { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.ev-audio:not(:empty) { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }

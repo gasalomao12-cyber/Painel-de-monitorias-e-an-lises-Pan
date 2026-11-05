@@ -5,6 +5,7 @@ import {
   confirmDialog, RESULT, ROLE, userName, emptyState, parseDate, PRODUCT, SEGMENT, SEGMENTS_OF, ALERT, origLabel, CONTEST,
 } from '../ui.js';
 import { readTranscriptFile } from '../files.js';
+import { openManualAgv, playEvalAudio } from './agv-manual.js';
 
 const PARTIAL = 0.5;
 function previewScore(items, pick) {
@@ -56,6 +57,7 @@ function draw(el, ctx) {
   ];
   el.innerHTML = String(html`
     <div class="row mb"><a class="btn sm ghost" href="#/atendimentos">${icon('chevLeft')}Voltar aos atendimentos</a><div class="grow" style="flex:1"></div>
+      ${editor && e.source === 'manual_agv' ? html`<button class="btn sm" id="edit-agv">${icon('edit')}Editar análise manual</button>` : ''}
       ${can('admin') ? html`<button class="btn sm danger" id="del-ev">${icon('trash')}Excluir</button>` : ''}</div>
 
     ${contestBanners(e, ctx)}
@@ -118,6 +120,11 @@ function draw(el, ctx) {
   $('#btn-audio', el)?.addEventListener('click', () => transcribeAudioFile(el, ctx));
   $('#btn-ai', el)?.addEventListener('click', (x) => runAI(el, ctx, x.currentTarget));
   $('#edit-audio', el)?.addEventListener('click', () => editAudio(el, ctx));
+  $('#edit-agv', el)?.addEventListener('click', () => openManualAgv(ctx, () => ctx.navigate(`atendimentos/${e.id}`), { editId: e.id }));
+  $('#ev-play', el)?.addEventListener('click', async (x) => {
+    const b = x.currentTarget; b.disabled = true;
+    try { await playEvalAudio(e.id, $('#ev-aplayer', el)); b.hidden = true; } catch (ex) { toast(ex.message, 'err'); b.disabled = false; }
+  });
   $('#edit-seg', el)?.addEventListener('click', () => editSegment(el, ctx));
   $('#btn-contest', el)?.addEventListener('click', () => openContestForm(el, ctx));
   $$('[data-ct-answer]', el).forEach((b) => b.addEventListener('click', () => answerContest(el, ctx, Number(b.dataset.ctAnswer), b.dataset.decision)));
@@ -144,7 +151,10 @@ function audioBar(e, isAdmin) {
   return html`<div class="audio-bar">
     <span class="ic">${icon('audio')}</span>
     <div class="grow"><b>Áudio da ligação</b><div class="url">${e.audio_link ? html`${own ? 'Link próprio deste atendimento' : 'Pasta da quinzena'} · ${e.audio_link}` : 'Nenhum link cadastrado para este atendimento ou quinzena.'}</div>
-      ${e.audio_file ? html`<div class="url">Arquivo: <span class="file-name">${e.audio_file}</span></div>` : ''}</div>
+      ${e.audio_file ? html`<div class="url">Arquivo: <span class="file-name">${e.audio_file}</span></div>` : ''}
+      ${e.details?.audio_upload ? html`<div class="url">Áudio anexado na plataforma: <span class="file-name">${e.details.audio_upload.name}</span></div>` : ''}
+      <div class="ev-audio" id="ev-aplayer"></div></div>
+    ${e.details?.audio_upload ? html`<button class="btn primary" id="ev-play">${icon('play')}Ouvir áudio</button>` : ''}
     ${e.audio_file ? html`<button class="btn" data-copy="${e.audio_file}" title="Copiar o nome do arquivo para buscar na pasta">${icon('file')}Copiar nome</button>` : ''}
     ${e.audio_link ? html`<a class="btn primary" href="${e.audio_link}" target="_blank" rel="noopener">${icon('external')}Abrir no OneDrive</a>` : ''}
     ${isAdmin ? html`<button class="btn" id="edit-audio">${icon('edit')}${e.audio_link ? 'Editar link' : 'Adicionar link'}</button>` : ''}

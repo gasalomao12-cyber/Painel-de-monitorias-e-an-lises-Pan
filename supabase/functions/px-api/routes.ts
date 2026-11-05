@@ -1723,7 +1723,7 @@ registerQuedas(router, { h, QUALITY, ADMIN });
 registerSafra(router, { h, QUALITY, audit });
 registerHelp(router, { h });
 registerBeedoo(router, { h, QUALITY, ADMIN });
-registerAgvManual(router, { h, QUALITY, audit, PRODUCTS });
+registerAgvManual(router, { h, QUALITY, audit, PRODUCTS, scoped, assertEvalAccess });
 registerReportImage(router, { h, QUALITY });
 
 // --------------------------------------------------------------- Erros

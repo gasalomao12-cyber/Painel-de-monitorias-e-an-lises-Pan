@@ -1,5 +1,6 @@
 // Análise manual AGV: a analista escolhe a ligação no CSV de metadados do Mosaic (opcional) ou digita os dados,
 // marca o roteiro AGV critério a critério e salva. "Salvar e próxima" já abre a próxima ligação do CSV.
+// Uma análise salva pode ser aberta de novo e editada; o áudio da ligação pode ser anexado (fica no armazenamento privado).
 import { api } from '../api.js';
 import { html, icon, $, $$, toast, modal, busy, fmtDate, PRODUCT, PRODUCTS } from '../ui.js';
 import { parseSheetFile } from '../files.js';
@@ -34,18 +35,26 @@ const score = (items, crit) => {
 
 let csv = null;             // { name, rows } do Mosaic, fica entre uma abertura e outra
 const done = new Set();     // IDs já analisados nesta sessão
+const AUDIO_ACCEPT = 'audio/*,.wav,.mp3,.gsm,.ogg,.opus,.m4a,.wma';
+const mb = (n) => `${(n / 1024 / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} MB`;
 
-export function openManualAgv(ctx, onSaved) {
+// Toca o áudio anexado a uma ligação (link assinado de 10 minutos)
+export async function playEvalAudio(evId, holder) {
+  const { url, name } = await api.get(`/evaluations/${evId}/audio-file`);
+  holder.innerHTML = String(html`<audio controls autoplay preload="auto" src="${url}" style="width:100%"></audio><span class="tiny muted">${name}</span>`);
+}
+
+export function openManualAgv(ctx, onSaved, { editId = null } = {}) {
   const { store } = ctx;
   const carts = userCarteiras(store.user);
   const fixedCart = viewCarteira(store.user) || (carts.length === 1 ? carts[0] : '');
   const products = [...new Set([...(store.meta.products || []).map((p) => p.product), ...PRODUCTS])];
   const ops = store.meta.operators.filter((o) => o.login);
-  const st = { roteiro: 'AGV2', items: {}, fromCsv: false };
+  const st = { roteiro: 'AGV2', items: {}, fromCsv: false, editId: null, audio: null, audioFile: null };
   const critOf = (r) => store.meta.criteria.filter((c) => c.product === r && c.active !== false).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
 
   modal({
-    title: 'Nova análise manual AGV',
+    title: 'Análise manual AGV',
     wide: true,
     cls: 'am-modal',
     body: html`
@@ -59,6 +68,12 @@ export function openManualAgv(ctx, onSaved) {
               <div class="am-list" id="am-list"></div>
             </div>
           </section>
+          <section class="am-sec am-saved">
+            <div class="am-h"><span class="am-n">${icon('edit')}</span><div><b>Editar uma análise salva</b><span>Busque pelo ID da ligação, login ou nome da análise e abra para corrigir.</span></div></div>
+            <div class="row" style="gap:8px"><input class="input sm grow" id="am-sq" placeholder="Buscar análises manuais…" autocomplete="off"></div>
+            <div class="am-list" id="am-slist"></div>
+          </section>
+          <div class="banner info am-editing" id="am-editing" hidden>${icon('edit')}<div class="grow"><b id="am-edit-t">Editando</b><div class="small">As alterações substituem a análise salva. Feedback e contestação continuam ligados a ela.</div></div><button type="button" class="btn sm" id="am-new">${icon('plus')}Nova análise</button></div>
           <section class="am-sec">
             <div class="am-h"><span class="am-n">2</span><div><b>Dados da ligação</b><span>Complete o que faltar. Login, produto e data são obrigatórios.</span></div></div>
             <form class="am-form" id="am-form" autocomplete="off">
@@ -73,7 +88,11 @@ export function openManualAgv(ctx, onSaved) {
               <label class="field"><span class="lbl">Desconexão</span><input class="input" name="disconnect" placeholder="Externa, Interna…"></label>
               <label class="field"><span class="lbl">Cliente</span><input class="input" name="customer"></label>
               <label class="field"><span class="lbl">Contrato</span><input class="input" name="contract"></label>
-              <label class="field am-wide"><span class="lbl">Arquivo de áudio</span><input class="input" name="audio_file" placeholder="Nome do .wav no Mosaic"></label>
+              <label class="field am-wide"><span class="lbl">Nome do arquivo de áudio</span><input class="input" name="audio_file" placeholder="Nome do .wav no Mosaic"></label>
+              <div class="field am-wide"><span class="lbl">Áudio da ligação</span>
+                <div class="am-audio"><label class="btn sm" id="am-aup">${icon('upload')}<span id="am-aname">Anexar áudio (.wav, .mp3…)</span><input type="file" id="am-afile" accept="${AUDIO_ACCEPT}" hidden></label>
+                  <span id="am-acur"></span></div>
+                <div id="am-aplayer" class="am-aplayer"></div></div>
             </form>
           </section>
         </div>
@@ -166,7 +185,66 @@ export function openManualAgv(ctx, onSaved) {
         } catch (ex) { toast(ex.message, 'err'); }
       });
 
-      const reset = () => { st.items = {}; st.fromCsv = false; ['id', 'datetime', 'duration', 'campaign', 'tabulation', 'disconnect', 'customer', 'contract', 'audio_file'].forEach((n) => set(n, '')); $('#am-out', m).value = ''; $('#am-obs', m).value = ''; drawCrit(); };
+      const reset = () => { st.items = {}; st.fromCsv = false; ['id', 'datetime', 'duration', 'campaign', 'tabulation', 'disconnect', 'customer', 'contract', 'audio_file'].forEach((n) => set(n, '')); $('#am-out', m).value = ''; $('#am-obs', m).value = ''; clearAudio(); drawCrit(); };
+
+      // Áudio: escolhido aqui e enviado ao salvar
+      const paintAudio = () => {
+        $('#am-aname', m).textContent = st.audioFile ? `${st.audioFile.name} · ${mb(st.audioFile.size)} · vai ao salvar` : st.audio ? 'Trocar o áudio' : 'Anexar áudio (.wav, .mp3…)';
+        $('#am-acur', m).innerHTML = st.audio && !st.audioFile ? String(html`<button type="button" class="btn sm ghost" id="am-aplay">${icon('play')}Ouvir ${st.audio.name}</button><button type="button" class="btn-icon" id="am-adel" title="Remover o áudio" aria-label="Remover o áudio">${icon('trash')}</button>`)
+          : st.audioFile ? String(html`<button type="button" class="btn-icon" id="am-aclear" title="Não anexar" aria-label="Não anexar">${icon('x')}</button>`) : '';
+      };
+      const clearAudio = () => { st.audio = null; st.audioFile = null; $('#am-afile', m).value = ''; $('#am-aplayer', m).innerHTML = ''; paintAudio(); };
+      $('#am-afile', m).addEventListener('change', (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        if (file.size > 50 * 1024 * 1024) { toast('O áudio passa de 50 MB.', 'err'); e.target.value = ''; return; }
+        st.audioFile = file;
+        if (!f.elements.audio_file.value) set('audio_file', file.name);
+        const holder = $('#am-aplayer', m);
+        holder.innerHTML = String(html`<audio controls preload="metadata" style="width:100%"></audio>`);
+        holder.querySelector('audio').src = URL.createObjectURL(file);
+        paintAudio();
+      });
+      $('#am-acur', m).addEventListener('click', async (e) => {
+        if (e.target.closest('#am-aclear')) { st.audioFile = null; $('#am-afile', m).value = ''; $('#am-aplayer', m).innerHTML = ''; paintAudio(); }
+        if (e.target.closest('#am-aplay')) { try { await playEvalAudio(st.editId, $('#am-aplayer', m)); } catch (ex) { toast(ex.message, 'err'); } }
+        if (e.target.closest('#am-adel')) {
+          try { await api.del(`/evaluations/${st.editId}/audio-file`); st.audio = null; $('#am-aplayer', m).innerHTML = ''; paintAudio(); toast('Áudio removido.'); } catch (ex) { toast(ex.message, 'err'); }
+        }
+      });
+
+      // Editar uma análise salva
+      const exitEdit = () => { st.editId = null; $('#am-editing', m).hidden = true; $('#am-save', m).innerHTML = `${icon('checkCircle')}Salvar análise`; $('.modal-head h3', m.closest('.modal') || m).textContent = 'Análise manual AGV'; };
+      const loadEdit = async (id) => {
+        try {
+          const a = await api.get(`/agv/manual/${id}`);
+          reset();
+          st.editId = a.id; st.fromCsv = a.from_csv; st.audio = a.audio;
+          st.roteiro = a.roteiro; $$('#am-rot button', m).forEach((x) => x.classList.toggle('on', x.dataset.r === a.roteiro));
+          set('carteira', a.carteira); set('login', a.login); set('product', a.product);
+          Object.entries(a.call).forEach(([k, v]) => set(k, v));
+          $('#am-out', m).value = a.outcome; $('#am-an', m).value = a.analysis; $('#am-obs', m).value = a.summary;
+          st.items = Object.fromEntries(a.items.map((i) => [i.code, { result: i.result, note: i.note }]));
+          drawCrit(); paintAudio();
+          $('#am-editing', m).hidden = false;
+          $('#am-edit-t', m).textContent = `Editando a análise de ${a.login}${a.call.id ? ` · ligação ${a.call.id}` : ''}`;
+          $('#am-save', m).innerHTML = `${icon('checkCircle')}Salvar alterações`;
+          $('.modal-head h3', m.closest('.modal') || m).textContent = 'Editar análise manual AGV';
+          $$('.am-li', $('#am-slist', m)).forEach((x) => x.classList.toggle('on', Number(x.dataset.eid) === a.id));
+        } catch (ex) { toast(ex.message, 'err'); }
+      };
+      let savedT = 0;
+      const drawSaved = async () => {
+        const box = $('#am-slist', m);
+        try {
+          const rows = await api.get(`/agv/manual?q=${encodeURIComponent($('#am-sq', m).value.trim())}`);
+          box.innerHTML = String(html`${rows.slice(0, 30).map((r) => html`<button type="button" class="am-li ${r.id === st.editId ? 'on' : ''}" data-eid="${r.id}">
+              <b>${r.call_id || `#${r.id}`}</b><span>${r.login}</span><span>${r.call_date ? fmtDate(r.call_date) : ''}</span><span class="am-tab">${r.analysis}${r.score != null ? ` · ${String(r.score).replace('.', ',')}` : ''}</span>${r.audio ? html`<i title="Com áudio">${icon('audio')}</i>` : ''}</button>`)}
+            ${rows.length ? '' : html`<p class="small muted">Nenhuma análise manual encontrada.</p>`}`);
+        } catch (ex) { box.innerHTML = ''; toast(ex.message, 'err'); }
+      };
+      $('#am-sq', m).addEventListener('input', () => { clearTimeout(savedT); savedT = setTimeout(drawSaved, 250); });
+      $('#am-slist', m).addEventListener('click', (e) => { const b = e.target.closest('.am-li'); if (b) loadEdit(Number(b.dataset.eid)); });
+      $('#am-new', m).onclick = () => { exitEdit(); reset(); $$('.am-li', $('#am-slist', m)).forEach((x) => x.classList.remove('on')); };
       const save = async (btn, next) => {
         if (!f.reportValidity()) return;
         const fd = Object.fromEntries(new FormData(f));
@@ -174,21 +252,29 @@ export function openManualAgv(ctx, onSaved) {
         if (!items.length) { toast('Marque ao menos um critério do roteiro.', 'err'); return; }
         busy(btn, true, 'Salvando');
         try {
-          const r = await api.post('/agv/manual', {
+          const payload = {
             carteira: fd.carteira || fixedCart, login: fd.login, product: fd.product, roteiro: st.roteiro, items, outcome: $('#am-out', m).value,
             analysis: $('#am-an', m).value, summary: $('#am-obs', m).value, from_csv: st.fromCsv,
-            call: { id: fd.id, datetime: fd.datetime, duration: fd.duration, campaign: fd.campaign, tabulation: fd.tabulation, disconnect: fd.disconnect, customer: fd.customer, contract: fd.contract, audio_file: fd.audio_file },
-          });
+            call: { id: fd.id, datetime: fd.datetime, duration: fd.duration, campaign: fd.campaign, tabulation: fd.tabulation, disconnect: fd.disconnect, customer: fd.customer, contract: fd.contract, audio_file: fd.audio_file || st.audioFile?.name || '' },
+          };
+          const r = st.editId ? await api.put(`/agv/manual/${st.editId}`, payload) : await api.post('/agv/manual', payload);
+          let audioMsg = '';
+          if (st.audioFile) {
+            btn.innerHTML = '<span class="spinner"></span> Enviando o áudio';
+            try { await api.upload(`/evaluations/${r.id}/audio-file?name=${encodeURIComponent(st.audioFile.name)}`, st.audioFile); audioMsg = ' · áudio anexado'; }
+            catch (ex) { toast(`Análise salva, mas o áudio não foi anexado: ${ex.message}`, 'err', 7000); }
+          }
           if (fd.id) done.add(fd.id);
-          toast(`Análise salva · nota ${r.score == null ? '—' : String(r.score).replace('.', ',')}${r.operator_created ? ' · operador novo cadastrado' : ''}.`);
+          toast(`${r.edited ? 'Análise atualizada' : 'Análise salva'} · nota ${r.score == null ? '—' : String(r.score).replace('.', ',')}${r.operator_created ? ' · operador novo cadastrado' : ''}${audioMsg}.`);
           onSaved?.(r);
           busy(btn, false);
-          if (next) { reset(); drawList(); if (csv) nextCall(); } else close();
+          if (next) { exitEdit(); reset(); drawList(); if (csv) nextCall(); } else close();
         } catch (ex) { toast(ex.message, 'err'); busy(btn, false); }
       };
       $('#am-save', m).onclick = (e) => save(e.currentTarget, false);
       $('#am-save-next', m).onclick = (e) => save(e.currentTarget, true);
-      drawCrit(); drawList();
+      drawCrit(); drawList(); drawSaved(); paintAudio();
+      if (editId) loadEdit(editId);
     },
   });
 }
