@@ -1,6 +1,6 @@
 // Service worker: permite instalar como app e acelera o carregamento da interface.
 // Nunca guarda chamadas ao Supabase — os dados vêm sempre ao vivo.
-const CACHE = 'px-shell-v11';
+const CACHE = 'px-shell-v12';
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
