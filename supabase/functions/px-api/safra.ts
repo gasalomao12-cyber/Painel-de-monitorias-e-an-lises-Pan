@@ -22,10 +22,11 @@ const title = (s) => String(s || '').toLowerCase().replace(/(^|\s)(\p{L})/gu, (m
 // Carteira de uma importação: a do arquivo (quando a pessoa pode vê-la) ou a única de quem importa
 export function carteiraFor(req, hint) {
   const h = CARTEIRAS.includes(String(hint || '').toUpperCase()) ? String(hint).toUpperCase() : null;
+  // A carteira escolhida vale quando a pessoa tem acesso a ela, mesmo vendo outra carteira na tela
+  const own = req.user?.role === 'admin' ? CARTEIRAS : carteirasOfUser(req.user);
+  if (h && own.includes(h)) return h;
   const scope = carteiraScope(req);
-  if (!scope) return h || 'PAN';
-  if (h && scope.includes(h)) return h;
-  return scope[0];
+  return scope ? scope[0] : 'PAN';
 }
 // Carteiras em que a pessoa pode anexar capacity: o administrador em todas; Qualidade nas suas
 export function capacityCarteiras(user) {

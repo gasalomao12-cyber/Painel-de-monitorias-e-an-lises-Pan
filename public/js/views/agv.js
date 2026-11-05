@@ -3,6 +3,7 @@ import { html, raw, icon, $, $$, toast, modal, busy, fmtScore, fmtPct, fmtInt, f
 import { lineChart, barChart, radarChart, palette, legendHtml } from '../charts.js';
 import { parseSheetFile } from '../files.js';
 import { mapCalls, readDashboard } from './import.js';
+import { openManualAgv } from './agv-manual.js';
 
 // Divisão AGV: ligações das campanhas em que a assistente virtual (AGV) transfere para o operador,
 // avaliadas no roteiro AGV. Os dados vêm enxutos da API e os recortes são montados aqui, na hora.
@@ -134,7 +135,7 @@ export async function render(el, _p, ctx) {
       <div class="grow"></div>
       <button class="btn" id="agv-list">${icon('headset')}Ver ligações AGV</button>
       ${ctx.can('admin') ? html`<button class="btn" id="agv-manage">${icon('trash')}Gerenciar análises</button>` : ''}
-      ${quality ? html`<button class="btn primary" id="agv-import">${icon('upload')}Importar ligações e speech</button>` : ''}
+      ${quality ? html`<button class="btn" id="agv-manual" title="Analisar uma ligação AGV à mão, com o CSV do Mosaic opcional">${icon('edit')}Nova análise manual</button><button class="btn primary" id="agv-import">${icon('upload')}Importar ligações e speech</button>` : ''}
     </div>
     <div class="filters" id="agv-filters"></div>
     <div id="agv-body"></div>`);
@@ -143,6 +144,8 @@ export async function render(el, _p, ctx) {
     ctx.navigate('atendimentos');
   };
   $('#agv-import')?.addEventListener('click', () => openImport(el, ctx));
+  let reloadT = null;
+  $('#agv-manual')?.addEventListener('click', () => openManualAgv(ctx, () => { clearTimeout(reloadT); reloadT = setTimeout(() => { if (ctx.isCurrent()) { ctx.refreshMeta?.(); load(el, ctx); } }, 400); }));
   $('#agv-manage')?.addEventListener('click', () => openManage(el, ctx));
   await load(el, ctx);
 }

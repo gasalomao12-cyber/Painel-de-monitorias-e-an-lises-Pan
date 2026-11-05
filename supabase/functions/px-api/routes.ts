@@ -15,6 +15,7 @@ import { registerQuedas } from './quedas.ts';
 import { registerSafra, readingFor } from './safra.ts';
 import { registerHelp } from './help.ts';
 import { registerBeedoo, registerBeedooAgent } from './beedoo.ts';
+import { registerAgvManual } from './agvmanual.ts';
 import { CARTEIRAS, carteiraScope, carteiraNew, inScope, scopeValues } from './carteira.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
@@ -1270,7 +1271,7 @@ router.get('/agv/data', h(async (req, res) => {
 
 // Análises AGV importadas, por roteiro e análise (período do arquivo importado ou dia da ligação), para
 // o administrador conferir e excluir o que não quer mais na plataforma
-const AGV_ORIGIN = { discador: 'Lista do discador', speech: 'Relatório do speech', dash_agv: 'Dashboard por gerência (speech)', dash_agv_cmp: 'Dashboard comparativo', dash_agv_esf: 'Dashboard de esforço por carteira' };
+const AGV_ORIGIN = { manual: 'Análise manual', discador: 'Lista do discador', speech: 'Relatório do speech', dash_agv: 'Dashboard por gerência (speech)', dash_agv_cmp: 'Dashboard comparativo', dash_agv_esf: 'Dashboard de esforço por carteira' };
 async function agvAnalysisRows() {
   const crit = await must(sb().from('px_criteria').select('id, product').in('product', ['AGV', 'AGV2']));
   if (!crit.length) return [];
@@ -1719,6 +1720,7 @@ registerQuedas(router, { h, QUALITY, ADMIN });
 registerSafra(router, { h, QUALITY, audit });
 registerHelp(router, { h });
 registerBeedoo(router, { h, QUALITY, ADMIN });
+registerAgvManual(router, { h, QUALITY, audit, PRODUCTS });
 
 // --------------------------------------------------------------- Erros
 router.use((err, req, res, _next) => {

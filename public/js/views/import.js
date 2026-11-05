@@ -257,7 +257,7 @@ function drawDash(el, ctx) {
 }
 
 // ---------------------------------------------------------------- análises por carteira (HTML)
-const REPORT_KIND = { speech_safra: 'Análise de speech (ligação a ligação)', conversao: 'Análise da carteira (relatório)', nota_qualidade: 'Nota de qualidade do mês' };
+const REPORT_KIND = { speech_safra: 'Análise de speech (ligação a ligação)', conversao: 'Análise da carteira (relatório)', nota_qualidade: 'Nota de qualidade do mês', relatorio: 'Report de operadores (pareceres)' };
 function drawCarteiraReport(el, ctx, box) {
   const d = dash, user = ctx.store.user;
   const own = userCarteiras(user);
@@ -276,7 +276,7 @@ function drawCarteiraReport(el, ctx, box) {
           <div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('report')}</span><div><b>Análise da carteira</b><div class="t2 small">o arquivo também fica em Análises da carteira</div></div></div>`
         : html`${(r.kpis || []).slice(0, 4).map((k) => html`<div class="insight"><span class="ic" style="background:var(--brand-soft);color:var(--brand)">${icon('report')}</span><div><b>${k.value} · ${k.label}</b><div class="t2 small">${k.sub}</div></div></div>`)}`}
       </div>
-      ${d.kind === 'conversao' ? html`<p class="small t2 mt">${r.lead || ''} ${logins ? html`A leitura de <b>${logins} login(s)</b> aparece no feedback de cada operador.` : ''}</p>` : ''}
+      ${d.kind === 'conversao' || d.kind === 'relatorio' ? html`<p class="small t2 mt">${r.lead || ''} ${logins ? html`O parecer de <b>${logins} login(s)</b> aparece no feedback de cada operador.` : ''}</p>` : ''}
       <div class="grid g-2 mt">
         <div class="field"><label for="rep-cart">Carteira</label><select class="select" id="rep-cart" ${own.length > 1 ? '' : 'disabled'}>${own.map((c) => html`<option value="${c}" ${c === chosen ? 'selected' : ''}>${CARTEIRA_INFO[c].label}</option>`)}</select>
           <span class="hint">${d.carteira ? `O arquivo é da carteira ${CARTEIRA_INFO[d.carteira]?.label || d.carteira}.` : 'Confira a carteira antes de importar.'} Só quem é dessa carteira vê a análise.</span></div>

@@ -131,9 +131,82 @@ function qualityReport(doc) {
   return { kind: 'nota_qualidade', title: `Nota de qualidade · ${label}`, period: label, carteira: cart, calls: [], data };
 }
 
+// ---------------------------------------------------------------- report de operadores com nota baixa
+// Modelo "Report · Operadores com nota inferior a 70" (Qualidade e Monitoria): os pareceres ficam no script
+// da página (const ops = [...], const temas = {...}). Os objetos são lidos como dados, sem executar o script.
+function jsLiteral(text, name) {
+  const at = text.search(new RegExp(`(?:const|let|var)\\s+${name}\\s*=\\s*`));
+  if (at < 0) return null;
+  let i = text.indexOf('=', at) + 1;
+  while (/\s/.test(text[i])) i++;
+  const open = text[i], close = open === '[' ? ']' : open === '{' ? '}' : null;
+  if (!close) return null;
+  let depth = 0, out = '', q = null;
+  for (; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '\\') { out += ch + text[i + 1]; i++; continue; }
+      if (ch === q) { out += '"'; q = null; continue; }
+      out += ch === '"' ? '\\"' : ch; continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { q = ch; out += '"'; continue; }
+    if (ch === open) depth++;
+    if (ch === close) depth--;
+    out += ch;
+    if (depth === 0) break;
+  }
+  // chaves sem aspas → com aspas; vírgula antes de ] ou } sai
+  const json = out.replace(/("(?:[^"\\]|\\.)*")|([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, (m, str, pre, key) => (str ? str : `${pre}"${key}":`)).replace(/,(\s*[\]}])/g, '$1');
+  try { return JSON.parse(json); } catch { return null; }
+}
+function operatorReport(doc, text) {
+  if (!/const\s+ops\s*=\s*\[/.test(text) || !/\bnota\b/i.test(`${doc.title} ${t(doc.querySelector('h1'))}`)) return null;
+  const ops = jsLiteral(text, 'ops'), temas = jsLiteral(text, 'temas') || {};
+  if (!Array.isArray(ops) || !ops.length || !ops.every((o) => o && o.login)) return null;
+  const h1 = t(doc.querySelector('h1'));
+  const thr = h1.match(/(\d{2,3})(?:[.,]\d+)?/);
+  const meta = t(doc.querySelector('.hero-meta'));
+  const date = (meta.match(/\d{2}\/\d{2}\/\d{4}/) || t(doc.querySelector('footer')).match(/\d{2}\/\d{2}\/\d{4}/) || [''])[0];
+  const kpis = [...doc.querySelectorAll('.kpi')].map((k) => {
+    const v = k.querySelector('.val'); const cu = v?.querySelector('[data-countup]') || (v?.dataset.countup != null ? v : null);
+    const small = t(v?.querySelector('small'));
+    return { label: t(k.querySelector('.lbl')), value: `${cu?.dataset.countup ?? t(v)}${small ? ` ${small}` : ''}`.trim(), sub: t(k.querySelector('.foot')) };
+  }).filter((k) => k.label);
+  const method = [...doc.querySelectorAll('.mstep')].map((m) => ({ title: t(m.querySelector('h4')), text: t(m.querySelector('p')), chips: [...m.querySelectorAll('.chip')].map(t) }));
+  const cons = doc.querySelector('.cons');
+  const themeName = (k) => temas[k]?.nome || k, themeShort = (k) => temas[k]?.curto || temas[k]?.nome || k;
+  const list = ops.map((o) => ({
+    login: String(o.login).toLowerCase(), mat: o.mat ? String(o.mat) : '', turno: String(o.turno || '').toUpperCase(), tipo: o.tipo === 'positivo' ? 'positivo' : 'melhoria',
+    texto: clean(o.texto), temas: Array.isArray(o.temas) ? o.temas.map(String) : [], nota: o.nota ? clean(o.nota) : '',
+  }));
+  const data = {
+    model: 'operadores_nota', threshold: thr ? Number(thr[1]) : null, date, eyebrow: t(doc.querySelector('.eyebrow')), headline: h1,
+    lead: t(doc.querySelector('.hero .lead, .lead')), kpis, method,
+    tabulations: method.flatMap((m) => m.chips),
+    themes: Object.fromEntries(Object.keys(temas).map((k) => [k, { nome: themeName(k), curto: themeShort(k) }])),
+    theme_order: Object.keys(temas),
+    ops: list,
+    considerations: cons ? {
+      title: t(cons.querySelector('.cons-box.dark h3')), text: t(cons.querySelector('.cons-box.dark p')),
+      pillars: [...cons.querySelectorAll('.pillar')].map((x) => { const c = x.cloneNode(true); c.querySelector('.e')?.remove(); return t(c); }),
+      focus_title: t(cons.querySelector('.cons-box.light h3')),
+      focus: [...cons.querySelectorAll('.fitem')].map((x) => { const c = x.cloneNode(true); c.querySelector('.fi')?.remove(); return t(c); }),
+    } : null,
+    // Parecer de cada login: aparece no cartão do operador em Feedbacks pendentes e entra na sugestão do plano
+    reading: list.map((o) => ({
+      login: o.login,
+      text: `${o.tipo === 'positivo' ? 'Destaque positivo' : 'Ponto de melhoria'}${o.temas.length ? ` · ${o.temas.map(themeShort).join(', ')}` : ''}${o.nota ? ` · ${o.nota}` : ''}${o.tipo === 'positivo' ? ` · ${o.texto}` : ''}`,
+      action: o.tipo === 'positivo' ? '' : o.texto,
+    })),
+  };
+  const cart = carteiraOfTitle(`${doc.title} ${meta} ${t(doc.querySelector('footer'))}`);
+  const title = `${h1 || 'Report de operadores'}${date ? ` · ${date}` : ''}`;
+  return { kind: 'relatorio', title, period: date, carteira: cart, calls: [], data };
+}
+
 // Reconhece os relatórios de carteira; devolve null para os outros formatos (dashboards PAN e AGV)
 export function readCarteiraReport(doc, text, file) {
-  const out = speechSafra(doc, text) || qualityReport(doc) || conversionReport(doc);
+  const out = speechSafra(doc, text) || operatorReport(doc, text) || qualityReport(doc) || conversionReport(doc);
   if (!out) return null;
   if (out.carteira && !CARTEIRAS.includes(out.carteira)) out.carteira = null;
   return { ...out, name: file.name, html: text };
