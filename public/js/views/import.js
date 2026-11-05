@@ -4,6 +4,7 @@ import { parseSheetFile, downloadTemplate } from '../files.js';
 import { sendAgvDashboard, AGV_DASH_KIND } from './agv.js';
 import { CARTEIRA_INFO, viewCarteira, userCarteiras } from '../carteira.js';
 import { readCarteiraReport } from '../carteira-reports.js';
+import { bindImageDrop, IMAGE_ACCEPT } from '../report-image.js';
 
 // ------------------------------------------------------------------ Lista de ligações do discador (.csv)
 // Colunas do relatório do discador → campos da plataforma (sem acento e sem diferenciar maiúsculas)
@@ -369,6 +370,11 @@ export async function render(el, _p, ctx) {
         <div class="ic">${icon('upload')}</div><h4>Arraste o arquivo do dashboard ou clique</h4><p class="muted small" style="margin:0" id="dash-name">.html exportado do dashboard</p></label>
       <div id="dash-prev"></div>
     </div>
+    <div class="card card-pad mb"><span class="chip brand">Reports em imagem</span><h3 style="margin:10px 0 6px">Imagem de um report (.png, .jpg, .webp)</h3>
+      <p class="small t2" style="margin-top:0">Anexe a imagem do <b>Report Copiloto</b>, do <b>Report de qualidade e contestações</b> ou do <b>Report de ações do mês</b>. A IA da plataforma identifica o modelo e lê os números; você confere a prévia e guarda. O report vai para Análises da carteira, com a imagem original.</p>
+      <label class="drop" id="img-drop" style="padding:20px"><input type="file" id="img-file" accept="${IMAGE_ACCEPT}" hidden>
+        <div class="ic">${icon('image')}</div><h4>Arraste a imagem do report ou clique</h4><p class="muted small" style="margin:0">PNG, JPG ou WebP</p></label>
+    </div>
     <h3 style="margin:22px 0 10px">Planilha do speech</h3>
     <div class="grid g-3">
       <div class="card card-pad"><span class="chip brand">Passo 1</span><h3 style="margin:10px 0 6px">Baixe o modelo</h3>
@@ -384,6 +390,7 @@ export async function render(el, _p, ctx) {
     </div>
     <div id="im-prev" class="mt"></div>`);
   drawCapacity(el, ctx);
+  bindImageDrop(ctx, $('#img-file'), $('#img-drop'));
   $('#tpl').onclick = async (e) => {
     const btnEl = e.currentTarget;
     busy(btnEl, true); try { await downloadTemplate(store.meta.criteria.filter((c) => c.active)); } catch (ex) { toast(ex.message, 'err'); } busy(btnEl, false); };

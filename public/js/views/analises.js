@@ -1,11 +1,13 @@
 import { api } from '../api.js';
 import { html, raw, icon, $, toast, modal, emptyState, confirmDialog, fmtDate } from '../ui.js';
 import { CARTEIRA_INFO } from '../carteira.js';
+import { imageReportBody, isImageModel, IMAGE_MODELS } from '../report-views.js';
+import { bindImageDrop, IMAGE_ACCEPT } from '../report-image.js';
 
 // Análises da carteira: relatórios trazidos em HTML (conversão e eficiência, speech Safra Pay…), com os dados
 // extraídos na tela e o arquivo original para consulta. Cada carteira vê só as suas.
 const KIND = { conversao: 'Conversão e eficiência', speech_safra: 'Análise de speech', nota_qualidade: 'Nota de qualidade', relatorio: 'Relatório' };
-const kindOf = (r) => (r.data?.model === 'operadores_nota' ? 'Report de operadores' : KIND[r.kind] || r.kind);
+const kindOf = (r) => (isImageModel(r.data) ? IMAGE_MODELS[r.data.model] : r.data?.model === 'operadores_nota' ? 'Report de operadores' : KIND[r.kind] || r.kind);
 const pctNum = (v) => { const m = String(v ?? '').match(/-?\d+(?:[.,]\d+)?/); return m ? Number(m[0].replace(',', '.')) : null; };
 const bandOf = (p) => (p == null ? 'na' : p >= 70 ? 'ok' : p >= 45 ? 'warn' : 'bad');
 const bar = (label, value, extra = '', p = pctNum(value)) => html`<div class="an-bar"><span class="lb">${label}</span><div class="trk"><i class="b-${bandOf(p)}" style="width:${Math.max(0, Math.min(100, p ?? 0))}%"></i></div><b class="num">${value ?? '—'}</b>${extra ? html`<em>${extra}</em>` : ''}</div>`;
@@ -14,12 +16,13 @@ export async function render(el, params, ctx) {
   const id = Number(params?.[0]) || null;
   if (id) return renderOne(el, id, ctx);
   ctx.setTitle('Análises da carteira', 'Visão geral');
-  el.innerHTML = String(html`<div class="page-head"><div><h2>Análises da carteira</h2><p>Relatórios trazidos para a plataforma (conversão e eficiência, análises de speech), com a leitura de cada login. Cada carteira vê só as suas.</p></div><div class="grow"></div>
-    ${ctx.can('admin', 'qualidade') ? html`<a class="btn primary" href="#/importar">${icon('upload')}Importar análise</a>` : ''}</div><div id="an-list"><div class="card card-pad">Carregando…</div></div>`);
+  el.innerHTML = String(html`<div class="page-head"><div><h2>Análises da carteira</h2><p>Relatórios trazidos para a plataforma (conversão e eficiência, análises de speech, reports em imagem), com a leitura de cada login. Cada carteira vê só as suas.</p></div><div class="grow"></div>
+    ${ctx.can('admin', 'qualidade') ? html`<label class="btn" id="an-img-btn">${icon('image')}Anexar imagem do report<input type="file" id="an-img" accept="${IMAGE_ACCEPT}" hidden></label><a class="btn primary" href="#/importar">${icon('upload')}Importar análise</a>` : ''}</div><div id="an-list"><div class="card card-pad">Carregando…</div></div>`);
+  if ($('#an-img', el)) bindImageDrop(ctx, $('#an-img', el), $('#an-list', el));
   const rows = await api.get('/reports');
   if (!ctx.isCurrent()) return;
   const box = $('#an-list', el);
-  if (!rows.length) { box.innerHTML = String(emptyState('report', 'Nenhuma análise ainda', 'Importe um relatório (.html) em Importar monitorias. Ele aparece aqui para a sua carteira.')); return; }
+  if (!rows.length) { box.innerHTML = String(emptyState('report', 'Nenhuma análise ainda', 'Importe um relatório (.html) em Importar monitorias ou anexe a imagem de um report. Ele aparece aqui para a sua carteira.')); return; }
   box.innerHTML = String(html`<div class="an-grid">${rows.map((r) => html`<a class="card an-card" href="#/analises/${r.id}">
       <div class="row between"><span class="chip">${kindOf(r)}</span><span class="chip outline">${CARTEIRA_INFO[r.portfolio]?.label || r.portfolio}</span></div>
       <h3>${r.title}</h3><div class="sub">${[r.period, r.data?.reading?.length ? `${r.data.reading.length} login(s) com ${r.data?.model === 'operadores_nota' ? 'parecer' : 'leitura'}` : '', r.data?.logins?.length ? `${r.data.logins.length} logins` : ''].filter(Boolean).join(' · ')}</div>
@@ -36,11 +39,13 @@ async function renderOne(el, id, ctx) {
   const d = r.data || {};
   const head = html`<div class="page-head"><div><a class="small t2" href="#/analises">${icon('chevLeft')}Análises da carteira</a><h2>${r.title}</h2>
       <p>${[CARTEIRA_INFO[r.portfolio]?.label || r.portfolio, kindOf(r), r.period].filter(Boolean).join(' · ')}</p></div><div class="grow"></div>
-    <button class="btn" id="an-orig">${icon('eye')}Ver arquivo original</button>
+    <button class="btn" id="an-orig">${icon(isImageModel(d) ? 'image' : 'eye')}${isImageModel(d) ? 'Ver imagem original' : 'Ver arquivo original'}</button>
     ${ctx.can('admin', 'qualidade') ? html`<button class="btn ghost danger" id="an-del">${icon('trash')}Excluir</button>` : ''}</div>`;
-  const kpis = (d.kpis || []).length ? html`<div class="grid g-4 mb">${(d.score && typeof d.score === 'object' ? [d.score, ...d.kpis] : d.kpis).slice(0, 6).map((k) => html`<div class="card kpi"><div class="k-label">${k.label}</div><div class="k-val num">${k.value}</div>${k.sub ? html`<div class="tiny muted" style="margin-top:8px">${k.sub}${k.tag ? ` · ${k.tag}` : ''}</div>` : ''}</div>`)}</div>` : '';
+  const kpis = !isImageModel(d) && (d.kpis || []).length ? html`<div class="grid g-4 mb">${(d.score && typeof d.score === 'object' ? [d.score, ...d.kpis] : d.kpis).slice(0, 6).map((k) => html`<div class="card kpi"><div class="k-label">${k.label}</div><div class="k-val num">${k.value}</div>${k.sub ? html`<div class="tiny muted" style="margin-top:8px">${k.sub}${k.tag ? ` · ${k.tag}` : ''}</div>` : ''}</div>`)}</div>` : '';
   let body = '';
-  if (d.model === 'operadores_nota') {
+  if (isImageModel(d)) {
+    body = imageReportBody(d);
+  } else if (d.model === 'operadores_nota') {
     body = opReport(d, ctx);
   } else if (r.kind === 'nota_qualidade') {
     body = html`<div class="card card-pad"><p style="margin:0">Nota fechada de <b>${d.month_label}</b>: <b class="num">${String(d.score ?? '—').replace('.', ',')}</b> pontos · ${d.ranking?.length || 0} operadores.</p><a class="btn primary mt" href="#/nota-qualidade">${icon('target')}Abrir em Nota de qualidade</a></div>`;

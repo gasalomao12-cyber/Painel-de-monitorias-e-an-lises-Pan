@@ -16,6 +16,7 @@ import { registerSafra, readingFor } from './safra.ts';
 import { registerHelp } from './help.ts';
 import { registerBeedoo, registerBeedooAgent } from './beedoo.ts';
 import { registerAgvManual } from './agvmanual.ts';
+import { registerReportImage } from './reportimage.ts';
 import { CARTEIRAS, carteiraScope, carteiraNew, inScope, scopeValues } from './carteira.ts';
 import { transcribeAudio, speechConfigured, speechConfig, testSpeech } from './speech.ts';
 import { recordAction, flushActions, flushInBackground, suggestTheme, segmentLabel, dayInBrazil, testSheet, sheetConfig, sheetConfigured, THEMES, ACTIONS, DEFAULT_SEGMENT_MAP, segmentMap } from './sheets.ts';
@@ -1723,6 +1724,7 @@ registerSafra(router, { h, QUALITY, audit });
 registerHelp(router, { h });
 registerBeedoo(router, { h, QUALITY, ADMIN });
 registerAgvManual(router, { h, QUALITY, audit, PRODUCTS });
+registerReportImage(router, { h, QUALITY });
 
 // --------------------------------------------------------------- Erros
 router.use((err, req, res, _next) => {
